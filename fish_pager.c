@@ -9,7 +9,14 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
+#ifdef HAVE_SYS_TERMIOS_H
+#include <sys/termios.h>
+#endif
+
+#ifdef HAVE_SYS_IOCTL_H
 #include <sys/ioctl.h>
+#endif
+
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <dirent.h>
@@ -131,14 +138,21 @@ typedef struct
 
 static int get_color( int highlight )
 {
+	wchar_t *val;
+
 	if( highlight < 0 )
 		return FISH_COLOR_NORMAL;
 	if( highlight >= (4) )
 		return FISH_COLOR_NORMAL;
 	
-	wchar_t *val = env_universal_get( hightlight_var[highlight]);
+	val = wgetenv( hightlight_var[highlight]);
+
+	if( !val )
+	{
+		val = env_universal_get( hightlight_var[highlight]);
+	}
 	
-	if( val == 0 )
+	if( !val )
 	{
 		return FISH_COLOR_NORMAL;
 	}
@@ -881,15 +895,29 @@ static void init()
 	  the resulting output back to the caller
 	*/
 	int out = dup( 1 );
+	int in = dup( 0 );
 	close(1);
-	if( open( ttyname(0), O_WRONLY ) != 1 )
+	close(0);
+
+	if( (in = open( ttyname(2), O_RDWR )) != -1 )
 	{
 		if( dup2( 2, 1 ) == -1 )
 		{			
-			debug( 0, L"Could not set up file descriptors for pager" );
+			debug( 0, L"Could not set up output file descriptors for pager" );
+			exit( 1 );
+		}
+		
+		if( dup2( in, 0 ) == -1 )
+		{			
+			debug( 0, L"Could not set up input file descriptors for pager %d", in );
 			exit( 1 );
 		}
 	}
+	else
+	    {
+		debug( 0, L"Could not open tty for pager" );
+		exit( 1 );
+	    }
 	out_file = fdopen( out, "w" );
 
 	/**
@@ -949,9 +977,52 @@ void destroy()
 	env_universal_destroy();
 	input_common_destroy();
 	halloc_util_destroy();
-	del_curterm( cur_term );
+	if( del_curterm( cur_term ) == ERR )
+	{
+		debug( 0, _(L"Error while closing terminfo") );		
+	}
+	
 	sb_destroy( &out_buff );
 	fclose( out_file );
+}
+
+#define BUFSIZE 1024
+void read_array( FILE* file, array_list_t *comp )
+{
+	char buffer[BUFSIZE];
+	int c;
+	int i;
+	wchar_t *wcs, *unescaped;
+
+	while( !feof( file ) )
+	{
+		i = 0;
+		while( i < BUFSIZE-1 )
+		{
+		    c = getc( file );
+			if( c == EOF ) 
+			{
+				return;
+				
+			}
+			if( c == '\n' )
+			{
+				break;
+			}
+			
+			buffer[ i++ ] = c;
+		}
+
+		buffer[ i ] = '\0';
+
+		wcs = str2wcs( buffer );
+		if( wcs ) 
+		{
+			unescaped = unescape( wcs, 0 );
+			al_push( comp, unescaped );
+			free( wcs );
+		}
+	}
 }
 
 int main( int argc, char **argv )
@@ -961,8 +1032,6 @@ int main( int argc, char **argv )
 	array_list_t *comp;
 	wchar_t *prefix;
 		
-	init();
-	
 	if( argc < 3 )
 	{
 		debug( 0, L"Insufficient arguments" );
@@ -976,19 +1045,29 @@ int main( int argc, char **argv )
 		
 		debug( 3, L"prefix is '%ls'", prefix );
 		
-		for( i=3; i<argc; i++ )
+	    if( argc > 3 )
 		{
-			wchar_t *wcs = str2wcs( argv[i] );
-			if( wcs )
+		    for( i=3; i<argc; i++ )
 			{
-				al_push( comp, wcs );
+			    wchar_t *wcs = str2wcs( argv[i] );
+			    if( wcs )
+				{
+				    al_push( comp, wcs );
+				}
 			}
 		}
-		
-		mangle_descriptions( comp );
-		if( wcscmp( prefix, L"-" ) == 0 )
-			join_completions( comp );
-		mangle_completions( comp, prefix );
+	    else
+		{
+		    read_array( stdin, comp );
+		}
+
+
+	    init();
+
+	    mangle_descriptions( comp );
+	    if( wcscmp( prefix, L"-" ) == 0 )
+		join_completions( comp );
+	    mangle_completions( comp, prefix );
 	
 		for( i = 6; i>0; i-- )
 		{

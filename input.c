@@ -17,7 +17,15 @@ implementation in fish is as of yet incomplete.
 #include <termios.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+
+#ifdef HAVE_SYS_TERMIOS_H
+#include <sys/termios.h>
+#endif
+
+#ifdef HAVE_SYS_IOCTL_H
 #include <sys/ioctl.h>
+#endif
+
 #include <unistd.h>
 #include <wchar.h>
 
@@ -271,7 +279,7 @@ wchar_t input_get_code( const wchar_t *name )
 /**
    Returns the function name for the given function code.
 */
-
+/*
 static const wchar_t *input_get_name( wchar_t c )
 {
 
@@ -285,7 +293,7 @@ static const wchar_t *input_get_name( wchar_t c )
 	}
 	return 0;		
 }
-
+*/
 /**
    Returns the function description for the given function code.
 */
@@ -1481,7 +1489,11 @@ void input_destroy()
 	hash_foreach( &all_mappings, &destroy_mapping );	
 	hash_destroy( &all_mappings );
 	
-	del_curterm( cur_term );
+	if( del_curterm( cur_term ) == ERR )
+	{
+		debug( 0, _(L"Error while closing terminfo") );
+	}
+	
 }
 
 /**

@@ -1,6 +1,8 @@
 /** \file highlight.c
 	Functions for syntax highlighting
 */
+#include "config.h"
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/stat.h>
@@ -10,8 +12,6 @@
 #include <wctype.h>
 #include <termios.h>
 #include <signal.h>
-
-#include "config.h"
 
 #include "fallback.h"
 #include "util.h"
@@ -136,7 +136,10 @@ static int is_potential_path( const wchar_t *path )
 				{
 					dir = wopendir( unescaped );
 					res = !!dir;
-					closedir( dir );
+					if( dir )
+					{
+						closedir( dir );
+					}
 				}
 				else
 				{
@@ -583,7 +586,7 @@ void highlight_shell( wchar_t * buff,
 					{
 						wchar_t *dir = expand_one( context, 
 												   wcsdup(tok_last( &tok )),
-												   EXPAND_SKIP_SUBSHELL );
+												   EXPAND_SKIP_CMDSUBST );
 						if( dir )
 						{
 							if( !parser_cdpath_get( context, dir ) )
@@ -609,7 +612,7 @@ void highlight_shell( wchar_t * buff,
 					*/
 					cmd = expand_one( context, 
 									  wcsdup(tok_last( &tok )),
-									  EXPAND_SKIP_SUBSHELL | EXPAND_SKIP_VARIABLES);
+									  EXPAND_SKIP_CMDSUBST | EXPAND_SKIP_VARIABLES);
 					
 					if( cmd == 0 )
 					{
@@ -726,9 +729,9 @@ void highlight_shell( wchar_t * buff,
 				{
 					case TOK_STRING:
 					{
-						target = expand_one( context, wcsdup( tok_last( &tok ) ), EXPAND_SKIP_SUBSHELL);
+						target = expand_one( context, wcsdup( tok_last( &tok ) ), EXPAND_SKIP_CMDSUBST);
 						/*
-						  Redirect filename may contain a subshell. 
+						  Redirect filename may contain a cmdsubst. 
 						  If so, it will be ignored/not flagged.
 						*/
 					}
@@ -829,7 +832,7 @@ void highlight_shell( wchar_t * buff,
 	tok_destroy( &tok );	
 			 
 	/*
-	  Locate and syntax highlight subshells recursively
+	  Locate and syntax highlight cmdsubsts recursively
 	*/
 
 	wchar_t *buffcpy = halloc_wcsdup( context, buff );
@@ -960,7 +963,7 @@ static void highlight_universal_internal( wchar_t * buff,
 						if( level == 0 )
 						{
 							level++;
-							al_push( &l, (void *)(str-buff) );
+							al_push_long( &l, (long)(str-buff) );
 							prev_q = *str;
 						}
 						else
@@ -970,7 +973,7 @@ static void highlight_universal_internal( wchar_t * buff,
 								long pos1, pos2;
 							
 								level--;
-								pos1 = (long)al_pop( &l );
+								pos1 = al_pop_long( &l );
 								pos2 = str-buff;
 								if( pos1==pos || pos2==pos )
 								{
@@ -984,7 +987,7 @@ static void highlight_universal_internal( wchar_t * buff,
 							else
 							{
 								level++;
-								al_push( &l, (void *)(str-buff) );
+								al_push_long( &l, (long)(str-buff) );
 								prev_q = *str;
 							}
 						}

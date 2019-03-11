@@ -3,6 +3,8 @@
 
 	These functions are used for storing and retrieving tab-completion data, as well as for performing tab-completion.
 */
+#include "config.h"
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <limits.h>
@@ -20,7 +22,6 @@
 #include <signal.h>
 #include <wchar.h>
 
-#include "config.h"
 
 #include "fallback.h"
 #include "util.h"
@@ -1080,7 +1081,7 @@ static void copy_strings_with_prefix( array_list_t *comp_out,
 	wchar_t *wc, *tmp;
 
 	tmp = expand_one( 0,
-					  wcsdup(wc_escaped), EXPAND_SKIP_SUBSHELL | EXPAND_SKIP_WILDCARDS);
+					  wcsdup(wc_escaped), EXPAND_SKIP_CMDSUBST | EXPAND_SKIP_WILDCARDS);
 	if(!tmp)
 		return;
 
@@ -1785,14 +1786,14 @@ static void complete_param_expand( wchar_t *str,
 	}
 	/*
 	debug( 3,
-		   L"expand_string( \"%ls\", comp_out, EXPAND_SKIP_SUBSHELL | ACCEPT_INCOMPLETE | %ls );",
+		   L"expand_string( \"%ls\", comp_out, EXPAND_SKIP_CMDSUBST | ACCEPT_INCOMPLETE | %ls );",
 		   comp_str,
 		   do_file?L"0":L"EXPAND_SKIP_WILDCARDS" );
 	*/
 	expand_string( 0, 
 				   wcsdup(comp_str),
 				   comp_out,
-				   EXPAND_SKIP_SUBSHELL | ACCEPT_INCOMPLETE | (do_file?0:EXPAND_SKIP_WILDCARDS) );
+				   EXPAND_SKIP_CMDSUBST | ACCEPT_INCOMPLETE | (do_file?0:EXPAND_SKIP_WILDCARDS) );
 }
 
 /**

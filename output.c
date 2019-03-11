@@ -11,7 +11,15 @@
 #include <termios.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+
+#ifdef HAVE_SYS_TERMIOS_H
+#include <sys/termios.h>
+#endif
+
+#ifdef HAVE_SYS_IOCTL_H
 #include <sys/ioctl.h>
+#endif
+
 #include <sys/time.h>
 #include <unistd.h>
 #include <wctype.h>
@@ -279,8 +287,12 @@ void set_color( int c, int c2 )
 			writembs( exit_attribute_mode );
 			if( ( last_color != FISH_COLOR_NORMAL ) && fg )
 			{
-				writembs( tparm( fg, last_color ) );
+				if( fg )
+				{
+					writembs( tparm( fg, last_color ) );
+				}
 			}
+			
 
 			was_bold=0;
 			was_underline=0;
@@ -303,7 +315,10 @@ void set_color( int c, int c2 )
 	{
 		if( is_bold && !was_bold )
 		{
-			writembs( tparm( enter_bold_mode ) );
+			if( enter_bold_mode )
+			{
+				writembs( tparm( enter_bold_mode ) );
+			}
 		}
 		was_bold = is_bold;	
 	}

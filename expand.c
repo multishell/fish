@@ -5,6 +5,8 @@ parameter expansion.
 
 */
 
+#include "config.h"
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <wchar.h>
@@ -25,8 +27,6 @@ parameter expansion.
 #ifdef SunOS
 #include <procfs.h>
 #endif
-
-#include "config.h"
 
 #include "fallback.h"
 #include "util.h"
@@ -874,7 +874,7 @@ static int expand_variables( wchar_t *in, array_list_t *out, int last_idx )
 							is_ok = 0;
 							break;
 						}
-						al_push( var_idx_list, (void *)tmp );
+						al_push_long( var_idx_list, tmp );
 						stop_pos = end-in;
 					}
 				}
@@ -887,12 +887,17 @@ static int expand_variables( wchar_t *in, array_list_t *out, int last_idx )
 						int j;
 						for( j=0; j<al_get_count( var_idx_list ); j++)
 						{
-							long tmp = (long)al_get( var_idx_list, j );
+							long tmp = al_get_long( var_idx_list, j );
 							if( tmp < 0 )
 							{
 								tmp = al_get_count( &var_item_list)+tmp+1;
 							}
-							
+
+							/*
+							  Check that we are within array
+							  bounds. If not, truncate the list to
+							  exit.
+							*/
 							if( tmp < 1 || tmp > al_get_count( &var_item_list ) )
 							{
 								error( SYNTAX_ERROR,
@@ -904,12 +909,11 @@ static int expand_variables( wchar_t *in, array_list_t *out, int last_idx )
 							}
 							else
 							{
-								/* Move string from list l to list idx */
-								al_set( var_idx_list, j, al_get( &var_item_list, tmp-1 ) );
-								al_set( &var_item_list, tmp-1, 0 );
+								/* Replace each index in var_idx_list inplace with the string value at the specified index */
+								al_set( var_idx_list, j, wcsdup(al_get( &var_item_list, tmp-1 ) ) );
 							}
 						}
-						/* Free remaining strings in list l and truncate it */
+						/* Free strings in list var_item_list and truncate it */
 						al_foreach( &var_item_list, &free );
 						al_truncate( &var_item_list, 0 );
 						/* Add items from list idx back to list l */
@@ -1180,9 +1184,9 @@ static int expand_brackets( wchar_t *in, int flags, array_list_t *out )
 }
 
 /**
-   Perform subshell expansion
+   Perform cmdsubst expansion
 */
-static int expand_subshell( wchar_t *in, array_list_t *out )
+static int expand_cmdsubst( wchar_t *in, array_list_t *out )
 {
 	wchar_t *paran_begin=0, *paran_end=0;
 	int len1, len2;
@@ -1228,16 +1232,10 @@ static int expand_subshell( wchar_t *in, array_list_t *out )
 	wcslcpy( subcmd, paran_begin+1, paran_end-paran_begin );
 	subcmd[ paran_end-paran_begin-1]=0;
 
-	if( exec_subshell( subcmd, &sub_res)==-1 )
-	{
-		al_foreach( &sub_res, &free );
-		al_destroy( &sub_res );
-		free( subcmd );
-		return 0;
-	}
+	exec_subshell( subcmd, &sub_res);
 
 	al_init( &tail_expand );
-	expand_subshell( wcsdup(paran_end+1), &tail_expand );
+	expand_cmdsubst( wcsdup(paran_end+1), &tail_expand );
 
     for( i=0; i<al_get_count( &sub_res ); i++ )
     {
@@ -1430,7 +1428,7 @@ int expand_string( void *context,
 	array_list_t *in, *out;
 
 	int i;
-	int subshell_ok = 1;
+	int cmdsubst_ok = 1;
 	int res = EXPAND_OK;
 	int start_count = al_get_count( end_out );
 
@@ -1447,7 +1445,7 @@ int expand_string( void *context,
 	al_init( &list1 );
 	al_init( &list2 );
 
-	if( EXPAND_SKIP_SUBSHELL & flags )
+	if( EXPAND_SKIP_CMDSUBST & flags )
 	{
 		wchar_t *begin, *end;
 		
@@ -1456,7 +1454,7 @@ int expand_string( void *context,
 										&end,
 										1 ) != 0 )
 		{
-			error( SUBSHELL_ERROR, -1, L"Subshells not allowed" );
+			error( CMDSUBST_ERROR, -1, L"Command substitutions not allowed" );
 			free( str );
 			al_destroy( &list1 );
 			al_destroy( &list2 );
@@ -1466,10 +1464,10 @@ int expand_string( void *context,
 	}
 	else
 	{
-		subshell_ok = expand_subshell( str, &list1 );
+		cmdsubst_ok = expand_cmdsubst( str, &list1 );
 	}
 
-	if( !subshell_ok )
+	if( !cmdsubst_ok )
 	{
 		al_destroy( &list1 );
 		return EXPAND_ERROR;

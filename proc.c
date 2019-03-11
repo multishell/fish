@@ -20,7 +20,15 @@ Some of the code in this file is based on code from the Glibc manual.
 #include <termios.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+
+#ifdef HAVE_SYS_TERMIOS_H
+#include <sys/termios.h>
+#endif
+
+#ifdef HAVE_SYS_IOCTL_H
 #include <sys/ioctl.h>
+#endif
+
 #include <unistd.h>
 #include <signal.h>
 #include <dirent.h>
@@ -42,6 +50,13 @@ Some of the code in this file is based on code from the Glibc manual.
 #include <ncurses/term.h>
 #endif
 
+#ifdef HAVE_SIGINFO_H
+#include <siginfo.h>
+#endif
+
+#ifdef HAVE_SYS_SELECT_H
+#include <sys/select.h>
+#endif
 
 #include "fallback.h"
 #include "util.h"
@@ -1089,7 +1104,7 @@ void proc_sanity_check()
 void proc_push_interactive( int value )
 {
 	int old = is_interactive;
-	al_push( interactive_stack, (void *)(long)is_interactive );
+	al_push_long( interactive_stack, (long)is_interactive );
 	is_interactive = value;
 	if( old != value )
 		signal_set_handlers();
@@ -1098,7 +1113,7 @@ void proc_push_interactive( int value )
 void proc_pop_interactive()
 {
 	int old = is_interactive;
-	is_interactive= (int)(long)al_pop(interactive_stack);
+	is_interactive= (int)al_pop_long(interactive_stack);
 	if( is_interactive != old )
 		signal_set_handlers();
 }

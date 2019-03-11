@@ -14,7 +14,9 @@ Implementation file for the low level input library
 #include <sys/types.h>
 #include <unistd.h>
 #include <wchar.h>
-
+#ifdef HAVE_SYS_SELECT_H
+#include <sys/select.h>
+#endif
 
 #include "fallback.h"
 #include "util.h"
@@ -34,7 +36,7 @@ Implementation file for the low level input library
 /**
    Characters that have been read and returned by the sequence matching code
 */
-static wint_t lookahead_arr[32];
+static wint_t lookahead_arr[1024];
 
 /**
    Number of entries in lookahead_arr

@@ -9,8 +9,12 @@ parts of fish.
 
 #include <unistd.h>
 
-#ifdef HAVE_STROPTS
+#ifdef HAVE_STROPTS_H
 #include <stropts.h>
+#endif
+
+#ifdef HAVE_SIGINFO_H
+#include <siginfo.h>
 #endif
 
 #include <stdlib.h>
@@ -20,7 +24,15 @@ parts of fish.
 #include <stdio.h>
 #include <dirent.h>
 #include <sys/types.h>
+
+#ifdef HAVE_SYS_TERMIOS_H
+#include <sys/termios.h>
+#endif
+
+#ifdef HAVE_SYS_IOCTL_H
 #include <sys/ioctl.h>
+#endif
+
 #include <sys/stat.h>
 #include <unistd.h>
 #include <wctype.h>
@@ -831,9 +843,27 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 							break;
 						}
 						
+						case L'a':
+						{
+							in[out_pos]=L'\a';
+							break;
+						}
+						
+						case L'f':
+						{
+							in[out_pos]=L'\f';
+							break;
+						}
+						
+						case L'v':
+						{
+							in[out_pos]=L'\v';
+							break;
+						}
+						
 						case L'e':
 						{
-							in[out_pos]=L'\e';
+							in[out_pos]=L'\x1b';
 							break;
 						}
 						
@@ -1408,10 +1438,15 @@ int acquire_lock_file( const char *lockfile, const int timeout, int force )
 
 void common_handle_winch( int signal )
 {
+#ifdef HAVE_WINSIZE
 	if (ioctl(1,TIOCGWINSZ,&termsize)!=0)
 	{
 		return;
 	}
+#else
+	termsize.ws_col = 80;
+	termsize.ws_row = 24;
+#endif
 }
 
 int common_get_width()

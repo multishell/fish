@@ -5,6 +5,8 @@
 	manual, though I the changes performed have been massive.
 */
 
+#include "config.h"
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/types.h>
@@ -21,7 +23,9 @@
 #include <assert.h>
 #include <dirent.h>
 
-#include "config.h"
+#ifdef HAVE_SIGINFO_H
+#include <siginfo.h>
+#endif
 
 #include "fallback.h"
 #include "util.h"
@@ -75,7 +79,6 @@ static array_list_t *open_fds=0;
 
 static int set_child_group( job_t *j, process_t *p, int print_errors );
 
-
 void exec_close( int fd )
 {
 	int i;
@@ -94,13 +97,12 @@ void exec_close( int fd )
 	{
 		for( i=0; i<al_get_count( open_fds ); i++ )
 		{
-			int n = (int)(long)al_get( open_fds, i );
+			int n = (int)al_get_long( open_fds, i );
 			if( n == fd )
 			{
-				al_set( open_fds,
-						i,
-						al_get( open_fds,
-								al_get_count( open_fds ) -1 ) );
+				al_set_long( open_fds,
+							 i,
+							 al_get_long( open_fds, al_get_count( open_fds ) -1 ) );
 				al_truncate( open_fds, 
 							 al_get_count( open_fds ) -1 );
 				break;
@@ -130,8 +132,8 @@ int exec_pipe( int fd[2])
 		open_fds = al_halloc( global_context );
 	}
 	
-	al_push( open_fds, (void *)(long)fd[0] );
-	al_push( open_fds, (void *)(long)fd[1] );		
+	al_push_long( open_fds, (long)fd[0] );
+	al_push_long( open_fds, (long)fd[1] );		
 	
 	return res;
 }
@@ -176,7 +178,7 @@ static void close_unused_internal_pipes( io_data_t *io )
 	{
 		for( ;i<al_get_count( open_fds ); i++ )
 		{
-			int n = (int)(long)al_get( open_fds, i );
+			int n = (long)al_get_long( open_fds, i );
 			if( !use_fd_in_pipe( n, io) )
 			{
 				debug( 4, L"Close fd %d, used in other context", n );
@@ -674,11 +676,39 @@ void exec( job_t *j )
 	if( no_exec )
 		return;
 	
+	
+
 	sigemptyset( &chldset );
 	sigaddset( &chldset, SIGCHLD );
 	
 	debug( 4, L"Exec job '%ls' with id %d", j->command, j->job_id );	
 	
+	if( block_io )
+	{
+		if( j->io )
+			j->io = io_add( io_duplicate( j, block_io), j->io );
+		else
+			j->io=io_duplicate( j, block_io);				
+	}
+
+	io_data_t *input_redirect = io_get( j->io, 0 );
+	
+	if( input_redirect && 
+		(input_redirect->io_mode == IO_BUFFER) && 
+		input_redirect->param3.is_input )
+	{
+		/*
+		  Input redirection - create a new gobetween process to take
+		  care of buffering
+		*/
+		
+		process_t *fake = halloc( j, sizeof(process_t) );
+		fake->type = INTERNAL_BUFFER;
+		fake->pipe_fd = 1;
+		fake->next = j->first_process;
+		j->first_process = fake;
+	}
+
 	if( j->first_process->type==INTERNAL_EXEC )
 	{
 		/*
@@ -703,7 +733,7 @@ void exec( job_t *j )
 			j->first_process->completed=1;
 			return;
 		}
-		
+
 	}	
 
 	pipe_read.fd=0;
@@ -716,20 +746,14 @@ void exec( job_t *j )
 	pipe_write.next=0;
 	pipe_write.param1.pipe_fd[0]=pipe_write.param1.pipe_fd[1]=-1;	
 
-	//fwprintf( stderr, L"Run command %ls\n", j->command );
+
 	
-	if( block_io )
-	{
-		if( j->io )
-			j->io = io_add( io_duplicate( j, block_io), j->io );
-		else
-			j->io=io_duplicate( j, block_io);				
-	}
+	//fwprintf( stderr, L"Run command %ls\n", j->command );
 	
 	j->io = io_add( j->io, &pipe_write );
 	
 	signal_block();
-
+	
 	/*
 	  This loop loops over every process_t in the job, starting it as
 	  appropriate. This turns out to be rather complex, since a
@@ -737,12 +761,12 @@ void exec( job_t *j )
 
 	  The loop also has to handle pipelining between the jobs.
 	*/
-
+	
 	for( p=j->first_process; p; p = p->next )
 	{
 		mypipe[1]=-1;
 		skip_fork=0;
-
+		
 		pipe_write.fd = p->pipe_fd;
 
 		/* 
@@ -811,7 +835,7 @@ void exec( job_t *j )
 
 				if( p->next )
 				{
-					io_buffer = io_buffer_create();					
+					io_buffer = io_buffer_create( 0 );					
 					j->io = io_add( j->io, io_buffer );
 				}
 				
@@ -827,7 +851,7 @@ void exec( job_t *j )
 			{
 				if( p->next )
 				{
-					io_buffer = io_buffer_create();					
+					io_buffer = io_buffer_create( 0 );					
 					j->io = io_add( j->io, io_buffer );
 				}
 								
@@ -835,7 +859,7 @@ void exec( job_t *j )
 				break;
 				
 			}
-			
+
 			case INTERNAL_BUILTIN:
 			{
 				int builtin_stdin=0;
@@ -945,6 +969,7 @@ void exec( job_t *j )
 
 		switch( p->type )
 		{
+
 			case INTERNAL_BLOCK:
 			case INTERNAL_FUNCTION:
 			{
@@ -1024,6 +1049,46 @@ void exec( job_t *j )
 				io_buffer=0;
 				break;
 				
+			}
+
+
+			case INTERNAL_BUFFER:
+			{
+		
+				pid = fork();
+				
+				if( pid == 0 )
+				{
+					/*
+					  This is the child process. Write out the contents of the pipeline.
+					*/
+					p->pid = getpid();
+					setup_child_process( j, p );
+					
+					write( 1,
+						   input_redirect->param2.out_buffer->buff, 
+						   input_redirect->param2.out_buffer->used );
+					exit( 0 );
+				}
+				else if( pid < 0 )
+				{
+					/* The fork failed. */
+					debug( 0, FORK_ERROR );
+					wperror (L"fork");
+					exit (1);
+				}
+				else
+				{
+					/* 
+					   This is the parent process. Store away
+					   information on the child, and possibly give
+					   it control over the terminal.
+					*/
+					p->pid = pid;						
+					set_child_group( j, p, 0 );	
+				}	
+
+				break;				
 			}
 			
 			case INTERNAL_BUILTIN:
@@ -1222,7 +1287,7 @@ int exec_subshell( const wchar_t *cmd,
 	}
 	
 	is_subshell=1;	
-	io_buffer= io_buffer_create();
+	io_buffer= io_buffer_create( 0 );
 	
 	prev_status = proc_get_last_status();
 	

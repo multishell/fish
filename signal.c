@@ -15,6 +15,10 @@ The library for various signal related issues
 #include <unistd.h>
 #include <errno.h>
 
+#ifdef HAVE_SIGINFO_H
+#include <siginfo.h>
+#endif
+
 #include "common.h"
 #include "fallback.h"
 #include "util.h"
@@ -281,7 +285,7 @@ const static struct lookup_entry lookup[] =
 	}
 	,
 #endif
-#ifdef SIGWIO
+#ifdef SIGIO
 	{
 		SIGIO,
 		L"SIGIO",

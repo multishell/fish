@@ -25,6 +25,7 @@
 #include <dirent.h>
 #include <stdarg.h>
 #include <limits.h>
+#include <assert.h>
 
 #if HAVE_NCURSES_H
 #include <ncurses.h>
@@ -1005,14 +1006,6 @@ wcslcpy(wchar_t *dst, const wchar_t *src, size_t siz)
 
 #endif
 
-#ifdef HAVE_BROKEN_DEL_CURTERM
-
-int del_curterm(TERMINAL *oterm)
-{
-}
-
-#endif
-
 #ifndef HAVE_LRAND48_R
 
 int lrand48_r(struct drand48_data *buffer, long int *result)
@@ -1076,3 +1069,10 @@ int _nl_msg_cat_cntr=0;
 
 #endif
 
+#ifndef HAVE_KILLPG
+int killpg( int pgr, int sig )
+{
+	assert( pgr > 0 );
+	return kill( -pgr, sig );
+}
+#endif

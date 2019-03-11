@@ -11,22 +11,33 @@
 set -g fish_function_path @datadir@/fish/functions/
 set __fish_help_dir @docdir@
 
+# This is a Solaris-specific test to modify the PATH so that
+# Posix-conformant tools are used by default.
+
+if test -d /usr/xpg4/bin
+	if not contains /usr/xpg4/bin $PATH
+		set PATH /usr/xpg4/bin $PATH 
+	end
+end   
+
 
 #
 # Make sure there are no invalid entries in the PATH
 #
 
-set -l erase_idx
-for idx in (seq (count $PATH))
-   set i $PATH[$idx]
-   if not test -d $i
-       set erase_idx $erase_idx $idx
-       printf (_ '%s: Warning: The directory %s has been removed from your PATH because it does not exist\n') fish $i
-   end
-end
+if status --is-interactive
+	set -l erase_idx
+	for idx in (seq (count $PATH))
+		set i $PATH[$idx]
+		if not test -d $i
+			set erase_idx $erase_idx $idx
+			printf (_ '%s: Warning: The directory %s has been removed from your PATH because it does not exist\n') fish $i
+		end
+	end
 
-if count $erase_idx >/dev/null
-	set -e PATH[(echo $erase_idx)]
+	if count $erase_idx >/dev/null
+		set -e PATH[(echo $erase_idx)]
+	end
 end
 
 #
@@ -43,12 +54,11 @@ if test "$USER" = root
 end
 
 # Make a regular expression that matches any component in the PATH. A
-# trailing slash is ok. The sed call is to remove the last '\|'.  
+# trailing slash is ok. The sed call is to remove the last '|'.  
+set -l tmp (printf "%s" \^$PATH'/?$|')
+set -l path_regexp \((echo $tmp | sed -e "s/.\$//")\)
 
-
-set -l path_regexp \\\((printf "%s" \^$PATH'\(\|/\)$\|' | sed -e "s/..\$//")\\\)
-
-for i in (printf "%s\n" $path_list|grep -v $path_regexp)
+for i in (printf "%s\n" $path_list|grep -E -v $path_regexp)
 	if test -d $i
 		set PATH $PATH $i
 	end
@@ -98,7 +108,7 @@ end
 # Completions for the shell and it's builtin commands and functions
 #
 
-for i in (builtin -n|grep -v '\(while\|for\|if\|function\|switch\)' )
+for i in (builtin -n|grep -E -v '(while|for|if|function|switch)' )
 	complete -c $i -s h -l help -d "Display help and exit"
 end
 

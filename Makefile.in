@@ -49,7 +49,7 @@ prefix = @prefix@
 optbindirs = @optbindirs@
 PACKAGE_TARNAME = @PACKAGE_TARNAME@
 
-MACROS=-DLOCALEDIR=\"$(localedir)\" -DPREFIX=L\"$(prefix)\" -DDATADIR=L\"$(datadir)\" -DSYSCONFDIR=L\"$(sysconfdir)\"
+MACROS=-DLOCALEDIR=\"$(localedir)\" -DPREFIX=L\"$(prefix)\" -DDATADIR=L\"$(datadir)\" -DSYSCONFDIR=L\"$(sysconfdir)\" 
 CFLAGS=@CFLAGS@ $(MACROS)
 CPPFLAGS=@CPPFLAGS@
 LDFLAGS= @LIBS@ @LDFLAGS@ 
@@ -196,6 +196,9 @@ configure: configure.ac
 Makefile: Makefile.in configure
 	./config.status
 
+fish.spec: fish.spec.in
+	./config.status
+
 debug:
 	make fish CFLAGS="@CFLAGS@ $(MACROS) -O0 -Wno-unused -Werror -g"
 .PHONY: debug
@@ -235,11 +238,17 @@ xsel-0.9.6/xsel: xsel-0.9.6
 doc.h:$(BUILTIN_DOC_SRC) $(CMD_DOC_SRC) doc_src/doc.hdr
 	cat doc_src/doc.hdr >doc.h; 
 	echo "/** \page builtins Builtin commands" >>doc.h; 
-	cat `printf "%s\n" $(BUILTIN_DOC_SRC)|sort` >>doc.h; 
+	for i in `printf "%s\n" $(BUILTIN_DOC_SRC)|sort`; do \
+		echo "<hr>" >>doc.h; \
+		cat $$i >>doc.h; \
+	done 
 	echo "*/" >>doc.h
 	echo "/** \page commands External commands" >>doc.h; 
 	echo "\c fish is shipped with commands which do not use any internal parts of the shell, and are therefore not written as builtins, but separate commands." >>doc.h
-	cat `printf "%s\n" $(CMD_DOC_SRC)|sort` >>doc.h; 
+	for i in `printf "%s\n" $(CMD_DOC_SRC)|sort`; do \
+		echo "<hr>" >>doc.h; \
+		cat $$i >>doc.h; \
+	done 
 	echo "*/" >>doc.h
 
 # This rule creates complete doxygen headers from each of the various
@@ -275,7 +284,7 @@ doc.h:$(BUILTIN_DOC_SRC) $(CMD_DOC_SRC) doc_src/doc.hdr
 messages.pot: *.c *.h etc/*.in share/fish share/completions/*.fish share/functions/*.fish seq
 	if test $(HAVE_GETTEXT) = 1;then \
 		xgettext -k_ -kN_ *.c *.h -o messages.pot; \
-		if ! xgettext -j -k_ -kN_ -LShell etc/*.in share/fish share/completions/*.fish share/functions/*.fish seq -o messages.pot; then \
+		if xgettext -j -k_ -kN_ -LShell etc/*.in share/fish share/completions/*.fish share/functions/*.fish seq -o messages.pot; then true; else \
 			echo "Your xgettext version is too old to build the messages.pot file"\
 			rm messages.pot\
 			false;\
@@ -326,12 +335,15 @@ doc_src/builtin_doc: $(BUILTIN_DOC_SRC) doc_src/count.txt builtin_help.hdr $(CMD
 		echo "*/" >>$$FILE; \
 	done
 	cd doc_src; doxygen; cd ..;
+	for i in doc_src/builtin_doc/man/man1/*.1; do \
+		sed -i -e "s/\(.\)\\.SH/\1/" $$i; \
+	done 
 	touch doc_src/builtin_doc
 
 builtin_help.c: doc_src/builtin_doc gen_hdr.sh
 	$(MAKE) gen_hdr2 # Don't depend on gen_hdr2, because then we would need to rebuild the docs whenever we use a fresh tarball
 	cp builtin_help.hdr builtin_help.c; 
-	if ! test -x gen_hdr.sh; then chmod 755 gen_hdr.sh; fi
+	if test -x gen_hdr.sh; then true; else chmod 755 gen_hdr.sh; fi
 	for i in $(BUILTIN_DOC_HDR) doc_src/count.doxygen ; do \
 		echo '	hash_put( &tbl, L"'`basename $$i .doxygen`'",' >>$@; \
 		./gen_hdr.sh $$i >>$@; \
@@ -380,8 +392,12 @@ check-uninstall:
 	fi;
 .PHONY: check-uninstall
 
+install-sh:
+	if test -x install-sh; then true; else chmod 755 install-sh; fi
+.PHONY: install-sh
+
 # Try to install after checking for incompatible installed versions
-install: all check-uninstall install-force
+install: all install-sh check-uninstall install-force
 .PHONY: install
 
 # Force installation, even in presense of incompatible previous
@@ -437,14 +453,17 @@ uninstall: uninstall-translations
 	rm -f $(DESTDIR)$(bindir)/xsel
 	rm -f $(DESTDIR)$(sysconfdir)/fish
 	rm -f $(DESTDIR)$(sysconfdir)/fish_inputrc
+	if test -f $(DESTDIR)$(sysconfdir)/fish.d/fish_interactive.fish; then \
+		rm -f $(DESTDIR)$(sysconfdir)/fish.d/fish_interactive.fish; \
+	fi
 	if test -d $(DESTDIR)$(datadir)/fish; then \
 		rm -r $(DESTDIR)$(datadir)/fish; \
 	fi
 	if test -d $(DESTDIR)$(docdir); then \
 		rm -r $(DESTDIR)$(docdir);\
 	fi
-	for i in fish.1 @XSEL_MAN@ mimedb.1 fishd.1 set_color.1 count.1; do \
-		rm -f $(DESTDIR)$(mandir)/man1/$$i*; \
+	for i in $(MANUALS); do \
+		rm -f $(DESTDIR)$(mandir)/man1/`basename $$i`*; \
 	done;
 .PHONY: uninstall
 
@@ -574,8 +593,8 @@ dist: fish-@PACKAGE_VERSION@.tar.bz2
 
 # Create .rpm file for the current systems architecture and an
 # .src.rpm file.
-rpm: fish-@PACKAGE_VERSION@.tar.bz2
-	@if ! which rpmbuild; then \
+rpm: fish-@PACKAGE_VERSION@.tar.bz2 fish.spec
+	@if which rpmbuild; then true; else \
 		echo Could not find the rpmbuild command, needed to build an rpm; \
 		echo You may be able to install it using the following command:; \
 		echo \'yum install rpm-build\'; \

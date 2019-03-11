@@ -1,5 +1,5 @@
 # Process this file with autoconf to produce a configure script.
-AC_INIT(fish,1.21.10,fish-users@lists.sf.net)
+AC_INIT(fish,1.21.11,fish-users@lists.sf.net)
 
 # If needed, run autoconf to regenerate the configure file
 AC_MSG_CHECKING([if autoconf needs to be run])
@@ -103,15 +103,22 @@ else
     AC_SUBST( XSEL_MAN_PATH,[ ])
 fi
 
+# These help out with getting better prototypes on some platforms
+
 #
 # Test if the compiler accepts the -std=c99 flag. If so, using it
 # increases the odds of correct compilation, since we want to use the
-# *wprintf functions, which where defined in C99.
-#
+# *wprintf functions, which where defined in C99. On some platforms
+# (Solaris 10) adding -std=c99 in turn requires that _POSIX_C_SOURCE
+# be defined to 200112L otherwise several POSIX-specific, non-ISO-C99 
+# types/prototypes are made unavailable e.g. siginfo_t.  Finally,
+# defining _XOPEN_SOURCE to 600 is compatible with the
+# _POSIX_C_SOURCE value and provides a little assurance that
+# extension functions' prototypes are available, e.g. killpg().
 
 XCFLAGS="$CFLAGS"
-CFLAGS="$CFLAGS -std=c99"
-AC_MSG_CHECKING(if -std=c99 works)
+CFLAGS="$CFLAGS -std=c99 -D_XOPEN_SOURCE=600 -D_POSIX_C_SOURCE=200112L"
+AC_MSG_CHECKING(if -std=c99 -D_XOPEN_SOURCE=600 -D_POSIX_C_SOURCE=200112L works)
 AC_CACHE_VAL(local_cv_has__std_c99,[
 AC_TRY_RUN([
 #include <stdlib.h>
@@ -185,8 +192,8 @@ if test "$glibc" = yes; then
 	# fallback.h, in order to keep fish working on non-gnu platforms.
 	#
 
-	CFLAGS="$CFLAGS -D _GNU_SOURCE -D _ISOC99_SOURCE"
-
+	AC_DEFINE( _GNU_SOURCE, 1, [Macro to enable additional prototypes under Glibc])
+	AC_DEFINE( _ISOC99_SOURCE, 1, [Macro to enable additional prototypes under Glibc])
 else
 	AC_MSG_RESULT(no)
 fi
@@ -205,6 +212,32 @@ AC_CANONICAL_TARGET
 if test $target_cpu = powerpc; then
    AC_DEFINE([TPUTS_KLUDGE],[1],[Evil kludge to get Power based machines to work])
 fi
+
+# Solaris-specific flags go here
+AC_MSG_CHECKING([if we are under Solaris])
+case $target_os in
+	solaris*) 
+		AC_DEFINE( __EXTENSIONS__, 1, [Macro to enable additional prototypes under Solaris])
+		AC_MSG_RESULT(yes)
+		;;
+	*)
+		AC_MSG_RESULT(no)
+		;;
+esac
+
+
+# BSD-specific flags go here
+AC_MSG_CHECKING([if we are under BSD])
+case $target_os in
+	*bsd*) 
+		AC_DEFINE( __BSD_VISIBLE, 1, [Macro to enable additional prototypes under BSD])
+		AC_DEFINE( _NETBSD_SOURCE, 1, [Macro to enable additional prototypes under BSD])
+		AC_MSG_RESULT(yes)
+		;;
+	*)
+		AC_MSG_RESULT(no)
+		;;
+esac
 
 
 # Set up PREFIX and related preprocessor symbols. Fish needs to know
@@ -250,7 +283,7 @@ AC_SEARCH_LIBS( nanosleep, rt, , [AC_MSG_ERROR([Cannot find the rt library, need
 AC_SEARCH_LIBS( setupterm, [ncurses curses], , [AC_MSG_ERROR([Could not find a curses implementation, needed to build fish])] )
 
 # Check for presense of various header files
-AC_CHECK_HEADERS([getopt.h termio.h sys/resource.h term.h ncurses/term.h libintl.h ncurses.h curses.h stropts.h])
+AC_CHECK_HEADERS([getopt.h termio.h sys/resource.h term.h ncurses/term.h libintl.h ncurses.h curses.h stropts.h siginfo.h sys/select.h sys/ioctl.h sys/termios.h])
 
 AC_CHECK_HEADER([regex.h],
 				[AC_DEFINE([HAVE_REGEX_H], [1], [Define to 1 if you have the <regex.h> header file.])],
@@ -259,7 +292,7 @@ AC_CHECK_HEADER([regex.h],
 # Check for presense of various functions
 AC_CHECK_FUNCS( gettext wcsdup wcsndup wcslen wcscasecmp wcsncasecmp fwprintf )
 AC_CHECK_FUNCS( futimes wcwidth wcswidth getopt_long wcstok fputwc fgetwc )
-AC_CHECK_FUNCS( wcstol dcgettext wcslcat wcslcpy lrand48_r)
+AC_CHECK_FUNCS( wcstol dcgettext wcslcat wcslcpy lrand48_r killpg)
 
 # The Makefile also needs to know if we have gettext, so it knows if the translations should be installed.
 AC_CHECK_FUNC( gettext, AC_SUBST( HAVE_GETTEXT, 1 ), AC_SUBST( HAVE_GETTEXT, 0 ) )
@@ -285,6 +318,24 @@ if test "$have_realpath_null" = yes; then
 else
 	AC_MSG_RESULT(no)
 fi
+
+
+# Check if struct winsize exists
+AC_MSG_CHECKING([if struct winsize and TIOCGWINSZ exist])
+AC_LINK_IFELSE(
+	[AC_LANG_PROGRAM([
+#ifdef HAVE_SYS_TERMIOS_H
+#include <sys/termios.h>
+#endif
+
+#ifdef HAVE_SYS_IOCTL_H
+#include <sys/ioctl.h>
+#endif
+
+],
+	[struct winsize termsize = {0}; TIOCGWINSZ;])], 
+	[AC_MSG_RESULT(yes); AC_DEFINE([HAVE_WINSIZE], [1], [Define to 1 if the winsize struct and TIOCGWINSZ macro exist])], 
+	AC_MSG_RESULT(no))
 
 # If we have a fwprintf in libc, test that it actually works. As of
 # March 2006, it is broken under Dragonfly BSD.
@@ -328,14 +379,14 @@ else
     AC_MSG_RESULT(no)
 fi
 
-# Check if we are using basic BSD curses - in that case we redefine
+# Check if del_curterm is broken - in that case we redefine
 # del_curterm as a no-op, to avoid a double-free
 
-AC_MSG_CHECKING([If we are using BSD curses])
+AC_MSG_CHECKING([If del_curterm is broken])
 case $target_os in
 	*bsd*)
 		AC_MSG_RESULT(yes)
-		AC_CHECK_LIB( ncurses, del_curterm, true, [AC_DEFINE([HAVE_BROKEN_DEL_CURTERM],[1],[We are using basic BSD curses, redefine del_curterm to a no-op to avoid a double-free bug])])
+		AC_DEFINE([HAVE_BROKEN_DEL_CURTERM],[1],[del_curterm si broken, redefine it to a no-op to avoid a double-free bug])
 		;;
 	*)
 		AC_MSG_RESULT(no)

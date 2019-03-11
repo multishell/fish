@@ -28,7 +28,15 @@ commence.
 #include <termios.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+
+#ifdef HAVE_SYS_TERMIOS_H
+#include <sys/termios.h>
+#endif
+
+#ifdef HAVE_SYS_IOCTL_H
 #include <sys/ioctl.h>
+#endif
+
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <sys/poll.h>
@@ -49,6 +57,14 @@ commence.
 #include <term.h>
 #elif HAVE_NCURSES_TERM_H
 #include <ncurses/term.h>
+#endif
+
+#ifdef HAVE_SIGINFO_H
+#include <siginfo.h>
+#endif
+
+#ifdef HAVE_SYS_SELECT_H
+#include <sys/select.h>
 #endif
 
 #include <signal.h>
@@ -633,7 +649,7 @@ void reader_write_title()
 	  as that of a virtual terminal, we assume it supports setting the
 	  title. Otherwise we check the ttyname.
 	*/
-	if( !term || !contains_str( term, L"xterm", L"screen", L"nxterm", L"rxvt", 0 ) )
+	if( !term || !contains_str( term, L"xterm", L"screen", L"nxterm", L"rxvt", (wchar_t *)0 ) )
 	{
 		char *n = ttyname( STDIN_FILENO );
 		if( strstr( n, "tty" ) || strstr( n, "/vc/") )
@@ -651,12 +667,15 @@ void reader_write_title()
 	if( exec_subshell( title, &l ) != -1 )
 	{
 		int i;
-		writestr( L"\e]2;" );
-		for( i=0; i<al_get_count( &l ); i++ )
+		if( al_get_count( &l ) > 0 )
 		{
-			writestr( (wchar_t *)al_get( &l, i ) );
+			writestr( L"\e]2;" );
+			for( i=0; i<al_get_count( &l ); i++ )
+			{
+				writestr( (wchar_t *)al_get( &l, i ) );
+			}
+			writestr( L"\7" );
 		}
-		writestr( L"\7" );
 	}
 	proc_pop_interactive();
 		
@@ -791,7 +810,13 @@ static int calc_prompt_width( array_list_t *arr )
 			}
 			else if( next[j] == L'\t' )
 			{
-				res=(res+8)&~7;				
+				/*
+				  Assume tab stops every 8 characters if undefined
+				*/
+				if( init_tabs <= 0 )
+					init_tabs = 8;
+				
+				res=( (res/init_tabs)+1 )*init_tabs;
 			}
 			else
 			{
@@ -875,6 +900,7 @@ static void write_cmdline()
 
 void reader_init()
 {
+
 	tcgetattr(0,&shell_modes);        /* get the current terminal modes */
 	memcpy( &saved_modes,
 			&shell_modes,
@@ -1443,7 +1469,9 @@ static void run_pager( wchar_t *prefix, int is_quoted, array_list_t *comp )
 {
 	int i;
 	string_buffer_t cmd;
+	string_buffer_t msg;
 	wchar_t * prefix_esc;
+	char *foo;
 
 	if( !prefix || (wcslen(prefix)==0))
 		prefix_esc = wcsdup(L"\"\"");
@@ -1451,6 +1479,7 @@ static void run_pager( wchar_t *prefix, int is_quoted, array_list_t *comp )
 		prefix_esc = escape( prefix,1);
 
 	sb_init( &cmd );
+	sb_init( &msg );
 	sb_printf( &cmd,
 			   L"fish_pager %d %ls",
 //			   L"valgrind --track-fds=yes --log-file=pager.txt --leak-check=full ./fish_pager %d %ls",
@@ -1459,24 +1488,33 @@ static void run_pager( wchar_t *prefix, int is_quoted, array_list_t *comp )
 
 	free( prefix_esc );
 
+	io_data_t *in= io_buffer_create( 1 );
+	
 	for( i=0; i<al_get_count( comp); i++ )
 	{
-		wchar_t *el = escape( (wchar_t*)al_get( comp, i ),1);
-		sb_printf( &cmd, L" %ls", el );
-		free(el);
+	    wchar_t *el = escape((wchar_t*)al_get( comp, i ), 0);
+		
+		sb_printf( &msg, L"%ls\n", el );
+		free( el );		
 	}
-
+	
+	foo = wcs2str( (wchar_t *)msg.buff );
+	b_append( in->param2.out_buffer, foo, strlen(foo) );
+	free( foo );
+	
 	term_donate();
-
-	io_data_t *out = io_buffer_create();
-
+	
+	io_data_t *out = io_buffer_create( 0 );
+	out->next = in;
+	out->fd = 1;
+	
 	eval( (wchar_t *)cmd.buff, out, TOP);
 	term_steal();
 
 	io_buffer_read( out );
 
 	sb_destroy( &cmd );
-
+	sb_destroy( &msg );
 
 	int nil=0;
 	b_append( out->param2.out_buffer, &nil, 1 );
@@ -1493,7 +1531,9 @@ static void run_pager( wchar_t *prefix, int is_quoted, array_list_t *comp )
 		free( str );
 	}
 
+
 	io_buffer_destroy( out);
+	io_buffer_destroy( in);
 
 }
 

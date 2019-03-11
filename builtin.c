@@ -21,6 +21,8 @@
 
 */
 
+#include "config.h"
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <wchar.h>
@@ -36,8 +38,6 @@
 #include <wctype.h>
 #include <sys/time.h>
 #include <time.h>
-
-#include "config.h"
 
 #include "fallback.h"
 #include "util.h"
@@ -3126,7 +3126,7 @@ void builtin_push_io( int in )
 {
 	if( builtin_stdin != -1 )
 	{
-		al_push( &io_stack, (void *)(long)builtin_stdin );
+		al_push_long( &io_stack, (long)builtin_stdin );
 		al_push( &io_stack, sb_out );
 		al_push( &io_stack, sb_err );
 	}
@@ -3149,7 +3149,7 @@ void builtin_pop_io()
 	{
 		sb_err = (string_buffer_t *)al_pop( &io_stack );
 		sb_out = (string_buffer_t *)al_pop( &io_stack );
-		builtin_stdin = (int)(long)al_pop( &io_stack );
+		builtin_stdin = (int)al_pop_long( &io_stack );
 	}
 	else
 	{

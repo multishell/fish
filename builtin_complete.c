@@ -3,6 +3,8 @@
 Functions used for implementing the complete builtin. 
 
 */
+#include "config.h"
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <wchar.h>
@@ -10,8 +12,6 @@ Functions used for implementing the complete builtin.
 #include <sys/types.h>
 #include <termios.h>
 #include <signal.h>
-
-#include "config.h"
 
 #include "fallback.h"
 #include "util.h"
@@ -364,7 +364,7 @@ static int builtin_complete( wchar_t **argv )
 				}
 				,
 				{
-					L"do-complete", required_argument, 0, 'C'
+					L"do-complete", optional_argument, 0, 'C'
 				}
 				,
 				{

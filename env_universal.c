@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <wchar.h>
-#include <strings.h>
+#include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -23,6 +23,10 @@
 #include <term.h>
 #elif HAVE_NCURSES_TERM_H
 #include <ncurses/term.h>
+#endif
+
+#ifdef HAVE_SYS_SELECT_H
+#include <sys/select.h>
 #endif
 
 #include <signal.h>

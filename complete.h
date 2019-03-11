@@ -66,6 +66,10 @@
 */
 #define PROG_COMPLETE_SEP L'\t'
 
+/**
+   Terminator for completions sent to the fish_pager
+*/
+#define COMPLETE_TERMINATOR L'\006'
 
 /**
 

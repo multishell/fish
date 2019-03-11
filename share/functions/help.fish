@@ -18,6 +18,12 @@ function help -d (N_ "Show help for the fish shell")
 	set h $h expand-variable expand-home expand-brace expand-wildcard 
 	set -l help_topics $h expand-command-substitution expand-process 
 
+	# 'help -h' should launch 'help help'
+	switch $argv[1]
+		case -h --h --he --hel --help
+			set argv help
+	end
+
 	#
 	# Find a suitable browser for viewing the help pages. This is needed
 	# by the help function defined below.
@@ -92,6 +98,16 @@ function help -d (N_ "Show help for the fish shell")
 	end
 
 	if test $fish_browser_bg
+
+		switch $fish_browser
+			case 'htmlview' 'x-www-browser'
+				printf (_ 'help: Help is being displayed in your default browser\n')
+
+			case '*'
+				printf (_ 'help: Help is being displayed in %s\n') $fish_browser
+
+		end
+
 		eval $fish_browser file://$__fish_help_dir/$fish_help_page \&
 	else
 		eval $fish_browser file://$__fish_help_dir/$fish_help_page

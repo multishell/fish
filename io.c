@@ -12,7 +12,15 @@ Utilities for io redirection.
 #include <string.h>
 #include <errno.h>
 #include <sys/types.h>
+
+#ifdef HAVE_SYS_TERMIOS_H
+#include <sys/termios.h>
+#endif
+
+#ifdef HAVE_SYS_IOCTL_H
 #include <sys/ioctl.h>
+#endif
+
 #include <unistd.h>
 #include <fcntl.h>
 
@@ -93,16 +101,17 @@ void io_buffer_read( io_data_t *d )
 }
 
 
-io_data_t *io_buffer_create()
+io_data_t *io_buffer_create( int is_input )
 {
 	io_data_t *buffer_redirect = malloc( sizeof( io_data_t ));
 	
 	buffer_redirect->io_mode=IO_BUFFER;
 	buffer_redirect->next=0;
 	buffer_redirect->param2.out_buffer= malloc( sizeof(buffer_t));
+	buffer_redirect->param3.is_input = is_input;
 	b_init( buffer_redirect->param2.out_buffer );
-	buffer_redirect->fd=1;
-
+	buffer_redirect->fd=is_input?0:1;
+	
 	if( exec_pipe( buffer_redirect->param1.pipe_fd ) == -1 )
 	{
 		debug( 1, PIPE_ERROR );
@@ -221,8 +230,7 @@ void io_print( io_data_t *io )
 		return;
 	}
 	
-	debug( 1, L"IO fd %d, type ",
-			  io->fd );
+	debug( 1, L"IO fd %d, type ", io->fd );
 	switch( io->io_mode )
 	{
 		case IO_PIPE:

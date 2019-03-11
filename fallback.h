@@ -43,6 +43,20 @@ typedef int tputs_arg_t;
 typedef char tputs_arg_t;
 #endif
 
+#ifndef SIGIO
+#define SIGIO SIGUSR1
+#endif
+
+#ifndef HAVE_WINSIZE
+struct winsize 
+{
+	unsigned short ws_row;	
+	unsigned short ws_col;
+}
+	;
+
+#endif
+
 #ifdef TPUTS_KLUDGE
 
 /**
@@ -290,7 +304,7 @@ size_t wcslcpy( wchar_t *dst, const wchar_t *src, size_t siz );
 /**
    BSD del_curterm seems to do a double-free. We redefine it as a no-op
 */
-int del_curterm(TERMINAL *oterm);
+#define del_curterm(oterm) 1
 #endif
 
 #ifndef HAVE_LRAND48_R
@@ -364,6 +378,11 @@ char * dcgettext ( const char * domainname,
 */
 extern int _nl_msg_cat_cntr;
 
+#endif
+
+
+#ifndef HAVE_KILLPG
+int killpg( int pgr, int sig );
 #endif
 
 #endif
