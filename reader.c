@@ -567,11 +567,12 @@ static void remove_duplicates( array_list_t *l )
 
 	prev = (wchar_t *)al_get( l, 0 );
 	for( in=1, out=1; in < al_get_count( l ); in++ )
-	{
+	{		
 		wchar_t *curr = (wchar_t *)al_get( l, in );
+
 		if( fldcmp( prev, curr )==0 )
 		{
-			free( curr );
+			free( curr );			
 		}
 		else
 		{
@@ -606,7 +607,6 @@ void reader_write_title()
 	wchar_t *title;
 	array_list_t l;
 	wchar_t *term = env_get( L"TERM" );
-	int was_interactive = is_interactive;
 
 	/*
 	  This is a pretty lame heuristic for detecting terminals that do
@@ -628,7 +628,7 @@ void reader_write_title()
 
 	al_init( &l );
 
-	is_interactive = 0;
+	proc_push_interactive(0);
 	if( exec_subshell( title, &l ) != -1 )
 	{
 		int i;
@@ -639,8 +639,8 @@ void reader_write_title()
 		}
 		writestr( L"\7" );
 	}
-	is_interactive = was_interactive;
-	
+	proc_pop_interactive();
+		
 	al_foreach( &l, (void (*)(const void *))&free );
 	al_destroy( &l );
 	set_color( FISH_COLOR_RESET, FISH_COLOR_RESET );
@@ -790,8 +790,8 @@ static void write_prompt()
 
 		if( data->prompt )
 		{
-			int was_interactive = is_interactive;
-			is_interactive = 0;
+			proc_push_interactive( 0 );
+			
 			if( exec_subshell( data->prompt, &prompt_list ) == -1 )
 			{
 				/* If executing the prompt fails, make sure we at least don't print any junk */
@@ -799,7 +799,7 @@ static void write_prompt()
 				al_destroy( &prompt_list );
 				al_init( &prompt_list );
 			}
-			is_interactive = was_interactive;			
+			proc_pop_interactive();
 		}
 
 		data->prompt_width=calc_prompt_width( &prompt_list );
@@ -835,25 +835,6 @@ static void write_cmdline()
 	}
 }
 
-/**
-   perm_left_cursor and parm_right_cursor don't seem to be defined as
-   often as cursor_left and cursor_right, so we use this workalike.
-*/
-static void move_cursor( int steps )
-{
-	int i;
-
-	if( steps < 0 ){
-		for( i=0; i>steps; i--)
-		{
-			writembs(cursor_left);
-		}
-	}
-	else
-		for( i=0; i<steps; i++)
-			writembs(cursor_right);
-}
-
 
 void reader_init()
 {
@@ -875,10 +856,9 @@ void reader_destroy()
 
 void reader_exit( int do_exit )
 {
-	if( is_interactive )
+	if( data )
 		data->end_loop=do_exit;
-	else
-		end_loop=do_exit;
+	end_loop=do_exit;
 }
 
 void repaint()
@@ -1221,7 +1201,7 @@ static wchar_t get_quote( wchar_t *cmd, int l )
 
 		if( cmd[i] == L'\'' || cmd[i] == L'\"' )
 		{
-			wchar_t *end = quote_end( &cmd[i] );
+			const wchar_t *end = quote_end( &cmd[i] );
 			//fwprintf( stderr, L"Jump %d\n",  end-cmd );
 			if(( end == 0 ) || (!*end) || (end-cmd > l))
 			{
@@ -1418,6 +1398,7 @@ static void run_pager( wchar_t *prefix, int is_quoted, array_list_t *comp )
 	sb_init( &cmd );
 	sb_printf( &cmd,
 			   L"fish_pager %d %ls",
+//			   L"valgrind --track-fds=yes --log-file=pager.txt --leak-check=full ./fish_pager %d %ls",
 			   is_quoted,
 			   prefix_esc );
 
@@ -1463,7 +1444,7 @@ static void run_pager( wchar_t *prefix, int is_quoted, array_list_t *comp )
 
 /**
    Handle the list of completions. This means the following:
-
+   
    - If the list is empty, flash the terminal.
    - If the list contains one element, write the whole element, and if
    the element does not end on a '/', '@', ':', or a '=', also write a trailing
@@ -1472,7 +1453,7 @@ static void run_pager( wchar_t *prefix, int is_quoted, array_list_t *comp )
    the prefix.
    - If the list contains multiple elements without
    a common prefix, call run_pager to display a list of completions
-
+   
    \param comp the list of completion strings
 */
 
@@ -1480,7 +1461,7 @@ static void run_pager( wchar_t *prefix, int is_quoted, array_list_t *comp )
 static int handle_completions( array_list_t *comp )
 {
 	int i;
-
+	
 	if( al_get_count( comp ) == 0 )
 	{
 		if( flash_screen != 0 )
@@ -2056,7 +2037,6 @@ void reader_set_buffer( wchar_t *b, int p )
 	else
 	{
 		data->buff_pos=l;
-//		fwprintf( stderr, L"Pos %d\n", l );
 	}
 
 	reader_super_highlight_me_plenty( data->buff,
@@ -2307,7 +2287,6 @@ static int read_i()
 		{
 			prev_end_loop=0;
 		}
-		error_reset();
 
 	}
 	reader_pop();
@@ -2793,8 +2772,8 @@ wchar_t *reader_readline()
 
 			case R_CLEAR_SCREEN:
 			{
-				writembs( clear_screen );
-
+				if( clear_screen )
+					writembs( clear_screen );
 				repaint();
 				break;
 			}
@@ -2955,7 +2934,6 @@ static int read_ni( int fd )
 		free( buff );
 		res=1;
 	}
-	error_reset();
 	return res;
 }
 
@@ -2967,20 +2945,19 @@ int reader_read( int fd )
 	  we need to preserve is_interactive, so we save the
 	  original state. We also update the signal handlers.
 	*/
-	int shell_was_interactive = is_interactive;
 
-	is_interactive = ((fd == 0) && isatty(STDIN_FILENO));
-	signal_set_handlers();
-
+	proc_push_interactive( ((fd == 0) && isatty(STDIN_FILENO)));
+		
 	res= is_interactive?read_i():read_ni( fd );
 
 	/*
 	  If the exit command was called in a script, only exit the
 	  script, not the program
 	*/
+	if( data )
+		data->end_loop = 0;
 	end_loop = 0;
-
-	is_interactive = shell_was_interactive;
-	signal_set_handlers();
+	
+	proc_pop_interactive();
 	return res;
 }

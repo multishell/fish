@@ -1,5 +1,5 @@
 # Process this file with autoconf to produce a configure script.
-AC_INIT(fish,1.20.2,fish-users@lists.sf.net)
+AC_INIT(fish,1.21.0,fish-users@lists.sf.net)
 
 for i in /usr/pkg /sw /opt /opt/local; do
 
@@ -104,10 +104,6 @@ else
 	AC_SUBST( PREFIX, [$prefix])
 fi
 
-AC_SUBST(fishdir,[/fish.d])
-AC_SUBST(fishfile,[/fish])
-AC_SUBST(fishinputfile,[/fish_inputrc])
-
 AC_ARG_VAR( [docdir], [Documentation direcotry] )
 
 if test -z $docdir; then
@@ -116,7 +112,9 @@ fi
 
 AC_DEFINE_UNQUOTED( DOCDIR, [L"$(eval echo $docdir)"], [Documentation directory] )
 AC_DEFINE_UNQUOTED( SYSCONFDIR, [L"$(eval echo $sysconfdir)"], [System configuration directory] )
+AC_DEFINE_UNQUOTED( DATADIR, [L"$(eval echo $datadir)"], [System configuration directory] )
 AC_SUBST( SYSCONFDIR, ["$(eval echo $sysconfdir)"] )
+AC_SUBST( DATADIR, ["$(eval echo $datadir)"] )
 
 # Set up locale directory
 AC_DEFINE_UNQUOTED( [LOCALEDIR], "$(eval echo $datadir)/locale", [Locale directory])
@@ -199,7 +197,7 @@ AC_CHECK_LIB(rt, nanosleep)
 AC_CHECK_LIB(intl, gettext)
 
 # Check for various header files
-AC_CHECK_HEADERS([getopt.h termio.h sys/resource.h term.h ncurses/term.h libintl.h])
+AC_CHECK_HEADERS([getopt.h termio.h sys/resource.h term.h ncurses/term.h libintl.h ncurses.h curses.h])
 
 AC_CHECK_HEADER([regex.h],
 				[AC_DEFINE([HAVE_REGEX_H], [1], [Define to 1 if you have the <regex.h> header file.])],
@@ -235,7 +233,7 @@ fi
 # Check if we have ncurses, and use it rather than curses if possible.
 AC_SEARCH_LIBS( setupterm, [ncurses curses], [ AC_MSG_NOTICE([Found curses implementation])], [AC_MSG_ERROR([Could not find a curses implementation, needed to build fish])] )
 
-AC_CONFIG_FILES([Makefile fish.spec doc_src/fish.1 doc_src/Doxyfile init/fish init/fish_interactive.fish init/fish_complete.fish seq])
+AC_CONFIG_FILES([Makefile fish.spec doc_src/fish.1 doc_src/Doxyfile etc/fish etc/fish_interactive.fish seq])
 AC_OUTPUT
 
 echo "Now run 'make' and 'make install' to built and install fish."

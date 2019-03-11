@@ -43,6 +43,9 @@ struct lookup_entry
 	const wchar_t *desc;	
 };
 
+static int block_count=0;
+
+
 /**
    Lookup table used to convert between signal names and signal ids,
    etc.
@@ -384,7 +387,6 @@ static void handle_winch( int sig, siginfo_t *info, void *context )
 static void handle_int( int sig, siginfo_t *info, void *context )
 {
 	reader_handle_int( sig );
-
 	default_handler( sig, info, context);	
 }
 
@@ -419,6 +421,10 @@ void signal_reset_handlers()
 void signal_set_handlers()
 {
 	struct sigaction act;
+
+	if( is_interactive == -1 )
+		return;
+	
 	sigemptyset( & act.sa_mask );
 	act.sa_flags=SA_SIGINFO;
 	act.sa_sigaction = &default_handler;
@@ -439,7 +445,7 @@ void signal_set_handlers()
 	  recover.
 	*/
 	sigaction( SIGPIPE, &act, 0);
-	
+
 	if( is_interactive )
 	{
 		/*
@@ -536,13 +542,22 @@ void signal_handle( int sig, int do_handle )
 void signal_block()
 {
 	sigset_t chldset; 
-	sigfillset( &chldset );
-	sigprocmask(SIG_BLOCK, &chldset, 0);	
+	
+	if( !block_count )
+	{
+		sigfillset( &chldset );
+		sigprocmask(SIG_BLOCK, &chldset, 0);	
+	}
+	block_count++;
 }
 
 void signal_unblock()
 {
 	sigset_t chldset; 
-	sigfillset( &chldset );
-	sigprocmask(SIG_UNBLOCK, &chldset, 0);	
+	block_count--;
+	if( !block_count )
+	{
+		sigfillset( &chldset );
+		sigprocmask(SIG_UNBLOCK, &chldset, 0);	
+	}
 }

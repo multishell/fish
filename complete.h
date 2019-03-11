@@ -33,6 +33,8 @@
 /** Separateor between completion and description*/
 #define COMPLETE_SEP_STR L"\004"
 
+#define COMPLETE_ITEM_SEP L'\uf500'
+
 /**
    Character that separates the completion and description on programmable completions
 */
@@ -162,6 +164,6 @@ int complete_is_valid_argument( const wchar_t *str,
    \param cmd the command for which to load command-specific completions
    \param reload should the commands completions be reloaded, even if they where previously loaded. (This is set to true on actual completions, so that changed completion are updated in running shells)
 */
-void complete_load( wchar_t *cmd, int reload );
+void complete_load( const wchar_t *cmd, int reload );
 
 #endif

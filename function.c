@@ -19,6 +19,8 @@
 #include "event.h"
 #include "reader.h"
 #include "parse_util.h"
+#include "env.h"
+#include "expand.h"
 
 
 /**
@@ -33,6 +35,7 @@ typedef struct
 	const wchar_t *definition_file;
 	int definition_offset;	
 	int is_binding;
+	int is_autoload;
 }
 	function_data_t;
 
@@ -40,6 +43,79 @@ typedef struct
    Table containing all functions
 */
 static hash_table_t function;
+static int is_autoload = 0;
+
+/**
+   Make sure that if the specified function is a dynamically loaded
+   function, it has been fully loaded.
+*/
+static int load( const wchar_t *name )
+{
+	int was_autoload = is_autoload;
+	int res;
+	function_data_t *data;
+	data = (function_data_t *)hash_get( &function, name );
+	if( data && !data->is_autoload )
+		return 0;
+	
+	is_autoload = 1;	
+	res = parse_util_load( name,
+						   L"fish_function_path",
+						   &function_remove,
+						   1 );
+	is_autoload = was_autoload;
+	return res;
+}
+
+/**
+   Insert a list of all dynamically loaded functions into the
+   specified list.
+*/
+static void autoload_names( array_list_t *out, int get_hidden )
+{
+	int i;
+	
+	array_list_t path_list;
+	const wchar_t *path_var = env_get( L"fish_function_path" );
+	
+	if( ! path_var )
+		return;
+	
+	al_init( &path_list );
+
+	expand_variable_array( path_var, &path_list );
+	for( i=0; i<al_get_count( &path_list ); i++ )
+	{
+		wchar_t *ndir = (wchar_t *)al_get( &path_list, i );
+		DIR *dir = wopendir( ndir );
+		if( !dir )
+			continue;
+		
+		struct wdirent *next;
+		while( (next=wreaddir(dir))!=0 )
+		{
+			wchar_t *fn = next->d_name;
+			wchar_t *suffix;
+			if( !get_hidden && fn[0] == L'_' )
+				continue;
+			
+			suffix = wcsrchr( fn, L'.' );
+			if( suffix && (wcscmp( suffix, L".fish" ) == 0 ) )
+			{
+				const wchar_t *dup;
+				*suffix = 0;
+				dup = intern( fn );
+				if( !dup )
+					die_mem();
+				al_push( out, dup );
+			}
+		}				
+		closedir(dir);
+	}
+	al_foreach( &path_list, (void (*)(const void *))&free );
+	al_destroy( &path_list );
+}
+
 
 /**
    Free all contents of an entry to the function hash table
@@ -92,7 +168,8 @@ void function_add( const wchar_t *name,
 	d->desc = desc?wcsdup( desc ):0;
 	d->is_binding = is_binding;
 	d->definition_file = intern(reader_current_filename());
-	
+	d->is_autoload = is_autoload;
+		
 	hash_put( &function, intern(name), d );
 	
 	for( i=0; i<al_get_count( events ); i++ )
@@ -104,6 +181,10 @@ void function_add( const wchar_t *name,
 
 int function_exists( const wchar_t *cmd )
 {
+	if( parser_is_reserved(cmd) )
+		return 0;
+	
+	load( cmd );
 	return (hash_get(&function, cmd) != 0 );
 }
 
@@ -130,8 +211,9 @@ void function_remove( const wchar_t *name )
 	
 const wchar_t *function_get_definition( const wchar_t *argv )
 {
-	function_data_t *data = 
-		(function_data_t *)hash_get( &function, argv );
+	function_data_t *data;
+	load( argv );
+	data = (function_data_t *)hash_get( &function, argv );
 	if( data == 0 )
 		return 0;
 	return data->cmd;
@@ -139,8 +221,9 @@ const wchar_t *function_get_definition( const wchar_t *argv )
 	
 const wchar_t *function_get_desc( const wchar_t *argv )
 {
-	function_data_t *data = 
-		(function_data_t *)hash_get( &function, argv );
+	function_data_t *data;
+	load( argv );
+	data = (function_data_t *)hash_get( &function, argv );
 	if( data == 0 )
 		return 0;
 	
@@ -149,8 +232,9 @@ const wchar_t *function_get_desc( const wchar_t *argv )
 
 void function_set_desc( const wchar_t *name, const wchar_t *desc )
 {
-	function_data_t *data = 
-		(function_data_t *)hash_get( &function, name );
+	function_data_t *data;
+	load( name );
+	data = (function_data_t *)hash_get( &function, name );
 	if( data == 0 )
 		return;
 
@@ -173,6 +257,8 @@ static void get_names_internal( const void *key,
 
 void function_get_names( array_list_t *list, int get_hidden )
 {
+	autoload_names( list, get_hidden );
+	
 	if( get_hidden )
 		hash_get_keys( &function, list );
 	else
@@ -182,8 +268,9 @@ void function_get_names( array_list_t *list, int get_hidden )
 
 const wchar_t *function_get_definition_file( const wchar_t *argv )
 {
-	function_data_t *data = 
-		(function_data_t *)hash_get( &function, argv );
+	function_data_t *data;
+	load( argv );
+	data = (function_data_t *)hash_get( &function, argv );
 	if( data == 0 )
 		return 0;
 	
@@ -193,13 +280,12 @@ const wchar_t *function_get_definition_file( const wchar_t *argv )
 
 int function_get_definition_offset( const wchar_t *argv )
 {
-	function_data_t *data = 
-		(function_data_t *)hash_get( &function, argv );
+	function_data_t *data;
+	load( argv );
+	data = (function_data_t *)hash_get( &function, argv );
 	if( data == 0 )
 		return -1;
 	
 	return data->definition_offset;
 }
-
-
 

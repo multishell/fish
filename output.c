@@ -43,12 +43,15 @@
 #include "expand.h"
 #include "common.h"
 #include "output.h"
+#include "halloc_util.h"
 #include "highlight.h"
 
 /**
    Number of color names in the col array
 */
 #define COLORS (sizeof(col)/sizeof(wchar_t *))
+
+static int writeb_internal( char c );
 
 /**
    Names of different colors. 
@@ -101,13 +104,20 @@ static size_t writestr_buff_sz=0;
 */
 static char *writestr_buff = 0;
 
-void output_init()
-{
-}
+/**
+   The function used for output
+*/
 
-void output_destroy()
+static int (*out)(char c) = &writeb_internal;
+
+static void output_destroy()
 {
 	free( writestr_buff );
+}
+
+void output_set_writer( int (*writer)(char) )
+{
+	out = writer;
 }
 
 
@@ -133,7 +143,9 @@ void set_color( int c, int c2 )
 	{
 		c = c2 = FISH_COLOR_NORMAL;
 		if( fg )
+		{
 			writembs( tparm( fg, 0 ) );
+		}
 		writembs( exit_attribute_mode );
 		return;
 	}
@@ -193,12 +205,14 @@ void set_color( int c, int c2 )
 		if( c==FISH_COLOR_NORMAL )
 		{
 			if( fg )
+			{
 				writembs( tparm( fg, 0 ) );
+			}
 			writembs( exit_attribute_mode );
 
 			last_color2 = FISH_COLOR_NORMAL;
 		}
-		else if( ( c >= 0) && ( c < FISH_COLOR_NORMAL ) )
+		else if( ( c >= 0 ) && ( c < FISH_COLOR_NORMAL ) )
 		{
 			if( fg )
 			{
@@ -218,15 +232,15 @@ void set_color( int c, int c2 )
 				writembs( tparm( bg, 0 ) );
 			}
 
-			writembs(exit_attribute_mode);
-			if(( last_color != FISH_COLOR_NORMAL ) && fg )
+			writembs( exit_attribute_mode );
+			if( ( last_color != FISH_COLOR_NORMAL ) && fg )
 			{
-				writembs(tparm( fg, last_color ));
+				writembs( tparm( fg, last_color ) );
 			}
 
 			last_color2 = c2;
 		}
-		else if ((c2 >= 0 ) &&(c2 < FISH_COLOR_NORMAL))
+		else if ( ( c2 >= 0 ) && ( c2 < FISH_COLOR_NORMAL ) )
 		{
 			if( bg )
 			{
@@ -237,40 +251,96 @@ void set_color( int c, int c2 )
 	}
 }
 
+/**
+   perm_left_cursor and parm_right_cursor don't seem to be properly
+   emulated by many terminal emulators, so we only use plain
+   curor_left, curor_right...
+*/
+void move_cursor( int steps )
+{
+	int i;
+	
+	if( !steps )
+		return;
+	
+	if( steps < 0 ){
+		for( i=0; i>steps; i--)
+		{
+			writembs(cursor_left);
+		}
+	}
+	else
+	{
+		for( i=0; i<steps; i++)
+		{
+			writembs(cursor_right);
+		}
+	}
+}
+
+static int writeb_internal( char c )
+{
+	write( 1, &c, 1 );
+	return 0;
+}
+
+int writeb( tputs_arg_t b )
+{
+	out( b );
+	return 0;
+}
+
 int writembs( char *str )
 {
 #ifdef TPUTS_KLUDGE
-	write( 1, str, strlen(str));
+	while( *str )
+	{
+		out( *str );
+	}
 #else
-	tputs(str,1,&writeb);
+	tputs(str,1,writeb);
 #endif
 	return 0;
 }
 
 int writech( wint_t ch )
 {
-	static mbstate_t out_state;
-	char buff[MB_CUR_MAX];
-	size_t bytes = wcrtomb( buff, ch, &out_state );
-	int err;
-	
-	while( (err =write( 1, buff, bytes ) ) )
+	mbstate_t state;
+	int i;
+	char buff[MB_CUR_MAX+1];
+	size_t bytes;
+
+	if( ( ch >= ENCODE_DIRECT_BASE) &&
+		( ch < ENCODE_DIRECT_BASE+256) )
 	{
-		if( err >= 0 )
-			break;
+		buff[0] = ch - ENCODE_DIRECT_BASE;
+		bytes=1;
+	}
+	else
+	{
+		memset( &state, 0, sizeof(state) );
+		bytes= wcrtomb( buff, ch, &state );
 		
-		if( errno == EINTR )
-			continue;
-		
-		wperror( L"write" );
-		return 1;
+		switch( bytes )
+		{
+			case (size_t)(-1):
+			{
+				return 1;
+			}
+		}
 	}
 	
+	for( i=0; i<bytes; i++ )
+	{
+		out( buff[i] );
+	}
 	return 0;
 }
 
 void writestr( const wchar_t *str )
 {
+	char *pos;
+	
 //	while( *str )
 //		writech( *str++ );
 
@@ -292,9 +362,16 @@ void writestr( const wchar_t *str )
 	*/
 	if( writestr_buff_sz < len )
 	{
+		if( !writestr_buff )
+		{
+			halloc_register_function_void( global_context, &output_destroy );
+		}
+		
 		writestr_buff = realloc( writestr_buff, len );
 		if( !writestr_buff )
+		{
 			die_mem();
+		}
 		writestr_buff_sz = len;
 	}
 	
@@ -308,8 +385,10 @@ void writestr( const wchar_t *str )
 	/*
 	  Write
 	*/
-	write( 1, writestr_buff, strlen( writestr_buff ) );	
-
+	for( pos = writestr_buff; *pos; pos++ )
+	{
+		out( *pos );
+	}
 }
 
 
@@ -328,7 +407,9 @@ void writestr_ellipsis( const wchar_t *str, int max_width )
 	{
 		int w = wcwidth( *str );
 		if( written+w+wcwidth( ellipsis_char )>max_width )
+		{
 			break;
+		}
 		written+=w;
 		writech( *(str++) );
 	}
@@ -386,13 +467,13 @@ int writespace( int c )
 	}
 	else
 	{
-		write( 1, "        ", mini(c,8) );
-		if( c>8)
+		int i;
+		
+		for( i=0; i<c; i++ )
 		{
-			writespace( c-8);
+			out( ' ' );
 		}
 	}
-	
 	return 0;
 }
 
@@ -411,7 +492,11 @@ int output_color_code( const wchar_t *val )
 	}
 
 	if( color >= 0 )
+	{
 		return color;
+	}
 	else
+	{
 		return FISH_COLOR_NORMAL;
+	}
 }

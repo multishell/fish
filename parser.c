@@ -39,6 +39,7 @@ The fish parser. Contains functions for parsing code.
 #include "intern.h"
 #include "parse_util.h"
 #include "halloc.h"
+#include "halloc_util.h"
 
 /**
    Maximum number of block levels in code. This is not the same as
@@ -70,9 +71,9 @@ The fish parser. Contains functions for parsing code.
 #define TOK_ERR_MSG _( L"Tokenizer error: '%ls'")
 
 /**
-   Error message for short circut command error.
+   Error message for short circuit command error.
 */
-#define COND_ERR_MSG _( L"Short circut command requires additional command")
+#define COND_ERR_MSG _( L"Short circuit command requires additional command")
 
 /**
    Error message on reaching maximum recusrion depth
@@ -340,15 +341,13 @@ static int block_count( block_t *b )
 void parser_push_block( int type )
 {
 	block_t *new = halloc( 0, sizeof( block_t ));
-
+	
 	new->src_lineno = parser_get_lineno();
 	new->src_filename = parser_current_filename()?intern(parser_current_filename()):0;
 	
-//	debug( 3, L"Block push %ls %d\n", parser_get_block_desc(type), block_count( current_block)+1 );
-
 	new->outer = current_block;
 	new->type = (current_block && current_block->skip)?FAKE:type;
-
+	
 	/*
 	  New blocks should be skipped if the outer block is skipped,
 	  except TOP ans SUBST block, which open up new environments. Fake
@@ -356,12 +355,15 @@ void parser_push_block( int type )
 	*/
 	new->skip=current_block?current_block->skip:0;
 	if( type == TOP || type == SUBST )
+	{
 		new->skip = 0;
+	}
 	if( type == FAKE )
+	{
 		new->skip = 1;
-
+	}
+	
 	new->job = 0;
-
 	new->loop_status=LOOP_NORMAL;
 
 	current_block = new;
@@ -371,20 +373,12 @@ void parser_push_block( int type )
 		(new->type != TOP) )
 	{
 		env_push( type == FUNCTION_CALL );
+		halloc_register_function_void( current_block, &env_pop );
 	}
 }
 
 void parser_pop_block()
 {
-//	debug( 3, L"Block pop %ls %d\n", parser_get_block_desc(current_block->type), block_count(current_block)-1 );
-
-	if( (current_block->type != FUNCTION_DEF ) &&
-		(current_block->type != FAKE) &&
-		(current_block->type != TOP) )
-	{
-		env_pop();
-	}
-
 	block_t *old = current_block;
 	current_block = current_block->outer;
 	halloc_free( old );
@@ -470,7 +464,7 @@ int parser_is_subcommand( const wchar_t *cmd )
    Test if the specified string is command that opens a new block
 */
 
-static int parser_is_block( wchar_t *word)
+static int parser_is_block( const wchar_t *word)
 {
 	return contains_str( word,
 						 L"for",
@@ -482,7 +476,7 @@ static int parser_is_block( wchar_t *word)
 						 (void *)0 );
 }
 
-int parser_is_reserved( wchar_t *word)
+int parser_is_reserved( const wchar_t *word)
 {
 	return parser_is_block(word) ||
 		parser_is_subcommand( word ) ||
@@ -605,7 +599,7 @@ wchar_t *parser_cdpath_get( wchar_t *dir )
 		return 0;
 
 
-	if( dir[0] == L'/' )
+	if( dir[0] == L'/'|| (wcsncmp( dir, L"./", 2 )==0) )
 	{
 		struct stat buf;
 		if( wstat( dir, &buf ) == 0 )
@@ -714,9 +708,9 @@ wchar_t *get_filename( const wchar_t *cmd )
 {
 	wchar_t *path;
 
-	debug( 2, L"get_filename( '%ls' )", cmd );
+	debug( 3, L"get_filename( '%ls' )", cmd );
 
-	if(wcschr( cmd, '/' ) != 0 )
+	if(wcschr( cmd, L'/' ) != 0 )
 	{
 		if( waccess( cmd, X_OK )==0 )
 		{
@@ -744,11 +738,10 @@ wchar_t *get_filename( const wchar_t *cmd )
 			wchar_t *path_cpy = wcsdup( path );
 			wchar_t *nxt_path = path;
 			wchar_t *state;
-
+			
 			if( (new_cmd==0) || (path_cpy==0) )
 			{
 				die_mem();
-
 			}
 
 			for( nxt_path = wcstok( path_cpy, ARRAY_SEP_STR, &state );
@@ -757,9 +750,9 @@ wchar_t *get_filename( const wchar_t *cmd )
 			{
 				int path_len = wcslen( nxt_path );
 				wcscpy( new_cmd, nxt_path );
-				if( new_cmd[path_len-1] != '/' )
+				if( new_cmd[path_len-1] != L'/' )
 				{
-					new_cmd[path_len++]='/';
+					new_cmd[path_len++]=L'/';
 				}
 				wcscpy( &new_cmd[path_len], cmd );
 				if( waccess( new_cmd, X_OK )==0 )
@@ -768,7 +761,9 @@ wchar_t *get_filename( const wchar_t *cmd )
 					if( wstat( new_cmd, &buff )==-1 )
 					{
 						if( errno != EACCES )
+						{
 							wperror( L"stat" );
+						}
 						continue;
 					}
 					if( S_ISREG(buff.st_mode) )
@@ -787,10 +782,12 @@ wchar_t *get_filename( const wchar_t *cmd )
 						case ENOTDIR:
 							break;
 						default:
+						{
 							debug( 1,
 								   MISSING_COMMAND_ERR_MSG,
 								   new_cmd );
 							wperror( L"access" );
+						}
 					}
 				}
 			}
@@ -823,8 +820,10 @@ static void print_profile( array_list_t *p,
 	int my_time;
 
 	if( pos >= al_get_count( p ) )
+	{
 		return;
-
+	}
+	
 	me= (profile_element_t *)al_get( p, pos );
 	if( !me->skipped )
 	{
@@ -834,12 +833,20 @@ static void print_profile( array_list_t *p,
 		{
 			prev = (profile_element_t *)al_get( p, i );
 			if( prev->skipped )
+			{
 				continue;
-
+			}
+			
 			if( prev->level <= me->level )
+			{
 				break;
+			}
+
 			if( prev->level > me->level+1 )
+			{
 				continue;
+			}
+
 			my_time -= prev->parse;
 			my_time -= prev->exec;
 		}
@@ -926,9 +933,9 @@ int eval_args( const wchar_t *line, array_list_t *args )
 	tokenizer *previous_tokenizer=current_tokenizer;
 	int previous_pos=current_tokenizer_pos;
 	int do_loop=1;
-	int was_interactive = is_interactive;
 
-	is_interactive = 0;
+	proc_push_interactive(0);	
+
 	current_tokenizer_pos = 0;
 	
 	tok_init( &tok, line, 0 );
@@ -940,26 +947,27 @@ int eval_args( const wchar_t *line, array_list_t *args )
 		switch(tok_last_type( &tok ) )
 		{
 			case TOK_STRING:
-				switch( expand_string( wcsdup(tok_last( &tok )), args, 0 ) )
+			{
+				wchar_t *tmp = wcsdup(tok_last( &tok ));
+				
+				if( !tmp )
 				{
-					case EXPAND_ERROR:
-					{
-						err_pos=tok_get_pos( &tok );
-						do_loop=0;
-						break;
-					}
-
-					default:
-					{
-						break;
-					}
-
+					die_mem();
 				}
-
+				
+				if( expand_string( 0, tmp, args, 0 ) == EXPAND_ERROR )
+				{
+					err_pos=tok_get_pos( &tok );
+					do_loop=0;
+				}
 				break;
+			}
+			
 			case TOK_END:
+			{
 				break;
-
+			}
+			
 			case TOK_ERROR:
 			{
 				error( SYNTAX_ERROR,
@@ -972,6 +980,7 @@ int eval_args( const wchar_t *line, array_list_t *args )
 			}
 
 			default:
+			{
 				error( SYNTAX_ERROR,
 					   tok_get_pos( &tok ),
 					   UNEXPECTED_TOKEN_ERR_MSG,
@@ -979,16 +988,16 @@ int eval_args( const wchar_t *line, array_list_t *args )
 
 				do_loop=0;
 				break;
-
+			}
 		}
 	}
-
+	
 	print_errors();
 	tok_destroy( &tok );
-
+	
 	current_tokenizer=previous_tokenizer;
 	current_tokenizer_pos = previous_pos;
-	is_interactive = was_interactive;
+	proc_pop_interactive();
 	
 	return 1;
 }
@@ -1013,27 +1022,37 @@ void parser_stack_trace( block_t *b, string_buffer_t *buff)
 		switch( b->type)
 		{
 			case SOURCE:
+			{
 				sb_printf( buff, _(L"in . (source) call of file '%ls',\n"), b->param1.source_dest );
 				break;
+			}
 			case FUNCTION_CALL:
+			{
 				sb_printf( buff, _(L"in function '%ls',\n"), b->param1.function_name );
 				break;
+			}
 			case SUBST:
+			{
 				sb_printf( buff, _(L"in command substitution\n") );
 				break;
+			}
 		}
 
 		const wchar_t *file = b->src_filename;
 
 		if( file )
+		{
 			sb_printf( buff,
 					   _(L"\tcalled on line %d of file '%ls',\n"),
 					   b->src_lineno,
 					   file );
+		}
 		else
+		{
 			sb_printf( buff,
 					   _(L"\tcalled on standard input,\n") );
-
+		}
+		
 		if( b->type == FUNCTION_CALL )
 		{			
 			if( b->param2.function_call_process->argv[1] )
@@ -1169,7 +1188,7 @@ wchar_t *parser_current_line()
 	/*
 	  Calculate line number, line offset, etc.
 	*/
-	for( i=0; i<current_tokenizer_pos; i++ )
+	for( i=0; i<current_tokenizer_pos && whole_str[i]; i++ )
 	{
 		if( whole_str[i] == L'\n' )
 		{
@@ -1178,6 +1197,9 @@ wchar_t *parser_current_line()
 			line = &whole_str[i+1];
 		}
 	}
+
+//	lineno = current_tokenizer_pos;
+	
 
 	current_line_width=printed_width(whole_str+current_line_start, current_tokenizer_pos-current_line_start );
 
@@ -1318,11 +1340,10 @@ static void parse_job_main_loop( process_t *p,
 	while( 1 )
 	{
 
-		/* debug( 2, L"Read token %ls\n", wcsdup(tok_last( tok )) ); */
-
 		switch( tok_last_type( tok ) )
 		{
 			case TOK_PIPE:
+			{
 				if( (p->type == INTERNAL_EXEC) )
 				{
 					error( SYNTAX_ERROR,
@@ -1331,29 +1352,33 @@ static void parse_job_main_loop( process_t *p,
 					return;
 				}
 				p->pipe_fd = wcstol( tok_last( tok ), 0, 10 );
-				p->argv = list_to_char_arr( j, args );
+				if( !p->argv )
+					halloc_register( j, p->argv = list_to_char_arr( args ) );
 				p->next = halloc( j, sizeof( process_t ) );
 				if( p->next == 0 )
 				{
 					die_mem();
 				}
 				tok_next( tok );
-				if( !parse_job( p->next, j, tok ))
-				{
-					/*
-					  Don't do anything on failiure. parse_job will notice the error flag beeing set
-					*/
+				
+				/*
+				  Don't do anything on failiure. parse_job will notice the error flag beeing set
+				*/
+				parse_job( p->next, j, tok );
 
-				}
 				is_finished = 1;
 				break;
-
+			}
+			
 			case TOK_BACKGROUND:
+			{
 				j->fg = 0;
-
+			}
+			
 			case TOK_END:
 			{
-				p->argv = list_to_char_arr( j, args );
+				if( !p->argv )
+					halloc_register( j, p->argv = list_to_char_arr( args ) );
 				if( tok_has_next(tok))
 					tok_next(tok);
 
@@ -1399,7 +1424,7 @@ static void parse_job_main_loop( process_t *p,
 					}
 
 
-					switch( expand_string( wcsdup(tok_last( tok )), args, 0 ) )
+					switch( expand_string( j, wcsdup(tok_last( tok )), args, 0 ) )
 					{
 						case EXPAND_ERROR:
 						{
@@ -1420,7 +1445,7 @@ static void parse_job_main_loop( process_t *p,
 							unmatched_wildcard = 1;
 							if( !unmatched )
 							{
-								unmatched = halloc_register( j, wcsdup( tok_last( tok )));
+								unmatched = halloc_wcsdup( j, tok_last( tok ));
 								unmatched_pos = tok_get_pos( tok );
 							}
 
@@ -1487,7 +1512,7 @@ static void parse_job_main_loop( process_t *p,
 				{
 					case TOK_STRING:
 					{
-						target = (wchar_t *)halloc_register( j, expand_one( wcsdup( tok_last( tok ) ), 0));
+						target = (wchar_t *)expand_one( j, wcsdup( tok_last( tok ) ), 0);
 
 						if( target == 0 && error_code == 0 )
 						{
@@ -1634,35 +1659,35 @@ static int parse_job( process_t *p,
 					  job_t *j,
 					  tokenizer *tok )
 {
-	array_list_t args;      // The list that will become the argc array for the program
+	array_list_t *args = al_halloc( j );      // The list that will become the argc array for the program
 	int use_function = 1;   // May functions be considered when checking what action this command represents
 	int use_builtin = 1;    // May builtins be considered when checking what action this command represents
 	int is_new_block=0;     // Does this command create a new block?
 
 	block_t *prev_block = current_block;
-
-	al_init( &args );
+	int prev_tokenizer_pos = current_tokenizer_pos;	
 
 	current_tokenizer_pos = tok_get_pos( tok );
 
-	while( al_get_count( &args ) == 0 )
+	while( al_get_count( args ) == 0 )
 	{
 		wchar_t *nxt=0;
 		switch( tok_last_type( tok ))
 		{
 			case TOK_STRING:
 			{
-				nxt = expand_one( wcsdup(tok_last( tok )),
+				nxt = expand_one( j,
+								  wcsdup(tok_last( tok )),
 								  EXPAND_SKIP_SUBSHELL | EXPAND_SKIP_VARIABLES);
-
+				
 				if( nxt == 0 )
 				{
 					error( SYNTAX_ERROR,
 						   tok_get_pos( tok ),
 						   ILLEGAL_CMD_ERR_MSG,
 						   tok_last( tok ) );
-
-					al_destroy( &args );
+					
+					current_tokenizer_pos = prev_tokenizer_pos;	
 					return 0;
 				}
 				break;
@@ -1675,7 +1700,7 @@ static int parse_job( process_t *p,
 					   TOK_ERR_MSG,
 					   tok_last(tok) );
 
-				al_destroy( &args );
+				current_tokenizer_pos = prev_tokenizer_pos;	
 				return 0;
 			}
 
@@ -1697,7 +1722,7 @@ static int parse_job( process_t *p,
 						   tok_get_desc( tok_last_type(tok) ) );
 				}
 
-				al_destroy( &args );
+				current_tokenizer_pos = prev_tokenizer_pos;	
 				return 0;
 			}
 
@@ -1708,12 +1733,15 @@ static int parse_job( process_t *p,
 					   CMD_ERR_MSG,
 					   tok_get_desc( tok_last_type(tok) ) );
 
-				al_destroy( &args );
+				current_tokenizer_pos = prev_tokenizer_pos;	
 				return 0;
 			}
 		}
-
+		
 		int mark = tok_get_pos( tok );
+
+		int consumed = 0;
+		
 
 		if( wcscmp( L"command", nxt )==0 )
 		{
@@ -1726,8 +1754,7 @@ static int parse_job( process_t *p,
 			{
 				use_function = 0;
 				use_builtin=0;
-				free( nxt );
-				continue;
+				consumed=1;
 			}
 		}
 		else if(  wcscmp( L"builtin", nxt )==0 )
@@ -1740,8 +1767,7 @@ static int parse_job( process_t *p,
 			else
 			{
 				use_function = 0;
-				free( nxt );
-				continue;
+				consumed=1;
 			}
 		}
 		else if(  wcscmp( L"not", nxt )==0 )
@@ -1754,8 +1780,7 @@ static int parse_job( process_t *p,
 			else
 			{
 				j->negate=1-j->negate;
-				free( nxt );
-				continue;
+				consumed=1;
 			}
 		}
 		else if(  wcscmp( L"and", nxt )==0 )
@@ -1768,8 +1793,7 @@ static int parse_job( process_t *p,
 			else
 			{
 				j->skip = proc_get_last_status();
-				free( nxt );
-				continue;
+				consumed=1;
 			}
 		}
 		else if(  wcscmp( L"or", nxt )==0 )
@@ -1782,8 +1806,7 @@ static int parse_job( process_t *p,
 			else
 			{
 				j->skip = !proc_get_last_status();
-				free( nxt );
-				continue;
+				consumed=1;
 			}
 		}
 		else if(  wcscmp( L"exec", nxt )==0 )
@@ -1793,8 +1816,7 @@ static int parse_job( process_t *p,
 				error( SYNTAX_ERROR,
 					   tok_get_pos( tok ),
 					   EXEC_ERR_MSG );
-				al_destroy( &args );
-				free(nxt);
+				current_tokenizer_pos = prev_tokenizer_pos;	
 				return 0;
 			}
 
@@ -1808,8 +1830,8 @@ static int parse_job( process_t *p,
 				use_function = 0;
 				use_builtin=0;
 				p->type=INTERNAL_EXEC;
-				free( nxt );
-				continue;
+				consumed=1;
+				current_tokenizer_pos = prev_tokenizer_pos;	
 			}
 		}
 		else if( wcscmp( L"while", nxt ) ==0 )
@@ -1837,10 +1859,8 @@ static int parse_job( process_t *p,
 				current_block->tok_pos = mark;
 			}
 
-			free( nxt );
+			consumed=1;
 			is_new_block=1;
-
-			continue;
 		}
 		else if( wcscmp( L"if", nxt ) ==0 )
 		{
@@ -1851,12 +1871,16 @@ static int parse_job( process_t *p,
 			current_block->param1.if_state=0;
 			current_block->tok_pos = mark;
 
-			free( nxt );
 			is_new_block=1;
+			consumed=1;			
+		}
+
+		if( consumed )
+		{
 			continue;
 		}
 
-		if( use_function)
+		if( use_function && !current_block->skip )
 		{
 			int nxt_forbidden;
 			wchar_t *forbid;
@@ -1885,7 +1909,7 @@ static int parse_job( process_t *p,
 				}
 			}
 		}
-		al_push( &args, nxt );
+		al_push( args, nxt );
 	}
 
 	if( error_code == 0 )
@@ -1893,10 +1917,10 @@ static int parse_job( process_t *p,
 		if( !p->type )
 		{
 			if( use_builtin &&
-				builtin_exists( (wchar_t *)al_get( &args, 0 ) ) )
+				builtin_exists( (wchar_t *)al_get( args, 0 ) ) )
 			{
 				p->type = INTERNAL_BUILTIN;
-				is_new_block = parser_is_block( (wchar_t *)al_get( &args, 0 ) );
+				is_new_block = parser_is_block( (wchar_t *)al_get( args, 0 ) );
 			}
 		}
 
@@ -1912,7 +1936,7 @@ static int parse_job( process_t *p,
 			}
 			else
 			{
-				p->actual_cmd = halloc_register(j, get_filename( (wchar_t *)al_get( &args, 0 ) ));
+				p->actual_cmd = halloc_register(j, get_filename( (wchar_t *)al_get( args, 0 ) ));
 				
 				/*
 				  Check if the specified command exists
@@ -1926,16 +1950,16 @@ static int parse_job( process_t *p,
 					  implicit command.
 					*/
 					wchar_t *pp =
-						parser_cdpath_get( (wchar_t *)al_get( &args, 0 ) );
+						parser_cdpath_get( (wchar_t *)al_get( args, 0 ) );
 					if( pp )
 					{
 						wchar_t *tmp;
 						free( pp );
 
-						tmp = (wchar_t *)al_get( &args, 0 );
-						al_truncate( &args, 0 );
-						al_push( &args, wcsdup( L"cd" ) );
-						al_push( &args, tmp );
+						tmp = (wchar_t *)al_get( args, 0 );
+						al_truncate( args, 0 );
+						al_push( args, wcsdup( L"cd" ) );
+						al_push( args, tmp );
 						/*
 						  If we have defined a wrapper around cd, use it,
 						  otherwise use the cd builtin
@@ -1947,31 +1971,54 @@ static int parse_job( process_t *p,
 					}
 					else
 					{
-						if( wcschr( (wchar_t *)al_get( &args, 0 ), L'=' ) )
-						{
-							error( EVAL_ERROR,
-								   tok_get_pos( tok ),
-								   COMMAND_ASSIGN_ERR_MSG,
-								   (wchar_t *)al_get( &args, 0 ) );
+						int tmp;
 
+						/* 
+						   We couln't find the specified command.
+
+						   What we want to happen now is that the
+						   specified job won't get executed, and an
+						   error message is printed on-screen, but
+						   otherwise, the parsing/execution of the
+						   file continues. Because of this, we don't
+						   want to call error(), since that would stop
+						   execution of the file. Instead we let
+						   p->actual_command be 0 (null), which will
+						   cause the job to silently not execute. We
+						   also print an error message.
+						*/
+						if( wcschr( (wchar_t *)al_get( args, 0 ), L'=' ) )
+						{
+							debug( 0,
+								   COMMAND_ASSIGN_ERR_MSG,
+								   (wchar_t *)al_get( args, 0 ) );
+							
 
 						}
 						else
 						{
-							error( EVAL_ERROR,
-								   tok_get_pos( tok ),
+							debug( 0,
 								   _(L"Unknown command '%ls'"),
-								   (wchar_t *)al_get( &args, 0 ) );
-
+								   (wchar_t *)al_get( args, 0 ) );
 						}
+						
+						tmp = current_tokenizer_pos;
+						current_tokenizer_pos = tok_get_pos(tok);
+						
+						fwprintf( stderr, L"%ls", parser_current_line() );
+						
+						current_tokenizer_pos=tmp;
+						j->skip=1;
+						
 					}
 				}
 			}
 		}
 	}
-
+	
 	if( is_new_block )
 	{
+		
 		const wchar_t *end=parser_find_end( tok_string( tok ) +
 											current_tokenizer_pos );
 		tokenizer subtok;
@@ -1982,6 +2029,7 @@ static int parse_job( process_t *p,
 			error( SYNTAX_ERROR,
 				   tok_get_pos( tok ),
 				   BLOCK_END_ERR_MSG );
+			
 		}
 
 		if( !make_sub_block )
@@ -2020,8 +2068,7 @@ static int parse_job( process_t *p,
 										 end_pos - current_tokenizer_pos);
 
 			p->type = INTERNAL_BLOCK;
-			free( (void *)al_get( &args, 0 ) );
-			al_set( &args, 0, sub_block );
+			al_set( args, 0, sub_block );
 
 			tok_set_pos( tok,
 						 end_pos );
@@ -2039,27 +2086,19 @@ static int parse_job( process_t *p,
 
 	if( !error_code )
 	{
-		if( p->type == INTERNAL_BUILTIN && parser_skip_arguments( (wchar_t *)al_get(&args, 0) ) )
-		{
-			p->argv = list_to_char_arr( j, &args );
-//			tok_next(tok);
+		if( p->type == INTERNAL_BUILTIN && parser_skip_arguments( (wchar_t *)al_get(args, 0) ) )
+		{			
+			if( !p->argv )
+				halloc_register( j, p->argv = list_to_char_arr( args ) );
 		}
 		else
 		{
-			parse_job_main_loop( p, j, tok, &args );
+			parse_job_main_loop( p, j, tok, args );
 		}
 	}
 
 	if( error_code )
 	{
-		/*
-		  We don't know what the state of the args array and the argv
-		  vector is on error, so we do an internal cleanup here.
-		*/
-		al_foreach( &args,
-					(void (*)(const void *))&free );
-		free(p->argv);
-		p->argv=0;
 		/*
 		  Make sure the block stack is consistent
 		*/
@@ -2067,10 +2106,8 @@ static int parse_job( process_t *p,
 		{
 			parser_pop_block();
 		}
-
 	}
-	al_destroy( &args );
-
+	current_tokenizer_pos = prev_tokenizer_pos;	
 	return !error_code;
 }
 
@@ -2143,7 +2180,8 @@ static void eval_job( tokenizer *tok )
 	long long t1=0, t2=0, t3=0;
 	profile_element_t *p=0;
 	int skip = 0;
-
+	int job_begin_pos, prev_tokenizer_pos;
+	
 	if( profile )
 	{
 		p=malloc( sizeof(profile_element_t));
@@ -2177,6 +2215,8 @@ static void eval_job( tokenizer *tok )
 
 			j->first_process = halloc( j, sizeof( process_t ) );
 
+			job_begin_pos = tok_get_pos( tok );
+			
 			if( parse_job( j->first_process, j, tok ) &&
 				j->first_process->argv )
 			{
@@ -2188,8 +2228,9 @@ static void eval_job( tokenizer *tok )
 					if( newline )
 						stop_pos = mini( stop_pos, newline - tok_string(tok) );
 
-					j->command = halloc_register( j, wcsndup( tok_string(tok)+start_pos,
-														   stop_pos-start_pos ));
+					j->command = halloc_wcsndup( j,
+												 tok_string(tok)+start_pos,
+												 stop_pos-start_pos );
 				}
 				else
 					j->command = L"";
@@ -2210,9 +2251,11 @@ static void eval_job( tokenizer *tok )
 					int was_builtin = 0;
 //					if( j->first_process->type==INTERNAL_BUILTIN && !j->first_process->next)
 //						was_builtin = 1;
-
+					prev_tokenizer_pos = current_tokenizer_pos;
+					current_tokenizer_pos = job_begin_pos;		
 					exec( j );
-
+					current_tokenizer_pos = prev_tokenizer_pos;
+					
 					/* Only external commands require a new fishd barrier */
 					if( !was_builtin )
 						proc_had_barrier=0;
@@ -2334,7 +2377,7 @@ int eval( const wchar_t *cmd, io_data_t *io, int block_type )
 	{
 		forbidden_function = al_new();
 	}
-
+	
 	forbid_count = al_get_count( forbidden_function );
 
 	block_io = io;
@@ -2573,7 +2616,7 @@ int parser_test( wchar_t * buff,
 					}
 
 					/*
-					  The short circut commands requires _two_ additional commands.
+					  The short circuit commands requires _two_ additional commands.
 					*/
 					if( contains_str( tok_last( &tok ),
 									  L"or",

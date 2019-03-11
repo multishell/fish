@@ -1,0 +1,87 @@
+#
+# Main file for fish command completions. This file contains various
+# common helper functions for the command completions. All actual
+# completions are located in the completions subdirectory.
+#
+
+#
+# Assign a temporary value here for performance reasons. The real value should be set in /etc/fish.
+#
+
+set -g fish_function_path $PWD/functions/
+
+#
+# Set some value for LANG if nothing was set before, and this is a
+# login shell. Also check for i18n information in /etc/sysconfig/i18n
+#
+
+if status --is-login
+	if not set -q LANG >/dev/null
+		set -gx LANG en_US.UTF-8
+	end
+
+	if test -f /etc/sysconfig/i18n
+		eval (cat /etc/sysconfig/i18n |sed -ne 's/^\([a-zA-Z]*\)=\(.*\)$/set -gx \1 \2;/p')
+	end
+end
+
+#
+# Don't need completions in non-interactive mode
+#
+
+if not status --is-interactive
+	exit
+end
+
+#
+# Convenience functions
+#
+# The naming heuristic is that __fish_complete_* prints completions
+# and descriptions, while __fish_print_* only prints the completion,
+# without the description
+#
+
+function __fish_complete_users -d "Print a list of local users, with the real user name as a description"
+	cat /etc/passwd | sed -e "s/^\([^:]*\):[^:]*:[^:]*:[^:]*:\([^:]*\):.*/\1\t\2/"
+end
+
+function __fish_complete_groups -d "Print a list of local groups, with group members as the description"
+	cat /etc/group | sed -e "s/^\([^:]*\):[^:]*:[^:]*:\(.*\)/\1\tMembers: \2/"
+end
+
+function __fish_complete_command -d "Complete using all available commands"
+	printf "%s\n" (commandline -ct)(complete -C (commandline -ct))
+end
+
+function __fish_print_interfaces -d "Print a list of known network interfaces"
+	netstat -i -n -a | awk 'NR>2'|awk '{print $1}'
+end
+
+function __fish_print_addresses -d "Print a list of known network addresses"
+	/sbin/ifconfig |grep 'inet addr'|cut -d : -f 2|cut -d ' ' -f 1
+end
+
+function __fish_print_users -d "Print a list of local users"
+	cat /etc/passwd | cut -d : -f 1
+end
+
+#
+# Completions for the shell and it's builtin commands and functions
+#
+
+set -l __fish_help_desc (_ "Display help and exit")
+for i in (builtin -n|grep -vE '(while|for|if|function|switch)' )
+	complete -c $i -s h -l help -d $__fish_help_desc
+end
+
+
+#
+# Completions for SysV startup scripts
+#
+
+complete -x -p "/etc/init.d/*" -a start\t(_ 'Start service')
+complete -x -p "/etc/init.d/*" -a stop\t(_ 'Stop service')
+complete -x -p "/etc/init.d/*" -a status\t(_ 'Print service status')
+complete -x -p "/etc/init.d/*" -a restart\t(_ 'Stop and then start service')
+complete -x -p "/etc/init.d/*" -a reload\t(_ 'Reload service configuration')
+

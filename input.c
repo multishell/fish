@@ -55,7 +55,9 @@ implementation in fish is as of yet incomplete.
 #include "env.h"
 #include "expand.h"
 #include "event.h"
+#include "signal.h"
 #include "translate.h"
+#include "output.h"
 
 static void input_read_inputrc( wchar_t *fn );
 
@@ -1085,7 +1087,7 @@ static void input_read_inputrc( wchar_t *fn )
 	int error=0;
 //	fwprintf( stderr, L"read %ls\n", fn );
 		
-	block();
+	signal_block();
 	rc = wfopen( fn, "r" );
 	
 	if( rc )
@@ -1120,7 +1122,7 @@ static void input_read_inputrc( wchar_t *fn )
 		free( buff );
 		fclose( rc );
 	}
-	unblock();
+	signal_unblock();
 	
 	inputrc_skip_block_count=0;
 	inputrc_block_count=0;	

@@ -298,7 +298,6 @@ int job_reap( int interactive );
 */
 void job_handle_signal( int signal, siginfo_t *info, void *con );
 
-
 #ifdef HAVE__PROC_SELF_STAT
 /**
    Use the procfs filesystem to look up how many jiffies of cpu time
@@ -336,5 +335,17 @@ void proc_init();
    Clean up before exiting
 */
 void proc_destroy();
+
+/**
+   Set new value for is_interactive flag, saving previous value. If
+   needed, update signal handlers.
+*/
+void proc_push_interactive( int value );
+
+/**
+   Set is_interactive flag to the previous value. If needed, update
+   signal handlers.
+*/
+void proc_pop_interactive();
 
 #endif

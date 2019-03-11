@@ -21,6 +21,7 @@
 #include "event.h"
 #include "signal.h"
 #include "translate.h"
+#include "halloc_util.h"
 
 /**
    Number of signals that can be queued before an overflow occurs
@@ -194,10 +195,7 @@ const wchar_t *event_get_desc( event_t *e )
 {
 	if( !get_desc_buff )
 	{
-		get_desc_buff=malloc(sizeof(string_buffer_t) );
-		if( !get_desc_buff )
-			die_mem();
-		sb_init( get_desc_buff );
+		get_desc_buff=sb_halloc( global_context );
 	}
 	else
 	{
@@ -255,7 +253,7 @@ void event_add_handler( event_t *event )
 	e = event_copy( event, 0 );
 
 	if( !events )
-		events = al_new();	
+		events = al_new();
 
 	if( e->type == EVENT_SIGNAL )
 	{
@@ -387,8 +385,6 @@ static void event_fire_internal( event_t *event )
 	int i, j;
 	string_buffer_t *b=0;
 	array_list_t *fire=0;
-
-	int was_interactive = is_interactive;
 	
 	/*
 	  First we free all events that have been removed
@@ -452,7 +448,7 @@ static void event_fire_internal( event_t *event )
 		
 		for( j=0; j<al_get_count(&event->arguments); j++ )
 		{
-			wchar_t *arg_esc = escape( (wchar_t *)al_get( &event->arguments, j), 0 );		
+			wchar_t *arg_esc = escape( (wchar_t *)al_get( &event->arguments, j), 1 );		
 			sb_append( b, L" " );
 			sb_append( b, arg_esc );
 			free( arg_esc );				
@@ -464,18 +460,13 @@ static void event_fire_internal( event_t *event )
 		  Event handlers are not part of the main flow of code, so
 		  they are marked as non-interactive and as a subshell
 		*/
-		is_interactive=0;
+		proc_push_interactive(0);
 		parser_push_block( EVENT );
 		current_block->param1.event = event;
 		eval( (wchar_t *)b->buff, 0, TOP );
 		parser_pop_block();
-				
+		proc_pop_interactive();					
 	}
-
-	/*
-	  Restore interactivity flags
-	*/
-	is_interactive = was_interactive;
 
 	if( b )
 	{
@@ -644,13 +635,6 @@ void event_destroy()
 		free( killme );		
 		killme=0;		
 	}	
-
-	if( get_desc_buff )
-	{
-		sb_destroy( get_desc_buff );
-		free( get_desc_buff );
-	}
-	
 }
 
 void event_free( event_t *e )

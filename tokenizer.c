@@ -272,11 +272,11 @@ static void read_string( tokenizer *tok )
 					case L'"':
 					{
 
-						wchar_t *end = quote_end( tok->buff );
+						const wchar_t *end = quote_end( tok->buff );
 						tok->last_quote = *tok->buff;
 						if( end )
 						{
-							tok->buff=end;
+							tok->buff=(wchar_t *)end;
 						}
 						else
 						{
@@ -311,10 +311,10 @@ static void read_string( tokenizer *tok )
 					case L'\'':
 					case L'\"':
 					{
-						wchar_t *end = quote_end( tok->buff );
+						const wchar_t *end = quote_end( tok->buff );
 						if( end )
 						{
-							tok->buff=end;
+							tok->buff=(wchar_t *)end;
 						}
 						else
 							do_loop = 0;
@@ -403,7 +403,7 @@ static void read_comment( tokenizer *tok )
 }
 
 /**
-   Read a FD redirect.
+   Read a FD redirection.
 */
 static void read_redirect( tokenizer *tok, int fd )
 {
@@ -507,8 +507,22 @@ void tok_next( tokenizer *tok )
 		return;
 	}
 
-	while( my_iswspace(*(tok->buff) ) )
-		tok->buff++;
+	while( 1 )
+	{
+		if( my_iswspace(*(tok->buff) ) )
+		{
+			tok->buff++;
+		}
+		else
+		{
+			if(( *(tok->buff) == L'\\') &&( *(tok->buff+1) == L'\n') )
+			{
+				tok->buff+=2;
+			}
+			break;
+		}
+	}
+	
 
 	if( *tok->buff == L'#')
 	{

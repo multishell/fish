@@ -1,2 +1,0 @@
-
-complete -y ls

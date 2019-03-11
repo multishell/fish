@@ -41,6 +41,29 @@ wildcards using **.
 */
 #define MAX_FILE_LENGTH 1024
 
+/**
+   Push the specified argument to the list if an identical string is
+   not already in the list. This function iterates over the list,
+   which is quite slow if the list is large. It might make sense to
+   use a hashtable for this.
+*/
+static void al_push_check( array_list_t *l, const wchar_t *new )
+{
+	int i;
+
+	for( i = 0; i < al_get_count(l); i++ ) 
+	{
+		if( !wcscmp( al_get(l, i), new ) ) 
+		{
+			free( (void *)new );
+			return;
+		}
+	}
+
+	al_push( l, new );
+}
+
+
 int wildcard_has( const wchar_t *str, int internal )
 {
 	wchar_t prev=0;
@@ -72,10 +95,7 @@ int wildcard_has( const wchar_t *str, int internal )
    \param str String to be matched.
    \param wc The wildcard.
    \param is_first Whether files beginning with dots should not be matched against wildcards. 
-   \param wc_unescaped Whether the unescaped special character ANY_CHAR abd ANY_STRING should be used instead of '?' and '*' for wildcard matching
 */
-
-
 static int wildcard_match2( const wchar_t *str, 
 							const wchar_t *wc, 
 							int is_first )
@@ -131,13 +151,32 @@ static int wildcard_complete_internal( const wchar_t *orig,
 									   const wchar_t *(*desc_func)(const wchar_t *),
 									   array_list_t *out )
 {
+	if( !wc )
+	{
+		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
+		return 0;		
+	}
+	
+	if( !str )
+	{
+		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
+		return 0;		
+	}
+	
+	if( !orig )
+	{
+		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
+		return 0;		
+	}
+
 	if( *wc == 0 &&
 		( ( *str != L'.') || (!is_first)) )
 	{
-		if( !out )
-			return 1;
-		
 		wchar_t *new;
+		if( !out )
+		{
+			return 1;
+		}
 			
 		if( wcschr( str, PROG_COMPLETE_SEP ) )
 		{
@@ -145,7 +184,7 @@ static int wildcard_complete_internal( const wchar_t *orig,
 			  This completion has an embedded description, du not use the generic description
 			*/
 			wchar_t *sep;
-				
+			
 			new = wcsdup( str );
 			sep = wcschr(new, PROG_COMPLETE_SEP );
 			*sep = COMPLETE_SEP;			
@@ -363,7 +402,7 @@ int wildcard_expand( const wchar_t *wc,
 	wchar_t *wc_end;
 
 	/* Variables for traversing a directory */
-	struct dirent *next;
+	struct wdirent *next;
 	DIR *dir;
 	
 	/* The result returned */
@@ -454,15 +493,11 @@ int wildcard_expand( const wchar_t *wc,
 			*/
 			if( flags & ACCEPT_INCOMPLETE )
 			{
-				while( (next=readdir(dir))!=0 )
+				while( (next=wreaddir(dir))!=0 )
 				{
-					if( next->d_name[0] != '.' )
+					if( next->d_name[0] != L'.' )
 					{
-						wchar_t *name = str2wcs(next->d_name);
-						if( name == 0 )
-						{
-							continue;
-						}
+						wchar_t *name = next->d_name;
 						wchar_t *long_name = make_path( base_dir, name );
 						
 						if( test_flags( long_name, flags ) )
@@ -474,8 +509,6 @@ int wildcard_expand( const wchar_t *wc,
 									 wcsdupcat(name, (wchar_t *)sb_desc.buff) );
 						}
 						
-						free(name);
-
 						free( long_name );
 					}					
 				}
@@ -491,13 +524,9 @@ int wildcard_expand( const wchar_t *wc,
 			/*
 			  This is the last wildcard segment, and it is not empty. Match files/directories.
 			*/
-			while( (next=readdir(dir))!=0 )
+			while( (next=wreaddir(dir))!=0 )
 			{
-				wchar_t *name = str2wcs(next->d_name);
-				if( name == 0 )
-				{
-					continue;
-				}
+				wchar_t *name = next->d_name;
 				
 				if( flags & ACCEPT_INCOMPLETE )
 				{
@@ -540,7 +569,6 @@ int wildcard_expand( const wchar_t *wc,
 						res = 1;
 					}
 				}
-				free( name );
 			}
 		}
 	}
@@ -566,7 +594,7 @@ int wildcard_expand( const wchar_t *wc,
 		/*
 		  The maximum length of a file element
 		*/
-		static size_t ln=MAX_FILE_LENGTH;
+		size_t ln=MAX_FILE_LENGTH;
 		char * narrow_dir_string = wcs2str( dir_string );
 		
 		if( narrow_dir_string )
@@ -595,14 +623,10 @@ int wildcard_expand( const wchar_t *wc,
 
 		wcscpy( new_dir, base_dir );
 		
-		while( (next=readdir(dir))!=0 )
+		while( (next=wreaddir(dir))!=0 )
 		{
-			wchar_t *name = str2wcs(next->d_name);
-			if( name == 0 )
-			{
-				continue;
-			}			
-
+			wchar_t *name = next->d_name;
+			
 			/*
 			  Test if the file/directory name matches the whole
 			  wildcard element, i.e. regular matching.
@@ -652,11 +676,23 @@ int wildcard_expand( const wchar_t *wc,
 							*/
 							if( whole_match )
 							{
-								res |= wildcard_expand( wc_end?wc_end + 1:L"", 
+								wchar_t *new_wc = L"";
+								if( wc_end )
+								{
+									new_wc=wc_end+1;
+									/*
+									  Accept multiple '/' as a single direcotry separator
+									*/
+									while(*new_wc==L'/')
+									{
+										new_wc++;
+									}
+								}
+								
+								res |= wildcard_expand( new_wc,
 														new_dir, 
 														flags, 
 														out );
-
 							}
 							
 							/*
@@ -673,7 +709,6 @@ int wildcard_expand( const wchar_t *wc,
 					}
 				}
 			}
-			free(name);
 		}
 		
 		free( wc_str );
@@ -682,23 +717,10 @@ int wildcard_expand( const wchar_t *wc,
 	closedir( dir );
 	
 	if( flags & ACCEPT_INCOMPLETE )
+	{
 		sb_destroy( &sb_desc );
-	
+	}
+
 	return res;
 }
 
-void al_push_check( array_list_t *l, const wchar_t *new )
-{
-	int i;
-
-	for( i = 0; i < al_get_count(l); i++ ) 
-	{
-		if( !wcscmp( al_get(l, i), new ) ) 
-		{
-			free( (void *)new );
-			return;
-		}
-	}
-
-	al_push( l, new );
-}

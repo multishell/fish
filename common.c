@@ -20,7 +20,6 @@ parts of fish.
 #include <errno.h>
 #include <limits.h>
 #include <stdarg.h>		
-#include <signal.h>		
 #include <locale.h>
 #include <time.h>
 #include <sys/time.h>
@@ -58,7 +57,6 @@ parts of fish.
 #include "proc.h"
 #include "wildcard.h"
 #include "parser.h"
-#include "halloc.h"
 
 /**
    The maximum number of minor errors to report. Further errors will be omitted.
@@ -72,13 +70,6 @@ parts of fish.
 #define LOCKPOLLINTERVAL 10
 
 struct termios shell_modes;      
-
-/**
-   Number of error encountered. This is reset after each command, and
-   used to limit the number of error messages on commands with many
-   string convertion problems.
-*/
-static int error_count=0;
 
 int error_max=1;
 
@@ -95,20 +86,14 @@ int debug_level=1;
 */
 static struct winsize termsize;
 
-
-/**
-   Number of nested calls to the block function. Unblock when this reaches 0.
-*/
-static int block_count=0;
-
 /**
    String buffer used by the wsetlocale function
 */
 static string_buffer_t *setlocale_buff=0;
 
-
 void common_destroy()
 {
+	
 	if( setlocale_buff )
 	{
 		sb_destroy( setlocale_buff );
@@ -116,9 +101,13 @@ void common_destroy()
 	}
 }
 
-wchar_t **list_to_char_arr( void *context, array_list_t *l )
+void common_init()
 {
-	wchar_t ** res = halloc( context, sizeof(wchar_t *)*(al_get_count( l )+1) );
+}
+
+wchar_t **list_to_char_arr( array_list_t *l )
+{
+	wchar_t ** res = malloc( sizeof(wchar_t *)*(al_get_count( l )+1) );
 	int i;
 	if( res == 0 )
 	{
@@ -127,39 +116,10 @@ wchar_t **list_to_char_arr( void *context, array_list_t *l )
 	for( i=0; i<al_get_count( l ); i++ )
 	{		
 		res[i] = (wchar_t *)al_get(l,i);
-		if( context )
-			halloc_register( context, res[i] );
 	}
 	res[i]='\0';
 	return res;	
 }
-
-void block()
-{
-	block_count++;
-	if( block_count == 1 )
-	{
-		sigset_t chldset; 
-		sigemptyset( &chldset );
-		sigaddset( &chldset, SIGCHLD );
-		sigprocmask(SIG_BLOCK, &chldset, 0);
-	}
-}
-
-
-void unblock()
-{
-	block_count--;
-	if( block_count == 0 )
-	{
-		sigset_t chldset; 
-		sigemptyset( &chldset );
-		sigaddset( &chldset, SIGCHLD );
-		sigprocmask(SIG_UNBLOCK, &chldset, 0);
-	}
-}
-
-
 
 int fgetws2( wchar_t **b, int *len, FILE *f )
 {
@@ -173,8 +133,6 @@ int fgetws2( wchar_t **b, int *len, FILE *f )
 	  get getwc to perform reliably when signals are flying. Even when
 	  watching for EINTR errors, bytes are lost. 
 	*/
-
-	block();
 
 	while( 1 )
 	{
@@ -214,8 +172,6 @@ int fgetws2( wchar_t **b, int *len, FILE *f )
 			case L'\n':
 			case L'\0':
 				buff[i]=L'\0';
-				unblock();
-
 				return i;				
 				/* Ignore carriage returns */
 			case L'\r':
@@ -228,7 +184,6 @@ int fgetws2( wchar_t **b, int *len, FILE *f )
 
 
 	}
-	unblock();
 
 }
 
@@ -254,20 +209,28 @@ void sort_list( array_list_t *comp )
 wchar_t *str2wcs( const char *in )
 {
 	wchar_t *out;
-	size_t res=0;
-	int in_pos=0;
-	int out_pos = 0;
 	size_t len = strlen(in);
-	mbstate_t state;
 	
 	out = malloc( sizeof(wchar_t)*(len+1) );
-	memset( &state, 0, sizeof(state) );
-	
+
 	if( !out )
 	{
 		die_mem();
 	}
 
+	return str2wcs_internal( in, out );
+}
+
+wchar_t *str2wcs_internal( const char *in, wchar_t *out )
+{
+	size_t res=0;
+	int in_pos=0;
+	int out_pos = 0;
+	mbstate_t state;
+	size_t len = strlen(in);
+	
+	memset( &state, 0, sizeof(state) );
+	
 	while( in[in_pos] )
 	{
 		res = mbrtowc( &out[out_pos], &in[in_pos], len-in_pos, &state );
@@ -287,6 +250,7 @@ wchar_t *str2wcs( const char *in )
 			{
 				return out;
 			}
+		
 			default:
 			{
 				in_pos += res;
@@ -300,27 +264,28 @@ wchar_t *str2wcs( const char *in )
 	return out;	
 }
 
-void error_reset()
-{
-	error_count=0;
-}
-
 char *wcs2str( const wchar_t *in )
 {
 	char *out;	
-	size_t res=0;
-	int in_pos=0;
-	int out_pos = 0;
-	mbstate_t state;
 	
 	out = malloc( MAX_UTF8_BYTES*wcslen(in)+1 );
-	memset( &state, 0, sizeof(state) );
 
 	if( !out )
 	{
 		die_mem();
 	}
 
+	return wcs2str_internal( in, out );
+}
+
+char *wcs2str_internal( const wchar_t *in, char *out )
+{
+	size_t res=0;
+	int in_pos=0;
+	int out_pos = 0;
+	mbstate_t state;
+	memset( &state, 0, sizeof(state) );
+	
 	while( in[in_pos] )
 	{
 		if( ( in[in_pos] >= ENCODE_DIRECT_BASE) &&
@@ -550,8 +515,6 @@ int wcsvarname( wchar_t *str )
 		str++;
 	}
 	return 1;
-	
-	
 }
 
 
@@ -574,12 +537,34 @@ int my_wcswidth( const wchar_t *c )
 	return res;
 }
 
-wchar_t *quote_end( const wchar_t *in )
+const wchar_t *quote_end( const wchar_t *pos )
 {
-	return wcschr( in+1, *in );
+	wchar_t c = *pos;
+	
+	while( 1 )
+	{
+		pos++;
+
+		if( !*pos )
+			return 0;
+		
+		if( *pos == L'\\')
+		{
+			pos++;
+		}
+		else
+		{
+			if( *pos == c )
+			{
+				return pos;
+			}
+		}
+	}
+	return 0;
+	
 }
 
-
+				
 const wchar_t *wsetlocale(int category, const wchar_t *locale)
 {
 
@@ -642,12 +627,6 @@ int read_blocked(int fd, void *buf, size_t count)
 	return res;	
 }
 
-int writeb( tputs_arg_t b )
-{
-	write( 1, &b, 1 );
-//	putc( b, stdout );
-	return 0;
-}
 
 void die_mem()
 {
@@ -938,74 +917,87 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 							break;
 						}
 						
-						case L'X':
 						case L'u':
 						case L'U':
 						case L'x':
-						case L'o':
+						case L'X':
+						case L'0':
+						case L'1':
+						case L'2':
+						case L'3':
+						case L'4':
+						case L'5':
+						case L'6':
+						case L'7':
 						{
 							int i;
-							wchar_t res=0;
+							long long res=0;
 							int chars=2;
 							int base=16;
 							
 							int byte = 0;
+							int max_val = 127;
 							
 							switch( in[in_pos] )
 							{
 								case L'u':
 								{
-									base=16;
 									chars=4;
+									max_val = 35535;
 									break;
 								}
 								
 								case L'U':
 								{
-									base=16;
 									chars=8;
+									max_val = WCHAR_MAX;
 									break;
 								}
 								
 								case L'x':
 								{
-									base=16;
-									chars=2;
 									break;
 								}
 								
 								case L'X':
 								{
 									byte=1;
-									base=16;
-									chars=2;
+									max_val = 255;
 									break;
 								}
 								
-								case L'o':
+								default:
 								{
 									base=8;
 									chars=3;
+									in_pos--;
 									break;
-								}
-								
+								}								
 							}
 					
 							for( i=0; i<chars; i++ )
 							{
 								int d = convert_digit( in[++in_pos],base);
+								
 								if( d < 0 )
 								{
 									in_pos--;
 									break;
 								}
-						
+								
 								res=(res*base)|d;
-						
 							}
-					
-							in[out_pos] = (byte?ENCODE_DIRECT_BASE:0)+res;
-					
+
+							if( (res > 0) && (res <= max_val) )
+							{
+								in[out_pos] = (byte?ENCODE_DIRECT_BASE:0)+res;
+							}
+							else
+							{	
+								free(in);	
+								return 0;
+							}
+							
 							break;
 						}
 
@@ -1160,6 +1152,30 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 			*/
 			case 1:
 			{
+				if( c == L'\\' )
+				{
+					switch( in[++in_pos] )
+					{
+						case L'\'':
+						{
+							in[out_pos]=in[in_pos];
+							break;
+						}
+						
+						case 0:
+						{
+							free(in);
+							return 0;
+						}
+						
+						default:
+						{
+							in[out_pos++] = L'\\';
+							in[out_pos]= in[in_pos];
+						}
+					}
+					
+				}
 				if( c == L'\'' )
 				{
 					in[out_pos] = INTERNAL_SEPARATOR;							
@@ -1198,11 +1214,12 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 							}
 							
 							case L'$':
+							case '"':
 							{
 								in[out_pos]=in[in_pos];
 								break;
 							}
-							
+
 							default:
 							{
 								in[out_pos++] = L'\\';

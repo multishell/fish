@@ -80,7 +80,9 @@ void set_color( int c, int c2 );
 
 /**
    Write a char * narrow string to FD 1, needed for the terminfo
-   strings.
+   strings. This is usually just a wrapper aound tputs, using writeb
+   as the sending function. But a weird bug on PPC Linux means that on
+   this platform, write is instead used directly.
 */
 int writembs( char *str );
 
@@ -117,13 +119,25 @@ int writespace( int c );
 int output_color_code( const wchar_t *val );
 
 /**
-   Initialize static data
+   perm_left_cursor and parm_right_cursor don't seem to be defined
+   very often so we use cursor_left and cursor_right as a fallback.
 */
-void output_init();
+void move_cursor( int steps );
 
 /**
-  Destroy static data
+   This is for writing process notification messages. Has to write to
+   stdout, so clr_eol and such functions will work correctly. Not an
+   issue since this function is only used in interactive mode anyway.
 */
-void output_destroy();
+int writeb( tputs_arg_t b );
+
+/**
+   Set the function used for writing in move_cursor, writespace and
+   set_color and all other output functions in this library. By
+   default, the write call is used to give completely unbuffered
+   output to stdout.
+*/
+void output_set_writer( int (*writer)(char) );
+
 
 #endif

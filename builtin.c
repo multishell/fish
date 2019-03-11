@@ -60,6 +60,9 @@
 #include "signal.h"
 #include "translate.h"
 #include "halloc.h"
+#include "halloc_util.h"
+#include "parse_util.h"
+#include "expand.h"
 
 /**
    The default prompt for the read command
@@ -496,7 +499,7 @@ static int builtin_builtin(  wchar_t **argv )
 
 		al_init( &names );
 		builtin_get_names( &names );
-		names_arr = list_to_char_arr( 0, &names );
+		names_arr = list_to_char_arr( &names );
 		qsort( names_arr,
 			   al_get_count( &names ),
 			   sizeof(wchar_t *),
@@ -511,7 +514,7 @@ static int builtin_builtin(  wchar_t **argv )
 						L"\n",
 						(void *)0 );
 		}
-		halloc_free( names_arr );
+		free( names_arr );
 		al_destroy( &names );
 	}
 	return 0;
@@ -813,7 +816,7 @@ static int builtin_functions( wchar_t **argv )
 
 		al_init( &names );
 		function_get_names( &names, show_hidden );
-		names_arr = list_to_char_arr( 0, &names );
+		names_arr = list_to_char_arr( &names );
 		qsort( names_arr,
 			   al_get_count( &names ),
 			   sizeof(wchar_t *),
@@ -845,7 +848,7 @@ static int builtin_functions( wchar_t **argv )
 			}
 		}
 
-		halloc_free( names_arr );
+		free( names_arr );
 		al_destroy( &names );
 		return 0;
 	}
@@ -858,7 +861,7 @@ static int builtin_functions( wchar_t **argv )
 			sb_append( sb_out, _( L"Current function definitions are:\n\n" ) );
 			al_init( &names );
 			function_get_names( &names, show_hidden );
-			names_arr = list_to_char_arr( 0, &names );
+			names_arr = list_to_char_arr( &names );
 			qsort( names_arr,
 				   al_get_count( &names ),
 				   sizeof(wchar_t *),
@@ -867,7 +870,7 @@ static int builtin_functions( wchar_t **argv )
 			{
 				functions_def( names_arr[i] );
 			}
-			halloc_free( names_arr );
+			free( names_arr );
 			al_destroy( &names );
 			break;
 		}
@@ -924,8 +927,7 @@ static int builtin_function( wchar_t **argv )
 	woptind=0;
 
 	parser_push_block( FUNCTION_DEF );
-	events=halloc( current_block, sizeof(array_list_t ) );
-	al_init( events );
+	events=al_halloc( current_block );
 
 	const static struct woption
 		long_options[] =
@@ -1037,7 +1039,7 @@ static int builtin_function( wchar_t **argv )
 				if( !e )
 					die_mem();
 				e->type = EVENT_VARIABLE;
-				e->param1.variable = halloc_register( current_block, wcsdup( woptarg ));
+				e->param1.variable = halloc_wcsdup( current_block, woptarg );
 				e->function_name=0;
 				al_push( events, e );
 				break;
@@ -1160,8 +1162,6 @@ static int builtin_function( wchar_t **argv )
 		}
 	}
 
-	halloc_register( current_block, events->arr );
-
 	if( res )
 	{
 		int i;
@@ -1176,7 +1176,7 @@ static int builtin_function( wchar_t **argv )
 
 		al_init( &names );
 		function_get_names( &names, 0 );
-		names_arr = list_to_char_arr( 0, &names );
+		names_arr = list_to_char_arr( &names );
 		qsort( names_arr,
 			   al_get_count( &names ),
 			   sizeof(wchar_t *),
@@ -1194,7 +1194,7 @@ static int builtin_function( wchar_t **argv )
 			sb_append2( sb_err,
 						nxt, L"  ", (void *)0 );
 		}
-		halloc_free( names_arr );
+		free( names_arr );
 		al_destroy( &names );
 		sb_append( sb_err, L"\n" );
 
@@ -1203,11 +1203,11 @@ static int builtin_function( wchar_t **argv )
 	}
 	else
 	{
-		current_block->param1.function_name=halloc_register( current_block, wcsdup(argv[woptind]));
-		current_block->param2.function_description=desc?halloc_register( current_block, wcsdup(desc)):0;
+		current_block->param1.function_name=halloc_wcsdup( current_block, argv[woptind]);
+		current_block->param2.function_description=desc?halloc_wcsdup( current_block, desc):0;
 		current_block->param3.function_is_binding = is_binding;
 		current_block->param4.function_events = events;
-
+		
 		for( i=0; i<al_get_count( events ); i++ )
 		{
 			event_t *e = (event_t *)al_get( events, i );
@@ -1613,6 +1613,8 @@ static int builtin_status( wchar_t **argv )
 		IS_NO_JOB_CONTROL,
 		STACK_TRACE,
 		DONE,
+		CURRENT_FILENAME,
+		CURRENT_LINE_NUMBER
 	}
 	;
 
@@ -1656,6 +1658,14 @@ static int builtin_status( wchar_t **argv )
 			,
 			{
 				L"is-no-job-control", no_argument, &mode, IS_NO_JOB_CONTROL
+			}
+			,
+			{
+				L"current-filename", no_argument, &mode, CURRENT_FILENAME
+			}
+			,
+			{
+				L"current-line-number", no_argument, &mode, CURRENT_LINE_NUMBER
 			}
 			,
 			{
@@ -1732,6 +1742,24 @@ static int builtin_status( wchar_t **argv )
 
 		switch( mode )
 		{
+			case CURRENT_FILENAME:
+			{
+				const wchar_t *fn = parser_current_filename();
+				
+				if( !fn )
+					fn = _(L"Standard input");
+				
+				sb_printf( sb_out, L"%ls\n", fn );
+				
+				break;
+			}
+			
+			case CURRENT_LINE_NUMBER:
+			{
+				sb_printf( sb_out, L"%d\n", parser_get_lineno() );
+				break;				
+			}
+			
 			case IS_INTERACTIVE:
 				return !is_interactive_session;
 
@@ -1766,9 +1794,9 @@ static int builtin_status( wchar_t **argv )
 				else
 					sb_printf( sb_out, _( L"This is not a login shell\n" ) );
 
-				sb_printf( sb_out, _(L"Job control: %ls\n"),
-						   job_control_mode==JOB_CONTROL_INTERACTIVE?_(L"Only on interactive jobs"):
-						   (job_control_mode==JOB_CONTROL_NONE?_(L"Never"):_(L"Always")) );
+				sb_printf( sb_out, _( L"Job control: %ls\n" ),
+						   job_control_mode==JOB_CONTROL_INTERACTIVE?_( L"Only on interactive jobs" ):
+						   (job_control_mode==JOB_CONTROL_NONE ? _( L"Never" ) : _( L"Always" ) ) );
 
 				parser_stack_trace( current_block, sb_out );
 				break;
@@ -1943,9 +1971,9 @@ static int builtin_source( wchar_t ** argv )
 
 	argc = builtin_count_args( argv );
 
-	if( argc != 2 )
+	if( argc < 2 )
 	{
-		sb_printf( sb_err, _( L"%ls: Expected exactly one argument, got %d\n" ), argv[0], argc );
+		sb_printf( sb_err, _( L"%ls: Expected at least one argument, got %d\n" ), argv[0], argc );
 		builtin_print_help( argv[0], sb_err );
 		return 1;
 	}
@@ -1972,7 +2000,7 @@ static int builtin_source( wchar_t ** argv )
 	{
 		wchar_t *fn = wrealpath( argv[1], 0 );
 		const wchar_t *fn_intern;
-
+		
 		if( !fn )
 		{
 			fn_intern = intern( argv[1] );
@@ -1985,10 +2013,13 @@ static int builtin_source( wchar_t ** argv )
 		
 		parser_push_block( SOURCE );		
 		reader_push_current_filename( fn_intern );
-		
+
+	
 		current_block->param1.source_dest = fn_intern;
 
+		parse_util_set_argv( argv+2);
 		res = reader_read( fd );
+		
 		parser_pop_block();
 		if( res )
 		{
@@ -2009,7 +2040,6 @@ static int builtin_source( wchar_t ** argv )
 
 	return res;
 }
-
 
 /**
    Make the specified job the first job of the job list. Moving jobs
@@ -2545,7 +2575,8 @@ static int builtin_for( wchar_t **argv )
 	if( argc < 3)
 	{
 		sb_printf( sb_err,
-				   _( L"%ls: Expected at least two arguments\n" ),
+				   _( L"%ls: Expected at least two arguments, got %d\n"),
+				   argc ,
 				   argv[0] );
 		builtin_print_help( argv[0], sb_err );
 	}
@@ -2581,11 +2612,11 @@ static int builtin_for( wchar_t **argv )
 
 		int i;
 		current_block->tok_pos = parser_get_pos();
-		current_block->param1.for_variable = halloc_register( current_block, wcsdup( argv[1] ));
+		current_block->param1.for_variable = halloc_wcsdup( current_block, argv[1] );
 
 		for( i=argc-1; i>3; i-- )
 		{
-			al_push( &current_block->param2.for_vars, halloc_register( current_block, wcsdup(argv[ i ] ) ) );
+			al_push( &current_block->param2.for_vars, halloc_wcsdup( current_block, argv[ i ] ) );
 		}
 		halloc_register( current_block, current_block->param2.for_vars.arr );
 
@@ -2901,7 +2932,7 @@ static int builtin_switch( wchar_t **argv )
 	else
 	{
 		parser_push_block( SWITCH );
-		current_block->param1.switch_value = halloc_register( current_block, wcsdup( argv[1]));
+		current_block->param1.switch_value = halloc_wcsdup( current_block, argv[1]);
 		current_block->skip=1;
 		current_block->param2.switch_taken=0;
 	}
@@ -2937,8 +2968,10 @@ static int builtin_case( wchar_t **argv )
 	for( i=1; i<argc; i++ )
 	{
 		free( unescaped );
-		unescaped = unescape( argv[i], 1);
 
+		unescaped = parse_util_unescape_wildcards( argv[i] );
+		
+		
 		if( wildcard_match( current_block->param1.switch_value, unescaped ) )
 		{
 			current_block->skip = 0;
@@ -3145,6 +3178,7 @@ void builtin_destroy()
 	{
 		hash_destroy( desc );
 		free( desc );
+		desc=0;
 	}
 
 	al_destroy( &io_stack );

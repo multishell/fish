@@ -47,7 +47,7 @@ typedef char tputs_arg_t;
 /**
    This is in the unicode private use area.
 */
-#define ENCODE_DIRECT_BASE 0xf000
+#define ENCODE_DIRECT_BASE 0xf100
 
 /** 
 	Save the shell mode on startup so we can restore them on exit
@@ -88,7 +88,7 @@ extern wchar_t *program_name;
    is not noll, all elements of the \c array_list_t are also
    registered to \c context using \c halloc_register().
 */
-wchar_t **list_to_char_arr( void *context, array_list_t *l );
+wchar_t **list_to_char_arr( array_list_t *l );
 
 /**
    Read a line from the stream f into the buffer buff of length len. If
@@ -114,12 +114,15 @@ void sort_list( array_list_t *comp );
    specified multibyte character string
 */
 wchar_t *str2wcs( const char *in );
+wchar_t *str2wcs_internal( const char *in, wchar_t *out );
 
 /**
    Returns a newly allocated multibyte character string equivalent of
    the specified wide character string
 */
 char *wcs2str( const wchar_t *in );
+
+char *wcs2str_internal( const wchar_t *in, char *out );
 
 /**
    Returns a newly allocated wide character string array equivalent of
@@ -187,7 +190,7 @@ int my_wcswidth( const wchar_t *c );
 
    \param in the position of the opening quote
 */
-wchar_t *quote_end( const wchar_t *in );
+const wchar_t *quote_end( const wchar_t *in );
 
 /**
    A call to this function will reset the error counter. Some
@@ -221,19 +224,17 @@ int contains_str( const wchar_t *needle, ... );
 int read_blocked(int fd, void *buf, size_t count);
 
 /**
-   This is for writing process notification messages. Has to write to
-   stdout, so clr_eol and such functions will work correctly. Not an
-   issue since this function is only used in interactive mode anyway.
-*/
-int writeb( tputs_arg_t b );
-
-/**
    Exit program at once, leaving an error message about running out of memory
 */
 void die_mem();
 
 /**
-  Clean up 
+  Create global_context using halloc
+*/
+void common_init();
+
+/**
+   Free global_context using halloc_free
 */
 void common_destroy();
 
@@ -262,8 +263,7 @@ void debug( int level, const wchar_t *msg, ... );
    \return The escaped string, or 0 if there is not enough memory
 */
 
-wchar_t *escape( const wchar_t *in, 
-				 int escape_all );
+wchar_t *escape( const wchar_t *in, int escape_all );
 
 /**
    Expand backslashed escapes and substitute them with their unescaped
@@ -278,16 +278,6 @@ wchar_t *escape( const wchar_t *in,
 */
 wchar_t *unescape( const wchar_t * in, 
 				   int escape_special );
-
-/**
-   Block SIGCHLD. Calls to block/unblock may be nested, and only once the nest count reaches zero wiull the block be removed.
-*/
-void block();
-
-/**
-   undo call to block().
-*/
-void unblock();
 
 /**
    Attempt to acquire a lock based on a lockfile, waiting LOCKPOLLINTERVAL 

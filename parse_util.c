@@ -1,6 +1,7 @@
 /** \file parse_util.c
 
-    Various utility functions for parsing a command
+    Various mostly unrelated utility functions related to parsing,
+    loading and evaluating fish code.
 */
 
 #include "config.h"
@@ -13,6 +14,7 @@
 
 #include <wchar.h>
 
+#include <time.h>
 #include <assert.h>
 
 #include "util.h"
@@ -20,13 +22,30 @@
 #include "common.h"
 #include "tokenizer.h"
 #include "parse_util.h"
+#include "expand.h"
+#include "intern.h"
+#include "exec.h"
+#include "env.h"
+#include "wildcard.h"
+#include "halloc_util.h"
+
+/**
+   Set of files which have been autoloaded
+*/
+static hash_table_t *all_loaded=0;
 
 int parse_util_lineno( const wchar_t *str, int len )
 {
-	static int res = 1;
-	static int i=0;
+	/**
+	   First cached state
+	*/
 	static const wchar_t *prev_str = 0;
+	static int i=0;
+	static int res = 1;
 
+	/**
+	   Second cached state
+	*/
 	static const wchar_t *prev_str2 = 0;
 	static int i2 = 0;
 	static int res2 = 1;
@@ -84,7 +103,7 @@ int parse_util_locate_cmdsubst( const wchar_t *in,
 		{
 			if( wcschr( L"\'\"", *pos ) )
 			{
-				wchar_t *end = quote_end( pos );
+				const wchar_t *end = quote_end( pos );
 				if( end && *end)
 				{
 					pos=end;
@@ -98,7 +117,7 @@ int parse_util_locate_cmdsubst( const wchar_t *in,
 				{
 					if(( paran_count == 0)&&(paran_begin==0))
 						paran_begin = pos;
-				
+					
 					paran_count++;
 				}
 				else if( *pos == ')' )
@@ -136,16 +155,12 @@ int parse_util_locate_cmdsubst( const wchar_t *in,
 		return 0;
 	}
 
-	*begin = paran_begin;
-	*end = paran_count?in+wcslen(in):paran_end;
+	if( begin )
+		*begin = paran_begin;
+	if( end )
+		*end = paran_count?in+wcslen(in):paran_end;
 	
-/*	assert( *begin >= in );
-	assert( *begin < (in+wcslen(in) ) );
-	assert( *end >= *begin );
-	assert( *end < (in+wcslen(in) ) );
-*/
 	return 1;
-
 }
 
 
@@ -228,7 +243,6 @@ static void job_or_process_extent( const wchar_t *buff,
 		return;
 
 	pos = cursor_pos - (begin - buff);
-//	fwprintf( stderr, L"Subshell extent: %d %d %d\n", begin-buff, end-buff, pos );
 
 	if( a )
 	{
@@ -246,14 +260,12 @@ static void job_or_process_extent( const wchar_t *buff,
 	{
 		die_mem();
 	}
-//	fwprintf( stderr, L"Strlen: %d\n", wcslen(buffcpy ) );
 
 	for( tok_init( &tok, buffcpy, TOK_ACCEPT_UNFINISHED );
 		 tok_has_next( &tok ) && !finished;
 		 tok_next( &tok ) )
 	{
 		int tok_begin = tok_get_pos( &tok );
-//		fwprintf( stderr, L".");
 
 		switch( tok_last_type( &tok ) )
 		{
@@ -264,8 +276,6 @@ static void job_or_process_extent( const wchar_t *buff,
 			case TOK_END:
 			case TOK_BACKGROUND:
 			{
-
-//				fwprintf( stderr, L"New cmd at %d\n", tok_begin );
 				
 				if( tok_begin >= pos )
 				{
@@ -284,7 +294,6 @@ static void job_or_process_extent( const wchar_t *buff,
 		}
 	}
 
-//	fwprintf( stderr, L"Res: %d %d\n", *a-buff, *b-buff );
 	free( buffcpy);
 	
 	tok_destroy( &tok );
@@ -418,5 +427,263 @@ void parse_util_token_extent( const wchar_t *buff,
 
 }
 
+/**
+   Free hash value, but not hash key
+*/
+static void clear_hash_value( const void *key, const void *data )
+{
+	free( (void *)data );
+}
 
+/**
+   Part of the autoloader cleanup 
+*/
+static void clear_loaded_entry( const void *key, const void *data )
+{
+	hash_table_t *loaded = (hash_table_t *)data;
+	hash_foreach( loaded,
+				  &clear_hash_value );
+	hash_destroy( loaded );
+	free( loaded );	
+	free( (void *)key );
+}
+
+/**
+   The autoloader cleanup function. It is run on shutdown and frees
+   any memory used by the autoloader code to keep track of loaded
+   files.
+*/
+static void parse_util_destroy()
+{
+	if( all_loaded )
+	{
+		hash_foreach( all_loaded,
+					  &clear_loaded_entry );
+		
+		hash_destroy( all_loaded );
+		free( all_loaded );	
+		all_loaded = 0;
+	}
+}
+
+void parse_util_load_reset( const wchar_t *path_var )
+{
+	if( all_loaded )
+	{
+		void *key, *data;
+		hash_remove( all_loaded, path_var, (const void **)&key, (const void **)&data );
+		if( key )
+			clear_loaded_entry( key, data );
+	}
+	
+}
+
+
+int parse_util_load( const wchar_t *cmd,
+					 const wchar_t *path_var_name,
+					 void (*on_load)(const wchar_t *cmd),
+					 int reload )
+{
+	static array_list_t *path_list=0;
+	static string_buffer_t *path=0;
+
+	int i;
+	time_t *tm;
+	int reloaded = 0;
+	hash_table_t *loaded;
+
+	const wchar_t *path_var = env_get( path_var_name );
+
+	/*
+	  Do we know where to look
+	*/
+	
+	if( !path_var )
+		return 0;
+	
+	if( !all_loaded )
+	{
+		all_loaded = malloc( sizeof( hash_table_t ) );		
+		halloc_register_function_void( global_context, &parse_util_destroy );
+		if( !all_loaded )
+		{
+			die_mem();
+		}
+		hash_init( all_loaded, &hash_wcs_func, &hash_wcs_cmp );
+ 	}
+	
+	loaded = (hash_table_t *)hash_get( all_loaded, path_var_name );
+	
+	if( !loaded )
+	{
+		loaded = malloc( sizeof( hash_table_t ) );
+		if( !loaded )
+		{
+			die_mem();
+		}
+		hash_init( loaded, &hash_wcs_func, &hash_wcs_cmp );
+		hash_put( all_loaded, wcsdup(path_var_name), loaded );
+	}
+
+	/*
+	  Get modification time of file
+	*/
+	tm = (time_t *)hash_get( loaded, cmd );
+
+	/*
+	  Did we just check this?
+	*/
+	if( tm )
+	{
+		if(time(0)-tm[1]<=1)
+		{
+			return 0;
+		}
+	}
+	
+	/*
+	  Return if already loaded and we are skipping reloading
+	*/
+	if( !reload && tm )
+		return 0;
+	
+	if( !path_list )
+		path_list = al_halloc( global_context);
+	
+	if( !path )
+		path = sb_halloc( global_context );
+	else
+		sb_clear( path );
+	
+	expand_variable_array( path_var, path_list );
+	
+	/*
+	  Iterate over path searching for suitable completion files
+	*/
+	for( i=0; i<al_get_count( path_list ); i++ )
+	{
+		struct stat buf;
+		wchar_t *next = (wchar_t *)al_get( path_list, i );
+		sb_clear( path );
+		sb_append2( path, next, L"/", cmd, L".fish", (void *)0 );
+		if( (wstat( (wchar_t *)path->buff, &buf )== 0) &&
+			(waccess( (wchar_t *)path->buff, R_OK ) == 0) )
+		{
+			if( !tm || (tm[0] != buf.st_mtime ) )
+			{
+				wchar_t *esc = escape( (wchar_t *)path->buff, 1 );
+				wchar_t *src_cmd = wcsdupcat( L". ", esc );
+				
+				if( !tm )
+				{
+					tm = malloc(sizeof(time_t)*2);
+					if( !tm )
+						die_mem();
+				}
+
+				tm[0] = buf.st_mtime;
+				tm[1] = time(0);
+				hash_put( loaded,
+						  intern( cmd ),
+						  tm );
+
+				free( esc );
+
+				if( on_load )
+					on_load(cmd );
+
+				/*
+				  Source the completion file for the specified completion
+				*/
+				exec_subshell( src_cmd, 0 );
+				free(src_cmd);
+				reloaded = 1;
+				break;
+			}
+		}
+	}
+
+	/*
+	  If no file was found we insert the current time. Later we only
+	  research if the current time is at least five seconds later.
+	  This way, the files won't be searched over and over again.
+	*/
+	if( !tm )
+	{
+		tm = malloc(sizeof(time_t)*2);
+		if( !tm )
+			die_mem();
+		
+		tm[0] = 0;
+		tm[1] = time(0);
+		hash_put( loaded, intern( cmd ), tm );
+	}
+
+	al_foreach( path_list, (void (*)(const void *))&free );
+	al_truncate( path_list, 0 );
+
+	return reloaded;	
+}
+
+void parse_util_set_argv( wchar_t **argv )
+{
+	if( *argv )
+	{
+		wchar_t **arg;
+		string_buffer_t sb;
+		sb_init( &sb );
+		
+		for( arg=argv; *arg; arg++ )
+		{
+			if( arg != argv )
+				sb_append( &sb, ARRAY_SEP_STR );
+			sb_append( &sb, *arg );
+		}
+			
+		env_set( L"argv", (wchar_t *)sb.buff, ENV_LOCAL );
+		sb_destroy( &sb );
+	}
+	else
+	{
+		env_set( L"argv", 0, ENV_LOCAL );
+	}				
+}
+
+wchar_t *parse_util_unescape_wildcards( const wchar_t *str )
+{
+	wchar_t *in, *out;
+	wchar_t *unescaped = wcsdup(str);
+
+	if( !unescaped )
+		die_mem();
+	
+	for( in=out=unescaped; *in; in++ )
+	{
+		switch( *in )
+		{
+			case L'\\':
+				if( *(in+1) )
+				{
+					in++;
+					*(out++)=*in;
+				}
+				*(out++)=*in;
+				break;
+				
+			case L'*':
+				*(out++)=ANY_STRING;					
+				break;
+				
+			case L'?':
+				*(out++)=ANY_CHAR;					
+				break;
+				
+			default:
+				*(out++)=*in;
+				break;
+		}
+		
+	}
+	return unescaped;
+}
 

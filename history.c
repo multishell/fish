@@ -19,6 +19,7 @@
 #include "reader.h"
 #include "env.h"
 #include "sanity.h"
+#include "signal.h"
 
 /*
   The history is implemented using a linked list. Searches are done
@@ -102,7 +103,7 @@ static void history_load()
 
 	is_loaded = 1;
 		
-	block();
+	signal_block();
 	hash_init2( &used, 
 				&hash_wcs_func,
 				&hash_wcs_cmp,
@@ -124,7 +125,7 @@ static void history_load()
 				fclose( in_stream );
 				free( fn );
 				free( buff );
-				unblock();				
+				signal_unblock();				
 				return;
 			}
 
@@ -181,7 +182,7 @@ static void history_load()
 	free( buff );
 	free( fn );
 	last_loaded = history_last;
-	unblock();
+	signal_unblock();
 }
 
 void history_init()

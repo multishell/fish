@@ -38,6 +38,8 @@
 #include "env_universal.h"
 #include "translate.h"
 #include "halloc.h"
+#include "halloc_util.h"
+#include "parse_util.h"
 
 /**
    Prototype for the getpgid library function. The prototype for this
@@ -260,7 +262,7 @@ static int handle_child_io( io_data_t *io, int exit_on_error )
 		if( io->fd > 2 )
 		{
 			/*
-			  Make sure the fd used by this redirection is not used by i.e. a pipe. 
+			  Make sure the fd used by this redirection is not used by e.g. a pipe. 
 			*/
 			free_fd( io, io->fd );
 		}
@@ -403,7 +405,7 @@ static int setup_child_process( job_t *j, process_t *p )
 	
 	if( !res )	
 	{
-		res = handle_child_io( j->io, (p==0) );
+		res = handle_child_io( j->io, (p!=0) );
 	}
 	
 	/* Set the handling for job control signals back to the default.  */
@@ -788,9 +790,6 @@ void exec( job_t *j )
 		{
 			case INTERNAL_FUNCTION:
 			{
-				wchar_t **arg;
-				int i;
-				string_buffer_t sb;
 				
 				wchar_t * def = halloc_register( j, wcsdup( function_get_definition( p->argv[0] )));
 				//fwprintf( stderr, L"run function %ls\n", argv[0] );
@@ -804,26 +803,9 @@ void exec( job_t *j )
 				
 				current_block->param2.function_call_process = p;
 				current_block->param1.function_name = halloc_register( current_block, wcsdup( p->argv[0] ) );
-												
-				if( builtin_count_args(p->argv)>1 )
-				{
-					sb_init( &sb );
-				
-					for( i=1, arg=p->argv+1; *arg; i++, arg++ )
-					{
-						if( i != 1 )
-							sb_append( &sb, ARRAY_SEP_STR );
-						sb_append( &sb, *arg );
-					}
-
-					env_set( L"argv", (wchar_t *)sb.buff, ENV_LOCAL );
-					sb_destroy( &sb );
-				}
-				else
-				{
-					env_set( L"argv", 0, ENV_LOCAL );
-				}
-				
+						
+				parse_util_set_argv( p->argv+1 );
+								
 				parser_forbid_function( p->argv[0] );
 
 				if( p->next )
@@ -1278,10 +1260,16 @@ int exec_subshell( const wchar_t *cmd,
 					{
 						wchar_t *el = str2wcs( begin );
 						if( el )
+						{
 							al_push( l, el );
+						}
+						else
+						{
+							debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
+						}
 					}				
 					io_buffer_destroy( io_buffer );
-				
+					
 					return status;
 				
 				case '\n':
@@ -1289,7 +1277,14 @@ int exec_subshell( const wchar_t *cmd,
 					wchar_t *el;
 					*end=0;
 					el = str2wcs( begin );
-					al_push( l, el );
+					if( el )
+					{
+						al_push( l, el );
+					}
+					else
+					{
+						debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
+					}
 					begin = end+1;
 					break;
 				}

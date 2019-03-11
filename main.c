@@ -57,6 +57,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "event.h"
 #include "output.h"
 #include "translate.h"
+#include "halloc_util.h"
 
 /**
    Parse init files
@@ -73,7 +74,8 @@ static int read_init()
 	}
 
 	env_set( L"__fish_help_dir", DOCDIR, 0);	
- 	
+	
+	eval( L"builtin cd " DATADIR L"/fish 2>/dev/null; . fish 2>/dev/null", 0, TOP );
 	eval( L"builtin cd " SYSCONFDIR L" 2>/dev/null; . fish 2>/dev/null", 0, TOP );
 	eval( L"builtin cd 2>/dev/null;. .fish 2>/dev/null", 0, TOP );
 	
@@ -121,6 +123,10 @@ int main( int argc, char **argv )
 				}
 				,
 				{
+					"debug-level", required_argument, 0, 'd' 
+				}
+				,
+				{
 					"interactive", no_argument, 0, 'i' 
 				}
 				,
@@ -150,14 +156,14 @@ int main( int argc, char **argv )
 		
 		int opt = getopt_long( argc,
 							   argv, 
-							   "hilvc:p:", 
+							   "hilvc:p:d:", 
 							   long_options, 
 							   &opt_index );
 		
 #else	
 		int opt = getopt( argc,
 						  argv, 
-						  "hilvc:p:" );
+						  "hilvc:p:d:" );
 #endif
 		if( opt == -1 )
 			break;
@@ -172,6 +178,22 @@ int main( int argc, char **argv )
 				is_interactive_session = 0;
 				break;
 
+			case 'd':		
+			{
+				char *end;
+				int tmp = strtol(optarg, &end, 10);
+				if( tmp >= 0 && tmp <=10 && !*end )
+				{
+					debug_level=tmp;
+				}
+				else
+				{
+					debug( 0, _(L"Invalid value '%s' for debug level switch"), optarg );
+					exit(1);
+				}
+				break;
+			}
+			
 			case 'h':
 				cmd = "help";
 				break;
@@ -203,16 +225,17 @@ int main( int argc, char **argv )
 
 	my_optind = optind;
 	
-	is_login |= strcmp( argv[0], "-fish") == 0;
+	is_login |= (strcmp( argv[0], "-fish") == 0);
 		
 	is_interactive_session &= (cmd == 0);
 	is_interactive_session &= (my_optind == argc);
 	is_interactive_session &= isatty(STDIN_FILENO);	
 	is_interactive_session |= force_interactive;
 
-	translate_init();	
+	common_init();
+	halloc_util_init();	
+
 	proc_init();	
-	output_init();	
 	event_init();	
 	exec_init();	
 	wutil_init();
@@ -230,7 +253,7 @@ int main( int argc, char **argv )
 			wchar_t *cmd_wcs = str2wcs( cmd );
 			res = eval( cmd_wcs, 0, TOP );
 			free(cmd_wcs);
-			reader_exit(0);			
+			reader_exit(0);
 		}
 		else
 		{
@@ -293,20 +316,19 @@ int main( int argc, char **argv )
 
 	proc_fire_event( L"PROCESS_EXIT", EVENT_EXIT, getpid(), res );
 
+	complete_destroy();
 	proc_destroy();
 	env_destroy();
 	builtin_destroy();
 	function_destroy();
-	complete_destroy();
 	reader_destroy();
 	parser_destroy();
 	wutil_destroy();
-	common_destroy();
 	exec_destroy();	
 	event_destroy();
-	output_destroy();
-	translate_destroy();	
 
+	common_destroy();
+	halloc_util_destroy();
 	intern_free_all();
 
 	return res;	
