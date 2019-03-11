@@ -52,6 +52,8 @@ commence.
 #include <time.h>
 #include <wchar.h>
 
+#include <assert.h>
+
 #include "util.h"
 #include "wutil.h"
 #include "highlight.h"
@@ -621,6 +623,129 @@ void reader_write_title()
 }
 
 /**
+   Tests if the specified narrow character sequence is present at the
+   specified position of the specified wide character string. All of
+   \c seq must match, but str may be longer than seq.
+*/
+static int try_sequence( char *seq, wchar_t *str )
+{
+	int i;
+	
+	for( i=0;; i++ )
+	{
+		if( !seq[i] )
+			return i;
+		
+		if( seq[i] != str[i] )
+			return 0;
+	}
+	
+	return 0;
+}
+
+/**
+   Calculate the width of the specified prompt. Does some clever magic
+   to detect common escape sequences that may be embeded in a prompt,
+   such as color codes.
+*/
+static int calc_prompt_width( array_list_t *arr )
+{
+	int res = 0;
+	int i, j, k;
+	
+	for( i=0; i<al_get_count( arr ); i++ )
+	{
+		wchar_t *next = (wchar_t *)al_get( arr, i );
+		
+		for( j=0; next[j]; j++ )
+		{
+			if( next[j] == L'\e' )
+			{
+				/*
+				  This is the start of an escape code. Try to guess it's width.
+				*/
+				int l;
+				int len=0;
+				int found = 0;
+				
+				/*
+				  Test these color escapes with parameter value 0..7
+				*/
+				char * esc[] = 
+				{
+					set_a_foreground,
+					set_a_background,
+					set_foreground,
+					set_background,
+				}
+				;
+
+				/*
+				  Test these regular escapes without any parameter values
+				*/
+				char *esc2[] =
+				{
+					enter_bold_mode,
+					exit_attribute_mode,
+					enter_underline_mode,
+					exit_underline_mode,
+					enter_standout_mode,
+					exit_standout_mode,
+					flash_screen
+				}
+				;
+				
+				for( l=0; l < (sizeof(esc)/sizeof(char *)) && !found; l++ )
+				{
+					if( !esc[l] )
+						continue;
+					
+					for( k=0; k<8; k++ )
+					{
+						len = try_sequence( tparm(esc[l],k), &next[j] );
+						if( len )
+						{
+							j += (len-1);
+							found = 1;
+							break;
+						}
+					}							
+				}
+				
+				for( l=0; l < (sizeof(esc2)/sizeof(char *)) && !found; l++ )
+				{
+					if( !esc2[l] )
+						continue;
+					/*
+					  Test both padded and unpadded version, just to
+					  be safe. Most versions of tparm don't actually
+					  seem to do anything these days.
+					*/
+					len = maxi( try_sequence( tparm(esc2[l]), &next[j] ),
+								try_sequence( esc2[l], &next[j] ));
+					
+					if( len )
+					{
+						j += (len-1);
+						found = 1;
+					}
+				}
+			}
+			else				
+			{
+				/*
+				  Ordinary decent character. Just add width.
+				*/
+				res += wcwidth( next[j] );
+			}
+			
+		}
+	}
+	return res;
+}
+
+
+/**
    Write the prompt to screen. If data->exec_prompt is set, the prompt
    command is first evaluated, and the title will be reexecuted as
    well.
@@ -649,14 +774,8 @@ static void write_prompt()
 				al_init( &prompt_list );
 			}
 		}
-		data->prompt_width=0;
-		for( i=0; i<al_get_count( &prompt_list ); i++ )
-		{
-			wchar_t *next = (wchar_t *)al_get( &prompt_list, i );
-			if( *next == L'\e' )
-				continue;
-			data->prompt_width += my_wcswidth( next );
-		}
+
+		data->prompt_width=calc_prompt_width( &prompt_list );
 
 		data->exec_prompt = 0;
 		reader_write_title();
@@ -1712,8 +1831,6 @@ void reader_current_token_extent( wchar_t **tok_begin,
 	
 	reader_current_subshell_extent( &begin, &end );
 
-//	fwprintf( stderr, L"Lalala: %d %d %d\n", begin-data->buff, end-data->buff, pos );
-
 	if( !end || !begin )
 		return;
 
@@ -1723,6 +1840,11 @@ void reader_current_token_extent( wchar_t **tok_begin,
 	b = a;
 	pa = data->buff + pos;
 	pb = pa;
+
+	assert( begin >= data->buff );
+	assert( begin <= (data->buff+wcslen(data->buff) ) );
+	assert( end >= begin );
+	assert( end <= (data->buff+wcslen(data->buff) ) );
 
 	buffcpy = wcsndup( begin, end-begin );
 
@@ -1738,15 +1860,27 @@ void reader_current_token_extent( wchar_t **tok_begin,
 		int tok_begin = tok_get_pos( &tok );
 		int tok_end=tok_begin;
 
+		/*
+		  Calculate end of token
+		*/
 		if( tok_last_type( &tok ) == TOK_STRING )
 			tok_end +=wcslen(tok_last(&tok));
-
+		
+		/*
+		  Cursor was before beginning of this token, means that the
+		  cursor is between two tokens, so we set it to a zero element
+		  string and break
+		*/
 		if( tok_begin > pos )
 		{
 			a = b = data->buff + pos;
 			break;
 		}
 
+		/*
+		  If cursor is inside the token, this is the token we are
+		  looking for. If so, set a and b and break
+		*/
 		if( tok_end >= pos )
 		{
 			a = begin + tok_get_pos( &tok );
@@ -1756,11 +1890,17 @@ void reader_current_token_extent( wchar_t **tok_begin,
 
 			break;
 		}
-		pa = begin + tok_get_pos( &tok );
-		pb = pa + wcslen(tok_last(&tok));
+		
+		/*
+		  Remember previous string token
+		*/
+		if( tok_last_type( &tok ) == TOK_STRING )
+		{
+			pa = begin + tok_get_pos( &tok );
+			pb = pa + wcslen(tok_last(&tok));
+		}
 	}
 
-//	fwprintf( stderr, L"Res: %d %d\n", *a-data->buff, *b-data->buff );
 	free( buffcpy);
 	
 	tok_destroy( &tok );
@@ -1774,7 +1914,10 @@ void reader_current_token_extent( wchar_t **tok_begin,
 	if( prev_end )
 		*prev_end = pb;
 
-//	fwprintf( stderr, L"w00t\n" );
+	assert( pa >= data->buff );
+	assert( pa <= (data->buff+wcslen(data->buff) ) );
+	assert( pb >= pa );
+	assert( pb <= (data->buff+wcslen(data->buff) ) );
 
 }
 
@@ -1876,7 +2019,7 @@ static void handle_token_history( int forward, int reset )
 	int current_pos;
 	tokenizer tok;
 
-	if(reset )
+	if( reset )
 	{
 		/*
 		  Start a new token search using the current token
@@ -1884,6 +2027,7 @@ static void handle_token_history( int forward, int reset )
 		reset_token_history();
 		
 	}
+
 
 	current_pos  = data->token_history_pos;
 
@@ -1926,6 +2070,7 @@ static void handle_token_history( int forward, int reset )
 			  history already contains the search string itself, if so
 			  return, otherwise add it.
 			*/
+
 			const wchar_t *last = al_get( &data->search_prev, al_get_count( &data->search_prev ) -1 );
 			if( wcscmp( last, data->search_buff ) )
 			{
@@ -1938,6 +2083,9 @@ static void handle_token_history( int forward, int reset )
 		}
 		else
 		{
+
+			debug( 3, L"new '%ls'", data->token_history_buff );	
+
 			for( tok_init( &tok, data->token_history_buff, TOK_ACCEPT_UNFINISHED );
 				 tok_has_next( &tok);
 				 tok_next( &tok ))
@@ -1948,11 +2096,12 @@ static void handle_token_history( int forward, int reset )
 					{
 						if( wcsstr( tok_last( &tok ), data->search_buff ) )
 						{
-//				fwprintf( stderr, L"Found token at pos %d\n", tok_get_pos( &tok ) );
+							debug( 3, L"Found token at pos %d\n", tok_get_pos( &tok ) );
 							if( tok_get_pos( &tok ) >= current_pos )
 							{
 								break;
 							}
+							debug( 3, L"ok pos" );
 
 							if( !contains( tok_last( &tok ), &data->search_prev ) )
 							{
@@ -2499,9 +2648,7 @@ wchar_t *reader_readline()
 		if( last_char != R_YANK && last_char != R_YANK_POP )
 			yank=0;
 
-		
-
-		switch (c)
+		switch( c )
 		{
 
 			/* go to beginning of line*/
@@ -2912,7 +3059,21 @@ static int read_ni( int fd )
 		while(!feof( in_stream ))
 		{
 			char buff[4096];
-			int c = fread(buff, 1, 4096, in_stream);
+			int c;
+
+			c = fread(buff, 1, 4096, in_stream);
+			if( ferror( in_stream ) )
+			{
+				debug( 1, 
+					   L"Error while reading commands" );
+
+				/*
+				  Reset buffer. We won't evaluate incomplete files.
+				*/
+				acc.used=0;
+				break;
+			}
+			
 			b_append( &acc, buff, c );
 		}
 		b_append( &acc, "\0", 1 );

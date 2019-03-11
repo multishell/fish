@@ -17,6 +17,9 @@
 */
 #define EVENT_ANY_PID 0
 
+/**
+   Enumeration of event types
+*/
 enum
 {
 	EVENT_ANY, /**< Matches any event type (Not always any event, as the function name may limit the choice as well */
@@ -40,18 +43,24 @@ typedef struct
 	   Type of event
 	*/
 	int type;
+
+	/**
+	   The type-specific parameter
+	*/
 	union
 	{
 		/**
-		   Signal number for signal-type events.Use EVENT_ANY_SIGNAL to match any signal
+		   Signal number for signal-type events.Use EVENT_ANY_SIGNAL
+		   to match any signal
 		*/
 		int signal;
 		/**
-		   Variable name for variable-type events. 
+		   Variable name for variable-type events.
 		*/
 		const wchar_t *variable;
 		/**
-		   Process id for process-type events. Use EVENT_ANY_PID to match any pid.
+		   Process id for process-type events. Use EVENT_ANY_PID to
+		   match any pid.
 		*/
 		pid_t pid;
 		/**
@@ -65,6 +74,13 @@ typedef struct
 	   The name of the event handler function
 	*/
 	const wchar_t *function_name;	
+
+	/**
+	   The argument list. Only used when sending a new event using
+	   event_fire. In all other situations, the value of this variable
+	   is ignored.
+	*/
+	array_list_t arguments;
 }
 	event_t;
 
@@ -98,7 +114,7 @@ int event_get( event_t *criterion, array_list_t *out );
    \param event the specific event whose handlers should fire
    \param arguments the argument string to send to the event handler function
 */
-void event_fire( event_t *event, array_list_t *arguments );
+void event_fire( event_t *event );
 
 /**
    Initialize the event-handling library

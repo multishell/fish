@@ -317,8 +317,11 @@ static int test_flags( wchar_t *filename,
 		return 1;
 	
 	struct stat buf;
-	wstat( filename, &buf );
-	
+	if( wstat( filename, &buf ) == -1 )
+	{
+		return 1;
+	}
+		
 	if( S_IFDIR & buf.st_mode )
 		return 1;
 	
@@ -671,7 +674,7 @@ void al_push_check( array_list_t *l, const wchar_t *new )
 	{
 		if( !wcscmp( al_get(l, i), new ) ) 
 		{
-			free( new );
+			free( (void *)new );
 			return;
 		}
 	}

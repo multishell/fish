@@ -66,7 +66,7 @@ The fish parser. Contains functions for parsing code.
    Error message for tokenizer error. The tokenizer message is
    appended to this message.
 */
-#define TOK_ERR_MSG L"Tokenizer error: %ls"
+#define TOK_ERR_MSG L"Tokenizer error: '%ls'"
 
 /**
    Error message for short circut command error.
@@ -89,27 +89,64 @@ The fish parser. Contains functions for parsing code.
 #define BLOCK_ERR_MSG L"Maximum number of nested blocks reached."
 
 /**
-   Error message on missing 'end'
+   Error message when a non-string token is found when expecting a command name
 */
-#define END_ERR_MSG L"Block missing 'end'"
+#define CMD_ERR_MSG L"Expected a command string, got token of type '%ls'"
 
 /**
-   Error message on pipe/bg character without command
+   Error message when encountering an illegal command name
 */
-#define CMD_ERR_MSG L"Expected command"
+#define ILLEGAL_CMD_ERR_MSG L"Illegal command name '%ls'"
 
 /**
    Error message for wildcards with no matches
 */
-#define WILDCARD_ERR_MSG L"Warning: No match for wildcard %ls"
+#define WILDCARD_ERR_MSG L"Warning: No match for wildcard '%ls'"
+
+/**
+   Error when using case builtin outside of switch block
+*/
+#define INVALID_CASE_ERR_MSG L"'case' builtin not inside of switch block"
+
+/**
+   Error when using loop control builtins (break or continue) outside of loop
+*/
+#define INVALID_LOOP_ERR_MSG L"Loop control command while not inside of loop" 
+
+/**
+   Error when using else builtin outside of if block
+*/
+#define INVALID_ELSE_ERR_MSG L"'else' builtin not inside of if block" 
+
+/**
+   Error when using end builtin outside of block
+*/
+#define INVALID_END_ERR_MSG L"'end' command outside of block"
 
 /**
    Error message for Posix-style assignment
 */
-#define COMMAND_ASSIGN_ERR_MSG L"Unknown command %ls. Did you mean 'set VARIABLE VALUE'? For information on setting variable values, see the manual section on the set command by typing 'help set'."
+#define COMMAND_ASSIGN_ERR_MSG L"Unknown command '%ls'. Did you mean 'set VARIABLE VALUE'? For information on setting variable values, see the manual section on the set command by typing 'help set'."
+
+/**
+   Error for invalid redirection token
+*/
+#define REDIRECT_TOKEN_ERR_MSG L"Expected redirection specification, got token of type '%ls'"
+
+/**
+   Error when encountering redirection without a command
+*/
+#define INVALID_REDIRECTION_ERR_MSG L"Encountered redirection when expecting a command name. Fish does not allow a redirection operation before a command."
+
+/** 
+	Error for wrong token type
+*/
+#define UNEXPECTED_TOKEN_ERR_MSG L"Unexpected token of type '%ls'"
 
 /** Last error code */
 int error_code;
+
+event_block_t *global_event_block=0;
 
 /** Position of last error */
 
@@ -194,9 +231,10 @@ int block_count( block_t *b )
 
 void parser_push_block( int type )
 {
-	block_t *new = malloc( sizeof( block_t ));
+	block_t *new = calloc( 1, sizeof( block_t ));
 
-//	debug( 2, L"Block push %ls %d\n", bl[type], block_count( current_block)+1 );
+	debug( 3, L"Block push %ls %d\n", parser_get_block_desc(type), block_count( current_block)+1 );
+
 	new->outer = current_block;
 	new->type = (current_block && current_block->skip)?FAKE:type;
 
@@ -229,7 +267,9 @@ void parser_push_block( int type )
 
 void parser_pop_block()
 {
-//	debug( 2, L"Block pop %ls %d\n", bl[current_block->type], block_count(current_block)-1 );
+
+	debug( 3, L"Block pop %ls %d\n", parser_get_block_desc(current_block->type), block_count(current_block)-1 );
+	event_block_t *eb, *eb_next;
 
 	if( (current_block->type != FUNCTION_DEF ) && 
 		(current_block->type != FAKE) && 
@@ -270,6 +310,12 @@ void parser_pop_block()
 
 	}
 
+	for( eb=current_block->first_event_block; eb; eb=eb_next )
+	{
+		eb_next = eb->next;
+		free(eb);
+	}	
+
 	block_t *old = current_block;
 	current_block = current_block->outer;
 	free( old );
@@ -292,7 +338,7 @@ wchar_t *parser_get_block_desc( int block )
 			return L"function definition block";
 			
 		case FUNCTION_CALL:
-			return L"fuction invocation block";
+			return L"function invocation block";
 			
 		case SWITCH:
 			return L"switch block";
@@ -325,7 +371,7 @@ wchar_t *parser_get_block_desc( int block )
 int parser_skip_arguments( const wchar_t *cmd )
 {
 		
-    return contains_str( cmd,
+	return contains_str( cmd,
 						 L"else",
 						 L"begin",
 						 (void *)0 );
@@ -497,19 +543,23 @@ wchar_t *parser_cdpath_get( wchar_t *dir )
 	}
 	else
 	{
-		wchar_t *path = env_get(L"CDPATH");
+		wchar_t *path;
+		wchar_t *path_cpy;
+		wchar_t *nxt_path;
+		wchar_t *state;
+		wchar_t *whole_path;
 
-		if( path == 0 )
+		path = env_get(L"CDPATH");
+
+		if( !path || !wcslen(path) )
 		{
 			path = L".";
 		}
 
-		wchar_t *path_cpy = wcsdup( path );
-		wchar_t *nxt_path = path;
-		wchar_t *state;
-		wchar_t *whole_path;
-
-		if( (path_cpy==0) )
+		nxt_path = path;
+		path_cpy = wcsdup( path );
+		
+		if( !path_cpy )
 		{
 			die_mem();			
 		}
@@ -588,6 +638,8 @@ void error( int ec, int p, const wchar_t *str, ... )
 wchar_t *get_filename( const wchar_t *cmd )
 {
 	wchar_t *path;
+
+	debug( 2, L"get_filename( '%ls' )", cmd );
 
 	if(wcschr( cmd, '/' ) != 0 )
 	{
@@ -833,7 +885,7 @@ int eval_args( const wchar_t *line, array_list_t *args )
 			default:
 				error( SYNTAX_ERROR,
 					   tok_get_pos( &tok ),
-					   L"Unexpected token of type %ls",
+					   UNEXPECTED_TOKEN_ERR_MSG,
 					   tok_get_desc( tok_last_type(&tok)) );
 				
 				do_loop=0;
@@ -890,7 +942,7 @@ wchar_t *parser_current_line()
 
 	line = wcsndup( line, line_end-line );
 
-//	debug( 2, L"Current pos %d, line pos %d, file_length %d\n", current_tokenizer_pos,  current_line_pos, wcslen(whole_str));
+	debug( 4, L"Current pos %d, line pos %d, file_length %d\n", current_tokenizer_pos,  current_line_pos, wcslen(whole_str));
 
 	if( !is_interactive )
 	{
@@ -906,7 +958,10 @@ wchar_t *parser_current_line()
 		offset=0;
 	}
 
-	/* Skip printing if we are in interactive mode and the error was on the first character of the line */
+	/* 
+	   Skip printing character position if we are in interactive mode
+	   and the error was on the first character of the line
+	*/
 	if( offset+current_line_pos )
 		swprintf( lineinfo+offset,
 				  LINEINFO_SIZE-offset,
@@ -1079,7 +1134,7 @@ static void parse_job_main_loop( process_t *p,
 							{
 								error( SYNTAX_ERROR,
 									   tok_get_pos( tok ),
-									   L"Could not expand string",
+									   L"Could not expand string '%ls'",
 									   tok_last(tok) );
 																		
 							}
@@ -1125,16 +1180,23 @@ static void parse_job_main_loop( process_t *p,
 				io_data_t *new_io;
 				wchar_t *target = 0;
 				
-
-
 				/*
 				  Don't check redirections in skipped part
 
-				  Otherwise, bogus errors may be the result
+				  Otherwise, bogus errors may be the result. (Do check
+				  that token is string, though)
 				*/
 				if( current_block->skip )
 				{
 					tok_next( tok );
+					if( tok_last_type( tok ) != TOK_STRING )
+					{
+						error( SYNTAX_ERROR,
+							   tok_get_pos( tok ),
+							   REDIRECT_TOKEN_ERR_MSG,
+							   tok_get_desc( tok_last_type(tok)) );
+					}
+					
 					break;
 				}
 				
@@ -1156,7 +1218,7 @@ static void parse_job_main_loop( process_t *p,
 						{
 							error( SYNTAX_ERROR,
 								   tok_get_pos( tok ),
-								   L"Could not expand string %ls",
+								   REDIRECT_TOKEN_ERR_MSG,
 								   tok_last( tok ) );
 							
 						}
@@ -1165,7 +1227,7 @@ static void parse_job_main_loop( process_t *p,
 					default:
 						error( SYNTAX_ERROR,
 							   tok_get_pos( tok ),
-							   L"Expected redirection, got token of type %ls",
+							   REDIRECT_TOKEN_ERR_MSG,
 							   tok_get_desc( tok_last_type(tok)) );
 				}
 				
@@ -1210,8 +1272,8 @@ static void parse_job_main_loop( process_t *p,
 							{
 								new_io->io_mode = IO_FD;
 								new_io->param1.old_fd = wcstol( target,
-														 0,
-														 10 );
+																0,
+																10 );
 								if( ( new_io->param1.old_fd < 0 ) ||
 									( new_io->param1.old_fd > 10 ) )
 								{
@@ -1247,7 +1309,7 @@ static void parse_job_main_loop( process_t *p,
 			default:
 				error( SYNTAX_ERROR,
 					   tok_get_pos( tok ),
-					   L"Unexpected token of type %ls",
+					   UNEXPECTED_TOKEN_ERR_MSG,
 					   tok_get_desc( tok_last_type(tok)) );
 				
 				tok_next(tok);
@@ -1307,7 +1369,7 @@ static int parse_job( process_t *p,
 
 	block_t *prev_block = current_block;   
 		
-//	debug( 2, L"begin parse_job()\n" );
+	debug( 2, L"begin parse_job()\n" );
 	al_init( &args );
 
 	current_tokenizer_pos = tok_get_pos( tok );
@@ -1321,11 +1383,13 @@ static int parse_job( process_t *p,
 			{
 				nxt = expand_one( wcsdup(tok_last( tok )),
 								  EXPAND_SKIP_SUBSHELL | EXPAND_SKIP_VARIABLES);
+				debug( 2, L"command '%ls' -> '%ls'", tok_last( tok ), nxt?nxt:L"0" );
+
 				if( nxt == 0 )
 				{
 					error( SYNTAX_ERROR,
 						   tok_get_pos( tok ),
-						   L"Illegal command name %ls",
+						   ILLEGAL_CMD_ERR_MSG,
 						   tok_last( tok ) );
 					
 					al_destroy( &args );
@@ -1349,7 +1413,7 @@ static int parse_job( process_t *p,
 			{
 				error( SYNTAX_ERROR,
 					   tok_get_pos( tok ),
-					   L"Expected a command name, got token of type %ls",
+					   CMD_ERR_MSG,
 					   tok_get_desc( tok_last_type(tok) ) );
 				
 				al_destroy( &args );
@@ -1558,6 +1622,9 @@ static int parse_job( process_t *p,
 			{
 				
 				p->actual_cmd = get_filename( (wchar_t *)al_get( &args, 0 ) );
+
+				debug( 2, L"filename '%ls' -> '%ls'", (wchar_t *)al_get( &args, 0 ), p->actual_cmd?p->actual_cmd:L"0" );
+				
 				/*
 				  Check if the specified command exists
 				*/
@@ -1604,7 +1671,7 @@ static int parse_job( process_t *p,
 						{
 							error( EVAL_ERROR,
 								   tok_get_pos( tok ),
-								   L"Unknown command %ls",
+								   L"Unknown command '%ls'",
 								   (wchar_t *)al_get( &args, 0 ) );
 															   
 						}
@@ -1625,7 +1692,7 @@ static int parse_job( process_t *p,
 		{
 			error( SYNTAX_ERROR,
 				   tok_get_pos( tok ),
-				   L"Could not find end of block" );
+				   BLOCK_END_ERR_MSG );
 		}
 
 		if( !make_sub_block )
@@ -1671,7 +1738,10 @@ static int parse_job( process_t *p,
 						 end_pos );
 
 			while( prev_block != current_block )
+			{
 				parser_pop_block();
+			}
+			
 		}
 		else tok_next( tok );
 		
@@ -1705,7 +1775,10 @@ static int parse_job( process_t *p,
 		  Make sure the block stack is consistent
 		*/
 		while( prev_block != current_block )
+		{
 			parser_pop_block();
+		}
+		
 	}
 	al_destroy( &args );
 	
@@ -1731,6 +1804,7 @@ static void skipped_exec( job_t * j )
 		{
 			if(( wcscmp( p->argv[0], L"for" )==0) ||
 			   ( wcscmp( p->argv[0], L"switch" )==0) ||
+			   ( wcscmp( p->argv[0], L"begin" )==0) ||
 			   ( wcscmp( p->argv[0], L"function" )==0))
 			{
 				parser_push_block( FAKE );
@@ -1942,7 +2016,7 @@ static void eval_job( tokenizer *tok )
 		{
 			error( SYNTAX_ERROR,
 				   tok_get_pos( tok ),
-				   L"Expected a command string, got token of type %ls",
+				   CMD_ERR_MSG,
 				   tok_get_desc( tok_last_type(tok)) );
 			
 			return;
@@ -1963,9 +2037,10 @@ int eval( const wchar_t *cmd, io_data_t *io, int block_type )
 	io_data_t *prev_io = block_io;
 	block_io = io;
 	
-	debug( 2, L"Eval command %ls", cmd );
-	
 	job_reap( 0 );
+
+	debug( 4, L"eval: %ls", cmd );
+	
 	
 	if( !cmd )
 	{
@@ -1983,8 +2058,8 @@ int eval( const wchar_t *cmd, io_data_t *io, int block_type )
 			   L"Tried to evaluate buffer using invalid block scope of type '%ls'. " BUGREPORT_MSG,
 			   parser_get_block_desc( block_type ),
 			   PACKAGE_BUGREPORT );
-        return 1;
-    }
+		return 1;
+	}
 		
 	eval_level++;
 	current_tokenizer = malloc( sizeof(tokenizer));
@@ -1996,7 +2071,7 @@ int eval( const wchar_t *cmd, io_data_t *io, int block_type )
 	tok_init( current_tokenizer, cmd, 0 );
 	error_code = 0;
 	
-	event_fire( 0, 0 );		
+	event_fire( 0 );		
 
 	while( tok_has_next( current_tokenizer ) &&
 		   !error_code &&
@@ -2004,10 +2079,11 @@ int eval( const wchar_t *cmd, io_data_t *io, int block_type )
 		   !exit_status() )
 	{
 		eval_job( current_tokenizer );
-		event_fire( 0, 0 );		
+		event_fire( 0 );		
 	}
 	
 	int prev_block_type = current_block->type;	
+	
 	parser_pop_block();
 
 	while( start_current_block != current_block )
@@ -2046,7 +2122,7 @@ int eval( const wchar_t *cmd, io_data_t *io, int block_type )
 					debug( 1, 
 						   L"%ls", parser_get_block_desc( current_block->type ) );
 					debug( 1, 
-						   END_ERR_MSG );
+						   BLOCK_END_ERR_MSG );
 					fwprintf( stderr, L"%ls", parser_current_line() );
 			
 					h = builtin_help_get( L"end" );
@@ -2257,15 +2333,15 @@ int parser_test( wchar_t * buff,
 //							debug( 2, L"Error on block type %d\n", block_type[count-1] );
 							
 
-                            if( babble )
-                            {
-                                error( SYNTAX_ERROR,
-                                       tok_get_pos( &tok ),
-									   L"'case' builtin not inside of switch block" );
-								                                
-                                print_errors();
-                            }
-                        }
+							if( babble )
+							{
+								error( SYNTAX_ERROR,
+									   tok_get_pos( &tok ),
+									   INVALID_CASE_ERR_MSG );
+								
+								print_errors();
+							}
+						}
 					}	
 
 					/*
@@ -2290,14 +2366,14 @@ int parser_test( wchar_t * buff,
 						{
 							err=1;
 							
-                            if( babble )
-                            {
-                                error( SYNTAX_ERROR,
-                                       tok_get_pos( &tok ),
-                                       L"Loop control command while not inside of loop" );
+							if( babble )
+							{
+								error( SYNTAX_ERROR,
+									   tok_get_pos( &tok ),
+									   INVALID_LOOP_ERR_MSG );
 								print_errors();
-                            }
-                        }						
+							}
+						}						
 					}
 					
 					/*
@@ -2306,16 +2382,17 @@ int parser_test( wchar_t * buff,
 					if( wcscmp( L"else", tok_last( &tok ) )==0 )
 					{
 						if( !count || block_type[count-1]!=IF )
-                        {
-                            err=1;
-                            if( babble )
-                            {
-                                error( SYNTAX_ERROR,
-                                       tok_get_pos( &tok ),
-									   L"'else' builtin not inside of if block" );
+						{
+							err=1;
+							if( babble )
+							{
+								error( SYNTAX_ERROR,
+									   tok_get_pos( &tok ),
+									   INVALID_ELSE_ERR_MSG );
+								
 								print_errors();
-                            }
-                        }
+							}
+						}
 
 					}
 					
@@ -2329,7 +2406,7 @@ int parser_test( wchar_t * buff,
 						{
 							error( SYNTAX_ERROR,
 								   tok_get_pos( &tok ),
-								   L"'end' command outside of block" );
+								   INVALID_END_ERR_MSG );
 							print_errors();
 						}						
 					}
@@ -2349,7 +2426,7 @@ int parser_test( wchar_t * buff,
 					{
 						error( SYNTAX_ERROR,
 							   tok_get_pos( &tok ),
-							   L"Redirection error" );
+							   INVALID_REDIRECTION_ERR_MSG );
 						print_errors();
 					}
 				}
@@ -2361,13 +2438,14 @@ int parser_test( wchar_t * buff,
 				if( needs_cmd && !had_cmd )
 				{
 					err = 1;					
-                    if( babble )
-                    {
-                        error( SYNTAX_ERROR,
-                               tok_get_pos( &tok ),
-							   CMD_ERR_MSG );
+					if( babble )
+					{
+						error( SYNTAX_ERROR,
+							   tok_get_pos( &tok ),
+							   CMD_ERR_MSG,
+							   tok_get_desc( tok_last_type(&tok)));
 						print_errors();
-                    }
+					}
 				}				
 				needs_cmd=0;				
 				had_cmd = 0;
@@ -2400,14 +2478,15 @@ int parser_test( wchar_t * buff,
 				if( needs_cmd && !had_cmd )
 				{
 					err = 1;					
-                    if( babble )
-                    {
-                        error( SYNTAX_ERROR,
-                               tok_get_pos( &tok ),
-							   CMD_ERR_MSG );
+					if( babble )
+					{
+						error( SYNTAX_ERROR,
+							   tok_get_pos( &tok ),
+							   CMD_ERR_MSG,
+							   tok_get_desc( tok_last_type(&tok)));
 						
-                        print_errors();
-                    }
+						print_errors();
+					}
 				}		
 		
 				if( had_cmd )
@@ -2453,7 +2532,7 @@ int parser_test( wchar_t * buff,
 	{
 		error( SYNTAX_ERROR,
 			   block_pos[count-1],
-			   END_ERR_MSG );
+			   BLOCK_END_ERR_MSG );
 		print_errors();
 	}
 	

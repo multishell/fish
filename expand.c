@@ -20,6 +20,8 @@ parameter expansion.
 #include <unistd.h>
 #include <signal.h>
 
+#include <assert.h>
+
 #ifdef SunOS
 #include <procfs.h>
 #endif
@@ -713,7 +715,7 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 			wchar_t * new_in;			
 			array_list_t l;
 			int is_single = (c==VARIABLE_EXPAND_SINGLE);
-						
+			
 			stop_pos = start_pos;
 
 			while( 1 )
@@ -847,6 +849,7 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 					in[i]=0;
 					
 					sb_append( &res, in );
+					sb_append_char( &res, INTERNAL_SEPARATOR );
 
 					for( j=0; j<al_get_count( &l); j++ )
 					{
@@ -1173,6 +1176,11 @@ int expand_locate_subshell( wchar_t *in,
 	*begin = paran_begin;
 	*end = paran_count?in+wcslen(in):paran_end;
 	
+/*	assert( *begin >= in );
+	assert( *begin < (in+wcslen(in) ) );
+	assert( *end >= *begin );
+	assert( *end < (in+wcslen(in) ) );
+*/
 	return 1;
 
 }

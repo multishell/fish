@@ -1,5 +1,5 @@
 # Process this file with autoconf to produce a configure script.
-AC_INIT(fish,1.18.1,fish-users@lists.sf.net)
+AC_INIT(fish,1.19.0,fish-users@lists.sf.net)
 
 AC_CANONICAL_TARGET
 
@@ -17,6 +17,15 @@ AC_PROG_CPP
 AC_PROG_INSTALL
 #AC_ISC_POSIX
 #AC_PROG_MAKE_SET
+
+AC_CHECK_PROG( has_doxygen, [doxygen], "true")
+
+if ! test $has_doxygen = "true"; then
+	echo Could not find the Doxygen program in your path.
+	echo This program is needed to build fish.
+	echo Please install it and try again.
+	exit 1
+fi
 
 # Optionally drop xsel
 AC_ARG_WITH( xsel, 
@@ -119,6 +128,8 @@ fi
 
 AC_CHECK_LIB(socket, connect)
 AC_CHECK_LIB(rt, nanosleep)
+
+AC_CHECK_FUNCS(wcsdup wcsndup wcslen wcscasecmp wcsncasecmp)
 
 # Check if we have ncurses, and use it rather than curses if possible.
 AC_CHECK_HEADERS([ncurses.h],[AC_SUBST(CURSESLIB,[ncurses]) AC_DEFINE(HAVE_NCURSES_H)],[AC_SUBST(CURSESLIB,[curses])])

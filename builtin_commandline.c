@@ -28,10 +28,10 @@ Functions used for implementing the commandline builtin.
 */
 enum
 {
-	STRING_MODE=1, // Operate on entire buffer
-	JOB_MODE, // Operate on job under cursor
-	PROCESS_MODE, // Operate on process under cursor
-	TOKEN_MODE // Operate on token under cursor
+	STRING_MODE=1, /**< Operate on entire buffer */
+	JOB_MODE, /**< Operate on job under cursor */
+	PROCESS_MODE, /**< Operate on process under cursor */
+	TOKEN_MODE /**< Operate on token under cursor */
 }
 	;
 
@@ -40,9 +40,9 @@ enum
 */
 enum
 {
-	REPLACE_MODE=1, // Replace current text
-	INSERT_MODE, // Insert at cursor position
-	APPEND_MODE // Insert at end of current token/command/buffer
+	REPLACE_MODE=1, /**< Replace current text */
+	INSERT_MODE, /**< Insert at cursor position */
+	APPEND_MODE /**< Insert at end of current token/command/buffer */
 }
 	;
 
@@ -66,10 +66,6 @@ static void replace_part( wchar_t *begin,
 					
 	sb_init( &out );
 
-//					wchar_t *tmp = wcsndup( begin, end-begin );
-					
-//					fwprintf( stderr, L"Commandline '%ls', current command '%ls'\n", reader_get_buffer(), tmp );
-					
 	sb_append_substring( &out, buff, begin-buff );
 					
 	switch( append_mode)
@@ -253,7 +249,7 @@ int builtin_commandline( wchar_t **argv )
 		
 		int opt = wgetopt_long( argc,
 								argv, 
-								L"aijpctwfo", 
+								L"aijpctwfor", 
 								long_options, 
 								&opt_index );
 		if( opt == -1 )
@@ -282,7 +278,11 @@ int builtin_commandline( wchar_t **argv )
 			case L'i':
 				append_mode = INSERT_MODE;
 				break;
-				
+
+			case L'r':
+				append_mode = REPLACE_MODE;
+				break;
+								
 			case 'c':
 				cut_at_cursor=1;
 				break;

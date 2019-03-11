@@ -115,7 +115,7 @@ function help -d "Show help for the fish shell"
 
 		# If we are in a graphical environment, we check if there is a
 		# graphical browser to use instead.
-		if test (echo $DISPLAY)
+		if test (echo $DISPLAY) -a \( "$XAUTHORITY" = "$HOME/.Xauthority" -o "$XAUTHORITY" = "" \)
 			for i in $graphical_browsers
 				if which $i 2>/dev/null >/dev/null
 					set fish_browser $i
@@ -216,20 +216,11 @@ end
 # ellipsised. This function is used by the default prompt command.
 #
 
-function prompt_pwd -d "Print the current working directory, ellipsise it if it is longer than 1/4 of the terminal width"
-	set wd (pwd)
-	set len (echo $wd|wc -c)
-	set max_width (echo $COLUMNS/4|bc)
-	if test $len -gt $max_width
-		#Write ellipsis character if known to be using UTF
-		#else use $
-		set -l ellipsis '$' #default
-		if expr match "$LANG" ".*UTF" >/dev/null
-			set ellipsis \u2026
-		end
-		printf %s%s $ellipsis (echo $wd|cut -c (echo $len-$max_width-1|bc)- ^/dev/null )
-	else
-		echo $wd
+function prompt_pwd -d "Print the current working directory, shortend to fit the prompt"
+	set -l wd (pwd)
+	printf "%s" $wd|sed -e 's-/\([^/]\)\([^/]*\)-/\1-g'
+	if test $wd != '~'
+		printf "%s\n" $wd|sed -e 's-.*/[^/]\([^/]*$\)-\1-'
 	end
 end
 
@@ -238,13 +229,7 @@ end
 #
 
 function pwd -d "Print working directory"
-	set out (command pwd $argv)
-	if echo $out| grep \^$HOME >/dev/null
-		printf \~
-		echo $out |cut -b (echo $HOME|wc -c)- ^/dev/null
-	else
-		printf "%s\n" $out
-	end
+	command pwd | sed -e "s|^$HOME|~|"
 end
 
 #
@@ -266,7 +251,7 @@ function vared -d "Edit variable value"
 				if test (count $$argv ) -lt 2
 					set init ''
 					if test $$argv
-						set init -- $$argv
+						set -- init $$argv
 					end
 					set prompt 'set_color green; echo '$argv'; set_color normal; echo "> "'
 					read -p $prompt -c $init tmp
@@ -376,7 +361,7 @@ function cd -d "Change directory"
 	end
 
 	# Avoid set completions
-	set -- previous (command pwd)
+	set previous (command pwd)
 
 	if test $argv[1] = - ^/dev/null
 		if test $__fish_cd_direction = next ^/dev/null
@@ -560,6 +545,144 @@ function __bold -d "Print argument in bold"
 	set_color normal
 end
 
+
+function __trap_translate_signal
+	set upper (echo $argv[1]|tr a-z A-Z)
+	if expr $upper : 'SIG.*' >/dev/null
+		echo $upper | cut -c 4-
+	else
+		echo $upper
+	end
+end
+
+function __trap_switch
+
+	switch $argv[1]
+		case EXIT
+			echo --on-exit %self
+		
+		case '*'
+			echo --on-signal $argv[1]
+	end	
+
+end
+
+function trap -d 'Perform an action when the shell recives a signal'
+
+	set -l mode
+	set -l cmd 
+	set -l sig 
+	set -l shortopt
+	set -l longopt
+
+	set shortopt -o lph
+	if getopt -T >/dev/null
+		set longopt
+	else
+		set longopt -l print,help,list-signals
+	end
+
+	if not getopt -n type -Q $shortopt $longopt -- $argv
+		return 1
+	end
+
+	set -l tmp (getopt $shortopt $longopt -- $argv)
+
+	eval set opt $tmp
+
+	while count $opt >/dev/null
+		switch $opt[1]
+			case -h --help
+				help trap
+				return 0
+			
+			case -p --print
+				set mode print
+			
+			case -l --list-signals
+				set mode list
+			
+			case --
+				 set -e opt[1]
+				 break
+
+		end
+		set -e opt[1]
+	end
+
+	if not count $mode >/dev/null
+
+		switch (count $opt)
+
+			case 0
+				set mode print
+
+			case 1
+				set mode clear
+
+			case '*'
+				if test opt[1] = -
+					set -e opt[1]
+					set mode clear
+				else
+					set mode set
+				end
+		end
+	end
+
+	switch $mode
+		case clear
+			for i in $opt
+				set -- sig (__trap_translate_signal $i)
+				if test $sig
+					functions -e __trap_handler_$sig				
+				end
+			end
+
+		case set
+			set -l cmd $opt[1]
+			set -e opt[1]
+
+			for i in $opt
+
+				set -l -- sig (__trap_translate_signal $i)
+				set -- sw (__trap_switch $sig)
+
+				if test $sig
+					eval "function __trap_handler_$sig $sw; $cmd; end"
+				else
+					return 1
+				end
+			end
+
+		case print
+			set -l names 
+
+			if count $opt >/dev/null
+				set -- names $opt
+			else
+				set -- names (functions -na|grep "^__trap_handler_"|sed -e 's/__trap_handler_//' )
+			end
+
+			for i in $names
+
+				set -- sig (__trap_translate_signal $i)
+
+				if test sig
+					functions __trap_handler_$i
+				else
+					return 1
+				end
+
+			end
+
+		case list
+			kill -l
+			
+	end
+
+end
+
 function __fish_type_help -d "Help for the type shellscript function"
 
 set bullet \*
@@ -609,7 +732,7 @@ function type -d "Print the type of a command"
 		return 1
 	end
 
-	set tmp -- (getopt $shortopt $longopt -- $argv)
+	set -- tmp (getopt $shortopt $longopt -- $argv)
 
 	eval set opt -- $tmp
 
@@ -653,7 +776,7 @@ function type -d "Print the type of a command"
 
 		if test $selection != files
 
-			if contains -- $i (functions -n)
+			if contains -- $i (functions -na)
 				set status 0
 				set found 1
 				switch $mode
@@ -858,7 +981,7 @@ function umask -d "Set default file permission mask"
 	if getopt -T >/dev/null
 		set longopt
 	else
-		set longopt -- -l as-command,symbolic,help
+		set -- longopt -l as-command,symbolic,help
 	end
 
 	if not getopt -n umask -Q $shortopt $longopt -- $argv
@@ -867,7 +990,7 @@ function umask -d "Set default file permission mask"
 
 	set tmp -- (getopt $shortopt $longopt -- $argv)
 
-	eval set opt -- $tmp
+	eval set -- opt $tmp
 
 	while count $opt >/dev/null
 
