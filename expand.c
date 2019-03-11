@@ -109,11 +109,11 @@ parameter expansion.
 
 /**
    Characters which make a string unclean if they are the first
-   character of the string. See \c is_clean().
+   character of the string. See \c expand_is_clean().
 */
 #define UNCLEAN_FIRST L"~%"
 /**
-   Unclean characters. See \c is_clean().
+   Unclean characters. See \c expand_is_clean().
 */
 #define UNCLEAN L"$*?\\\"'({})"
 
@@ -764,7 +764,9 @@ void expand_variable_error( const wchar_t *token, int token_pos, int error_pos )
 	}
 }
 
-
+/**
+   Parse an array slicing specification
+ */
 static int parse_slice( wchar_t *in, wchar_t **end_ptr, array_list_t *idx )
 {
 	
@@ -1515,6 +1517,11 @@ static void remove_internal_separator( const void *s, int conv )
 			case ANY_STRING:
 				in++;
 				*out++ = conv?L'*':ANY_STRING;
+				break;
+
+			case ANY_STRING_RECURSIVE:
+				in++;
+				*out++ = conv?L'*':ANY_STRING_RECURSIVE;
 				break;
 
 			default:

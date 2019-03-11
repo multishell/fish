@@ -45,11 +45,17 @@
    Maximum number of characters that can be inserted using a single
    call to sb_printf. This is needed since vswprintf doesn't tell us
    what went wrong. We don't know if we ran out of space or something
-   else went wrong. Therefore we assume that any error is an out of
-   memory-error and try again until we reach this size.
+   else went wrong. We assume that any error is an out of memory-error
+   and try again until we reach this size.  After this size has been
+   reached, it is instead assumed that something was wrong with the
+   format string.
 */
-#define SB_MAX_SIZE 32767
+#define SB_MAX_SIZE (128*1024*1024)
 
+/**
+   Handle oom condition. Default action is to print a stack trace and
+   exit, but an alternative action can be specified.
+ */
 #define oom_handler( p )						\
 	{											\
 		if( oom_handler_internal == util_die_on_oom )	\
@@ -77,7 +83,7 @@ void (*util_set_oom_handler( void (*h)(void *) ))(void *)
 	return old;
 }
 
-void util_die_on_oom( void * p)
+void util_die_on_oom( void *p )
 {
 }
 
@@ -659,7 +665,7 @@ int hash_ptr_cmp( void *a,
 }
 
 void pq_init( priority_queue_t *q,
-			  int (*compare)(void *e1, void *e2) )
+	      int (*compare)(void *e1, void *e2) )
 {
 	q->arr=0;
 	q->size=0;
@@ -669,7 +675,7 @@ void pq_init( priority_queue_t *q,
 
 
 int pq_put( priority_queue_t *q,
-			void *e )
+	    void *e )
 {
 	int i;
 
@@ -790,6 +796,10 @@ void al_destroy( array_list_t *l )
 	free( l->arr );
 }
 
+/**
+   Real implementation of all al_push_* versions. Pushes arbitrary
+   element to end of list.
+ */
 static int al_push_generic( array_list_t *l, anything_t o )
 {
 	if( l->pos >= l->size )
@@ -887,6 +897,10 @@ int al_insert( array_list_t *a, int pos, int count )
 	return 1;
 }
 
+/**
+   Real implementation of all al_set_* versions. Sets arbitrary
+   element of list.
+ */
 
 static int al_set_generic( array_list_t *l, int pos, anything_t v )
 {
@@ -926,13 +940,16 @@ int al_set_long( array_list_t *l, int pos, long o )
 	return al_set_generic( l, pos, v );
 }
 
-int al_set_func( array_list_t *l, int pos, func_ptr_t o )
+int al_set_func( array_list_t *l, int pos, func_ptr_t f )
 {
 	anything_t v;
-	v.func_val = o;
+	v.func_val = f;
 	return al_set_generic( l, pos, v );
 }
 
+/**
+   Real implementation of all al_get_* versions. Returns element from list.
+ */
 static anything_t al_get_generic( array_list_t *l, int pos )
 {
 	anything_t res;
@@ -967,6 +984,10 @@ void al_truncate( array_list_t *l, int new_sz )
 	l->pos = new_sz;
 }
 
+/**
+   Real implementation of all al_pop_* versions. Pops arbitrary
+   element from end of list.
+ */
 static anything_t al_pop_generic( array_list_t *l )
 {
 	anything_t e;
@@ -1014,6 +1035,10 @@ func_ptr_t al_pop_func( array_list_t *l )
 	return al_pop_generic(l).func_val;	
 }
 
+/**
+   Real implementation of all al_peek_* versions. Peeks last element
+   of list.
+ */
 static anything_t al_peek_generic( array_list_t *l )
 {
 	anything_t res;
@@ -1177,26 +1202,26 @@ string_buffer_t *sb_new()
 
 void sb_append_substring( string_buffer_t *b, const wchar_t *s, size_t l )
 {
-    wchar_t tmp=0;
+	wchar_t tmp=0;
 
 	CHECK( b, );
 	CHECK( s, );
 
-    b_append( b, s, sizeof(wchar_t)*l );
-    b_append( b, &tmp, sizeof(wchar_t) );
-    b->used -= sizeof(wchar_t);
+	b_append( b, s, sizeof(wchar_t)*l );
+	b_append( b, &tmp, sizeof(wchar_t) );
+	b->used -= sizeof(wchar_t);
 }
 
 
 void sb_append_char( string_buffer_t *b, wchar_t c )
 {
-    wchar_t tmp=0;
+	wchar_t tmp=0;
 
 	CHECK( b, );
 
 	b_append( b, &c, sizeof(wchar_t) );
-    b_append( b, &tmp, sizeof(wchar_t) );
-    b->used -= sizeof(wchar_t);
+	b_append( b, &tmp, sizeof(wchar_t) );
+	b->used -= sizeof(wchar_t);
 }
 
 void sb_append_internal( string_buffer_t *b, ... )
@@ -1273,15 +1298,21 @@ int sb_vprintf( string_buffer_t *buffer, const wchar_t *format, va_list va_orig 
 		  small. In GLIBC, errno seems to be set to EINVAL either way. 
 
 		  Because of this, sb_printf will on failiure try to
-		  increase the buffer size until the free space is larger than
-		  SB_MAX_SIZE, at which point it will conclude that the error
-		  was probably due to a badly formated string option, and
-		  return an error. 
+		  increase the buffer size until the free space is
+		  larger than SB_MAX_SIZE, at which point it will
+		  conclude that the error was probably due to a badly
+		  formated string option, and return an error. Make
+		  sure to null terminate string before that, though.
 		*/
 	
 		if( buffer->length - buffer->used > SB_MAX_SIZE )
+		{
+			wchar_t tmp=0;
+			b_append( buffer, &tmp, sizeof(wchar_t) );
+			buffer->used -= sizeof(wchar_t);
 			break;
-
+		}
+		
 		buffer->buff = realloc( buffer->buff, 2*buffer->length );
 
 		if( !buffer->buff )

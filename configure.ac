@@ -16,22 +16,22 @@ AC_INIT(fish,1.23.0,fish-users@lists.sf.net)
 # List of output variables produced by this configure script
 #
 
-AC_SUBST( docdir )
-AC_SUBST( HAVE_GETTEXT )
-AC_SUBST( LDFLAGS_FISH )
-AC_SUBST( LIBS_FISH )
-AC_SUBST( LIBS_FISH_INDENT )
-AC_SUBST( LIBS_FISH_PAGER )
-AC_SUBST( LIBS_FISHD )
-AC_SUBST( LIBS_MIMEDB )
-AC_SUBST( LIBS_SET_COLOR )
-AC_SUBST( localedir )
-AC_SUBST( optbindirs )
-AC_SUBST( prefix )
-AC_SUBST( SEQ_FALLBACK )
-AC_SUBST( XSEL )
-AC_SUBST( XSEL_MAN )
-AC_SUBST( XSEL_MAN_PATH )
+AC_SUBST(docdir)
+AC_SUBST(HAVE_GETTEXT)
+AC_SUBST(LDFLAGS_FISH)
+AC_SUBST(LIBS_FISH)
+AC_SUBST(LIBS_FISH_INDENT)
+AC_SUBST(LIBS_FISH_PAGER)
+AC_SUBST(LIBS_FISHD)
+AC_SUBST(LIBS_MIMEDB)
+AC_SUBST(LIBS_SET_COLOR)
+AC_SUBST(localedir)
+AC_SUBST(optbindirs)
+AC_SUBST(prefix)
+AC_SUBST(SEQ_FALLBACK)
+AC_SUBST(XSEL)
+AC_SUBST(XSEL_MAN)
+AC_SUBST(XSEL_MAN_PATH)
 
 #
 # If needed, run autoconf to regenerate the configure file
@@ -505,6 +505,7 @@ LIBS=""
 AC_SEARCH_LIBS( connect, socket, , [AC_MSG_ERROR([Cannot find the socket library, needed to build this package.] )] )
 AC_SEARCH_LIBS( nanosleep, rt, , [AC_MSG_ERROR([Cannot find the rt library, needed to build this package.] )] )
 AC_SEARCH_LIBS( setupterm, [ncurses curses], , [AC_MSG_ERROR([Could not find a curses implementation, needed to build fish])] )
+AC_SEARCH_LIBS( [nan], [m], [AC_DEFINE( [HAVE_NAN], [1], [Define to 1 if you have the nan function])] )
 LIBS_SHARED=$LIBS
 LIBS=$LIBS_COMMON
 
@@ -518,8 +519,10 @@ if test x$local_gettext != xno; then
 	AC_SEARCH_LIBS( gettext, intl,,)
 fi
 
+# Check for libiconv_open if we can't find iconv_open. Silly OS X does
+# weird macro magic for the sole purpose of amusing me.
+AC_SEARCH_LIBS( iconv_open, iconv, , [AC_SEARCH_LIBS( libiconv_open, iconv, , [AC_MSG_ERROR([Could not find an iconv implementation, needed to build fish])] )] )
 
-AC_SEARCH_LIBS( iconv_open, iconv, , [AC_MSG_ERROR([Could not find an iconv implementation, needed to build fish])] )
 LIBS_FISH=$LIBS
 LIBS=$LIBS_COMMON
 
@@ -544,6 +547,7 @@ LIBS="$LIBS_SHARED"
 if test x$local_gettext != xno; then 
 	AC_SEARCH_LIBS( gettext, intl,,)
 fi
+AC_SEARCH_LIBS( iconv_open, iconv, , [AC_MSG_ERROR([Could not find an iconv implementation, needed to build fish])] )
 LIBS_FISH_PAGER=$LIBS
 LIBS=$LIBS_COMMON
 
@@ -556,6 +560,7 @@ LIBS="$LIBS_SHARED"
 if test x$local_gettext != xno; then 
 	AC_SEARCH_LIBS( gettext, intl,,)
 fi
+AC_SEARCH_LIBS( iconv_open, iconv, , [AC_MSG_ERROR([Could not find an iconv implementation, needed to build fish])] )
 LIBS_FISHD=$LIBS
 LIBS=$LIBS_COMMON
 

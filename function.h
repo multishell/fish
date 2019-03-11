@@ -15,15 +15,38 @@
 #include "util.h"
 
 /**
-   Structure describing a function
-*/
+   Structure describing a function. This is used by the parser to
+   store data on a function while parsing it. It is not used
+   internally to store functions, the function_internal_data_t
+   structure is used for that purpose. Parhaps these two should be
+   merged.
+  */
 typedef struct function_data
 {
+	/**
+	   Name of function
+	 */
 	wchar_t *name;
+	/**
+	   Description of function
+	 */
 	wchar_t *description;
+	/**
+	   Function definition
+	 */
 	wchar_t *definition;
+	/**
+	   List of all event handlers for this function
+	 */
 	array_list_t *events;
+	/**
+	   List of all named arguments for this function
+	 */
 	array_list_t *named_arguments;
+	/**
+	   Set to non-zero if invoking this function shadows the variables
+	   of the underlying function.
+	 */
 	int shadows;
 }
 	function_data_t;

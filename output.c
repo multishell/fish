@@ -121,6 +121,9 @@ static char *writestr_buff = 0;
 
 static int (*out)(char c) = &writeb_internal;
 
+/**
+   Name of terminal
+ */
 static wchar_t *current_term = 0;
 
 
@@ -359,7 +362,7 @@ void set_color( int c, int c2 )
 */
 static int writeb_internal( char c )
 {
-	write( 1, &c, 1 );
+	write_loop( 1, &c, 1 );
 	return 0;
 }
 

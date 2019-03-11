@@ -146,13 +146,17 @@ function __fish_config_interactive -d "Initializations that should be performed 
 	# Print a greeting 
 	#
 
-	if set -q fish_greeting
-		switch $fish_greeting
-			case ''
-			# If variable is empty, don't print anything, saves us a fork
+	if functions -q fish_greeting
+		fish_greeting
+	else
+		if set -q fish_greeting
+			switch $fish_greeting
+				case ''
+				# If variable is empty, don't print anything, saves us a fork
 		
-			case '*'
-			echo $fish_greeting
+				case '*'
+				echo $fish_greeting
+			end
 		end
 	end
 
@@ -195,18 +199,38 @@ function __fish_config_interactive -d "Initializations that should be performed 
 	complete -x -p "/etc/init.d/*" -a restart --description 'Stop and then start service'
 	complete -x -p "/etc/init.d/*" -a reload --description 'Reload service configuration'
 
+	# Make sure some key bindings are set
 	if not set -q fish_key_bindings
 		set -U fish_key_bindings fish_default_key_bindings
 	end
 	
-	eval $fish_key_bindings ^/dev/null
-	
+	# Reload keybindings when binding variable change
 	function __fish_reload_key_bindings -d "Reload keybindings when binding variable change" --on-variable fish_key_bindings
 		eval $fish_key_bindings ^/dev/null
 	end 
 
+	# Load keybindings
+	__fish_reload_key_bindings
+
+	# Repaint screen when window changes size
 	function __fish_winch_handler --on-signal winch
 		commandline -f repaint
+	end
+
+	# If the ubuntu command-not-found package can be found, add a handler for it
+
+	# First check in /usr/lib, this is where modern Ubuntus place this command
+	if test -f /usr/lib/command-not-found 
+		function fish_command_not_found_handler --on-event fish_command_not_found
+			/usr/lib/command-not-found $argv
+		end
+	else 
+		# Ubuntu Feisty places this command in the regular path instead
+		if type -p command-not-found >/dev/null
+			function fish_command_not_found_handler --on-event fish_command_not_found
+				command-not-found $argv
+			end
+		end
 	end
 
 end

@@ -40,11 +40,12 @@
 */
 #define BYTE_MAX 0xffu
 
-/*
-  Escape special fish syntax characters liek the semicolon
+/**
+  Escape special fish syntax characters like the semicolon
  */
 #define UNESCAPE_SPECIAL 1
-/*
+
+/**
   Allow incomplete escape sequences
  */
 #define UNESCAPE_INCOMPLETE 2
@@ -108,13 +109,13 @@ extern wchar_t *program_name;
 /**
    Pause for input, then exit the program. If supported, print a backtrace first.
 */
-#define FATAL_EXIT()							\
-	{											\
-		char c;									\
-		show_stackframe();						\
-		read( 0, &c, 1 );						\
-		exit( 1 );								\
-	}											\
+#define FATAL_EXIT()											\
+	{															\
+		int exit_read_count;char exit_read_buff;				\
+		show_stackframe();										\
+		exit_read_count=read( 0, &exit_read_buff, 1 );			\
+		exit( 1 );												\
+	}															\
 		
 
 /**
@@ -155,10 +156,16 @@ extern wchar_t *program_name;
 */
 #define N_(wstr) wstr
 
+/**
+   Check if the specified stringelement is a part of the specified string list
+ */
 #define contains( str,... ) contains_internal( str, __VA_ARGS__, (void *)0 )
+/**
+   Concatenate all the specified strings into a single newly allocated one
+ */
 #define wcsdupcat( str,... ) wcsdupcat_internal( str, __VA_ARGS__, (void *)0 )
 
-/*
+/**
   Print a stack trace to stderr
 */
 void show_stackframe();
@@ -324,6 +331,12 @@ __sentinel int contains_internal( const wchar_t *needle, ... );
 */
 int read_blocked(int fd, void *buf, size_t count);
 
+/**
+   Loop a write request while failiure is non-critical. Return -1 and set errno
+   in case of critical error.
+ */
+ssize_t write_loop(int fd, char *buff, size_t count);
+
 
 /**
    Issue a debug message with printf-style string formating and
@@ -439,6 +452,16 @@ void bugreport();
 */
 void sb_format_size( string_buffer_t *sb,
 		     long long sz );
+
+/**
+   Return the number of seconds from the UNIX epoch, with subsecond
+   precision. This function uses the gettimeofday function, and will
+   have the same precision as that function.
+
+   If an error occurs, NAN is returned.
+ */
+double timef();
+
 
 #endif
 

@@ -578,6 +578,36 @@ int read_blocked(int fd, void *buf, size_t count)
 	return res;	
 }
 
+ssize_t write_loop(int fd, char *buff, size_t count)
+{
+	ssize_t out=0;
+	ssize_t out_cum=0;
+	while( 1 ) 
+	{
+		out = write( fd, 
+					 &buff[out_cum],
+					 count - out_cum );
+		if (out == -1) 
+		{
+			if( errno != EAGAIN &&
+				errno != EINTR ) 
+			{
+				return -1;
+			}
+		} else 
+		{
+			out_cum += out;
+		}
+		if( out_cum >= count ) 
+		{
+			break;
+		}
+	}						
+	return out_cum;
+}
+
+
+
 void debug( int level, const wchar_t *msg, ... )
 {
 	va_list va;
@@ -702,6 +732,11 @@ void write_screen( const wchar_t *msg, string_buffer_t *buff )
 	sb_append_char( buff, L'\n' );
 }
 
+/**
+   Perform string escaping of a strinng by only quoting it. Assumes
+   the string has already been checked for characters that can not be
+   escaped this way.
+ */
 static wchar_t *escape_simple( const wchar_t *in )
 {
 	wchar_t *out;
@@ -1799,4 +1834,26 @@ void sb_format_size( string_buffer_t *sb,
 			
 		}
 	}		
+}
+
+double timef()
+{
+	int time_res;
+	struct timeval tv;
+	
+	time_res = gettimeofday(&tv, 0);
+	
+	if( time_res ) 
+	{
+		/*
+		  Fixme: What on earth is the correct parameter value for NaN?
+		  The man pages and the standard helpfully state that this
+		  parameter is implementation defined. Gcc gives a warning if
+		  a null pointer is used. But not even all mighty Google gives
+		  a hint to what value should actually be returned.
+		 */
+		return nan("");
+	}
+	
+	return (double)tv.tv_sec + 0.000001*tv.tv_usec;
 }

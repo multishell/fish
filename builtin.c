@@ -407,6 +407,9 @@ static void builtin_missing_argument( const wchar_t *cmd, const wchar_t *opt )
 #include "builtin_ulimit.c"
 #include "builtin_jobs.c"
 
+/**
+   List all current key bindings
+ */
 static void builtin_bind_list()
 {
 	array_list_t lst;
@@ -442,6 +445,13 @@ static void builtin_bind_list()
 	al_destroy( &lst );
 }
 
+/**
+   Print terminfo key binding names to string buffer used for standard output.
+
+   \param all if set, all terminfo key binding names will be
+   printed. If not set, only ones that are defined for this terminal
+   are printed.
+ */
 static void builtin_bind_key_names( int all )
 {
 	array_list_t lst;
@@ -460,6 +470,10 @@ static void builtin_bind_key_names( int all )
 	al_destroy( &lst );
 }
 
+/**
+   Print all the special key binding functions to string buffer used for standard output.
+
+ */
 static void builtin_bind_function_names()
 {
 	array_list_t lst;
@@ -478,6 +492,9 @@ static void builtin_bind_function_names()
 	al_destroy( &lst );
 }
 
+/**
+   Add specified key binding.
+ */
 static int builtin_bind_add( wchar_t *seq, wchar_t *cmd, int terminfo )
 {
 
@@ -526,6 +543,12 @@ static int builtin_bind_add( wchar_t *seq, wchar_t *cmd, int terminfo )
 	
 }
 
+/**
+   Erase specified key bindings
+
+   \param seq an array of all key bindings to erase
+   \param all if specified, _all_ key bindings will be erased
+ */
 static void builtin_bind_erase( wchar_t **seq, int all )
 {
 	if( all )
@@ -983,7 +1006,9 @@ static int builtin_builtin(  wchar_t **argv )
 	return STATUS_BUILTIN_OK;
 }
 
-
+/**
+   Implementation of the builtin emit command, used to create events.
+ */
 static int builtin_emit( wchar_t **argv )
 {
 	int argc=builtin_count_args( argv );
@@ -2133,6 +2158,8 @@ static int builtin_read( wchar_t **argv )
 		
 		reader_set_buffer( commandline, wcslen( commandline ) );
 		proc_push_interactive( 1 );
+		
+		event_fire_generic(L"fish_prompt");
 		line = reader_readline( );
 		proc_pop_interactive();
 		if( line )
@@ -2530,23 +2557,6 @@ static int builtin_exit( wchar_t **argv )
 }
 
 /**
-   Helper function for builtin_cd, used for seting the current working
-   directory
-*/
-static int set_pwd( wchar_t *env)
-{
-	wchar_t dir_path[4096];
-	wchar_t *res = wgetcwd( dir_path, 4096 );
-	if( !res )
-	{
-		builtin_wperror( L"wgetcwd" );
-		return STATUS_BUILTIN_OK;
-	}
-	env_set( env, dir_path, ENV_EXPORT | ENV_GLOBAL );
-	return 1;
-}
-
-/**
    The cd builtin. Changes the current directory to the one specified
    or to $HOME if none is specified. The directory can be relative to
    any directory in the CDPATH variable.
@@ -2649,7 +2659,7 @@ static int builtin_cd( wchar_t **argv )
 		
 		res = 1;
 	}
-	else if( !set_pwd(L"PWD") )
+	else if( !env_set_pwd() )
 	{
 		res=1;
 		sb_printf( sb_err, _( L"%ls: Could not set PWD variable\n" ), argv[0] );
@@ -2660,7 +2670,10 @@ static int builtin_cd( wchar_t **argv )
 	return res;
 }
 
-
+/**
+   Implementation of the builtin count command, used to count the
+   number of arguments sent to it.
+ */
 static int builtin_count( wchar_t ** argv )
 {
 	int argc;
@@ -2669,6 +2682,10 @@ static int builtin_count( wchar_t ** argv )
 	return !(argc-1);
 }
 
+/**
+   Implementation of the builtin contains command, used to check if a
+   specified string is part of a list.
+ */
 static int builtin_contains( wchar_t ** argv )
 {
 	int argc;
@@ -2832,7 +2849,7 @@ static int builtin_source( wchar_t ** argv )
 		sb_printf( sb_err,
 			   _( L"%ls: Error while reading file '%ls'\n" ),
 			   argv[0],
-			   fn_intern == L"-" ? L"<stdin>" : fn_intern );
+				   fn_intern == intern_static(L"-") ? L"<stdin>" : fn_intern );
 	}
 	else
 	{
@@ -3407,6 +3424,11 @@ static int builtin_break_continue( wchar_t **argv )
 	b->loop_status = is_break?LOOP_BREAK:LOOP_CONTINUE;
 	return STATUS_BUILTIN_OK;
 }
+
+/**
+   Implementation of the builtin count command, used to launch the
+   interactive debugger.
+ */
 
 static int builtin_breakpoint( wchar_t **argv )
 {

@@ -1,6 +1,6 @@
 /** \file complete.c Functions related to tab-completion.
 
-These functions are used for storing and retrieving tab-completion data, as well as for performing tab-completion.
+	These functions are used for storing and retrieving tab-completion data, as well as for performing tab-completion.
 */
 #include "config.h"
 
@@ -58,7 +58,7 @@ These functions are used for storing and retrieving tab-completion data, as well
 /**
    Description for ~USER completion
 */
-#define COMPLETE_USER_DESC _( L"Home for %s" )
+#define COMPLETE_USER_DESC _( L"Home for %ls" )
 
 /**
    Description for short variables. The value is concatenated to this description
@@ -106,6 +106,14 @@ These functions are used for storing and retrieving tab-completion data, as well
 #define C_(string) (string)
 #endif
 
+
+/**
+   The maximum amount of time that we're willing to spend doing
+   username tilde completion. This special limit has been coded in
+   because user lookup can be extremely slow in cases of a humongous
+   LDAP database. (Google, I'm looking at you)
+ */
+#define MAX_USER_LOOKUP_TIME 0.2
 
 /**
    Struct describing a completion option entry.
@@ -180,9 +188,9 @@ static void complete_free_entry( complete_entry_t *c );
 
 */
 void completion_allocate( array_list_t *context,
-			  const wchar_t *comp,
-			  const wchar_t *desc,
-			  int flags )
+						  const wchar_t *comp,
+						  const wchar_t *desc,
+						  int flags )
 {
 	completion_t *res = halloc( context, sizeof( completion_t) );
 	res->completion = halloc_wcsdup( context, comp );
@@ -378,8 +386,8 @@ static complete_entry_t *complete_get_exact_entry( const wchar_t *cmd,
 
 
 void complete_set_authoritative( const wchar_t *cmd,
-							   int cmd_type,
-							   int authoritative )
+								 int cmd_type,
+								 int authoritative )
 {
 	complete_entry_t *c;
 
@@ -473,9 +481,9 @@ static  complete_entry_t *complete_remove_entry( complete_entry_t *e,
 			{
 				wchar_t *pos;
 				/*			fwprintf( stderr,
-				  L"remove option -%lc --%ls\n",
-				  o->short_opt?o->short_opt:L' ',
-				  o->long_opt );
+							L"remove option -%lc --%ls\n",
+							o->short_opt?o->short_opt:L' ',
+							o->long_opt );
 				*/
 				if( o->short_opt )
 				{
@@ -1067,10 +1075,10 @@ static const wchar_t *complete_function_desc( const wchar_t *fn )
    \param comp the list to add all completions to
 */
 static void complete_cmd( const wchar_t *cmd,
-			  array_list_t *comp,
-			  int use_function,
-			  int use_builtin,
-			  int use_command )
+						  array_list_t *comp,
+						  int use_function,
+						  int use_builtin,
+						  int use_command )
 {
 	wchar_t *path;
 	wchar_t *path_cpy;
@@ -1124,18 +1132,18 @@ static void complete_cmd( const wchar_t *cmd,
 					
 					add_slash = nxt_path[path_len-1]!=L'/';
 					nxt_completion = wcsdupcat( nxt_path,
-								    add_slash?L"/":L"",
-						 		    cmd );
+												add_slash?L"/":L"",
+												cmd );
 					if( ! nxt_completion )
 						continue;
 					
 					prev_count = al_get_count( comp );
 					
 					if( expand_string( 0,
-							   nxt_completion,
-							   comp,
-							   ACCEPT_INCOMPLETE |
-							   EXECUTABLES_ONLY ) != EXPAND_ERROR )
+									   nxt_completion,
+									   comp,
+									   ACCEPT_INCOMPLETE |
+									   EXECUTABLES_ONLY ) != EXPAND_ERROR )
 					{
 						for( i=prev_count; i<al_get_count( comp ); i++ )
 						{
@@ -1188,8 +1196,8 @@ static void complete_cmd( const wchar_t *cmd,
 			{
 				wchar_t *nxt_completion=
 					wcsdupcat( nxt_path,
-								(nxt_path[wcslen(nxt_path)-1]==L'/'?L"":L"/"),
-								cmd );
+							   (nxt_path[wcslen(nxt_path)-1]==L'/'?L"":L"/"),
+							   cmd );
 				if( ! nxt_completion )
 				{
 					continue;
@@ -1662,7 +1670,7 @@ static int complete_variable( const wchar_t *whole_var,
 				{
 					sb_append_substring( &comp, whole_var, start_offset );
 					sb_append( &comp, name );
-					flags = COMPLETE_NO_CASE;
+					flags = COMPLETE_NO_CASE | COMPLETE_DONT_ESCAPE;
 				}
 				
 				value = expand_escape_variable( value_unescaped );
@@ -1724,111 +1732,86 @@ static int try_complete_variable( const wchar_t *cmd,
 static int try_complete_user( const wchar_t *cmd,
 							  array_list_t *comp )
 {
-	const wchar_t *first_char=0;
-	const wchar_t *p;
-	int mode = 0;
-	int res = 0;
-
-	for( p=cmd; *p; p++ )
+	const wchar_t *first_char=cmd;
+	int res=0;
+	double start_time = timef();
+	
+	if( *first_char ==L'~' && !wcschr(first_char, L'/'))
 	{
-		switch( mode )
+		const wchar_t *user_name = first_char+1;
+		wchar_t *name_end = wcschr( user_name, L'~' );
+		if( name_end == 0 )
 		{
-			/*Between parameters*/
-			case 0:
-				switch( *p )
-				{
-					case L'\"':
-						mode=2;
-						p++;
-						first_char = p;
-						break;
-					case L' ':
-					case L'\t':
-					case L'\n':
-					case L'\r':
-						break;
-					default:
-						mode=1;
-						first_char = p;
-				}
-				break;
-				/*Inside non-quoted parameter*/
-			case 1:
-				switch( *p )
-				{
-					case L' ':
-					case L'\t':
-					case L'\n':
-					case L'\r':
-						mode = 0;
-						break;
-				}
-				break;
-			case 2:
-				switch( *p )
-				{
-					case L'\"':
-						if( *(p-1) != L'\\' )
-							mode =0;
-						break;
-				}
-				break;
-		}
-	}
-
-	if( mode != 0 )
-	{
-		if( *first_char ==L'~' )
-		{
-			const wchar_t *user_name = first_char+1;
-			wchar_t *name_end = wcschr( user_name, L'~' );
-			if( name_end == 0 )
+			struct passwd *pw;
+			int name_len = wcslen( user_name );
+			
+			setpwent();
+			
+			while((pw=getpwent()) != 0)
 			{
-				struct passwd *pw;
-				int name_len = wcslen( user_name );
+				double current_time = timef();
+				wchar_t *pw_name;
 
-				setpwent();
-
-				while((pw=getpwent()) != 0)
+				if( current_time - start_time > 0.2 ) 
 				{
-					wchar_t *pw_name = str2wcs( pw->pw_name );
-					if( pw_name )
-					{
-						if( wcsncmp( user_name, pw_name, name_len )==0 )
-						{
-							string_buffer_t desc;							
-							string_buffer_t name;
-
-							sb_init( &name );
-							sb_printf( &name,
-							           L"%ls/",
-									   &pw_name[name_len] );
-							
-							sb_init( &desc );
-							sb_printf( &desc,
-							           COMPLETE_USER_DESC,
-							           pw->pw_gecos );
-
-							completion_allocate( comp, 
-												 (wchar_t *)name.buff,
-												 (wchar_t *)desc.buff,
-												 0 );
-							
-							res=1;
-							
-							sb_destroy( &desc );
-							sb_destroy( &name );
-							
-						}
-						free( pw_name );
-					}
+					return 1;
 				}
-				endpwent();
+			
+				pw_name = str2wcs( pw->pw_name );
+
+				if( pw_name )
+				{
+					if( wcsncmp( user_name, pw_name, name_len )==0 )
+					{
+						string_buffer_t desc;
+						
+						sb_init( &desc );
+						sb_printf( &desc,
+								   COMPLETE_USER_DESC,
+								   pw_name );
+						
+						completion_allocate( comp, 
+											 &pw_name[name_len],
+											 (wchar_t *)desc.buff,
+											 COMPLETE_NO_SPACE );
+						
+						res=1;
+						
+						sb_destroy( &desc );
+					}
+					else if( wcsncasecmp( user_name, pw_name, name_len )==0 )
+					{
+						string_buffer_t name;							
+						string_buffer_t desc;							
+						
+						sb_init( &name );
+						sb_init( &desc );
+						sb_printf( &name,
+								   L"~%ls",
+								   pw_name );
+						sb_printf( &desc,
+								   COMPLETE_USER_DESC,
+								   pw_name );
+							
+						completion_allocate( comp, 
+											 (wchar_t *)name.buff,
+											 (wchar_t *)desc.buff,
+											 COMPLETE_NO_CASE | COMPLETE_DONT_ESCAPE | COMPLETE_NO_SPACE );
+						res=1;
+							
+						sb_destroy( &desc );
+						sb_destroy( &name );
+							
+					}
+					free( pw_name );
+				}
 			}
+			endpwent();
 		}
 	}
 
-	return res;}
+	return res;
+}
 
 
 

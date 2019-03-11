@@ -117,6 +117,9 @@ commence.
 */
 #define DEFAULT_PROMPT L"echo \"$USER@\"; hostname|cut -d . -f 1; echo \" \"; pwd; printf '> ';"
 
+/**
+   The name of the function that prints the fish prompt
+ */
 #define PROMPT_FUNCTION_NAME L"fish_prompt"
 
 /**
@@ -132,15 +135,40 @@ commence.
 */
 #define READAHEAD_MAX 256
 
+/**
+   A mode for calling the reader_kill function. In this mode, the new
+   string is appended to the current contents of the kill buffer.
+ */
 #define KILL_APPEND 0
+/**
+   A mode for calling the reader_kill function. In this mode, the new
+   string is prepended to the current contents of the kill buffer.
+ */
 #define KILL_PREPEND 1
 
-
+/**
+   History search mode. This value means that no search is currently
+   performed.
+ */
 #define NO_SEARCH 0
+/**
+   History search mode. This value means that we are perforing a line
+   history search.
+ */
 #define LINE_SEARCH 1
+/**
+   History search mode. This value means that we are perforing a token
+   history search.
+ */
 #define TOKEN_SEARCH 2
 
+/**
+   History search mode. This value means we are searching backwards.
+ */
 #define SEARCH_BACKWARD 0
+/**
+   History search mode. This value means we are searching forwards.
+ */
 #define SEARCH_FORWARD 1
 
 /**
@@ -155,6 +183,9 @@ typedef struct reader_data
 	*/
 	wchar_t *buff;
 
+	/**
+	   The representation of the current screen contents
+	 */
 	screen_t screen;
 
 	/**
@@ -252,6 +283,9 @@ typedef struct reader_data
 	*/
 	int prev_end_loop;
 
+	/**
+	   The current contents of the top item in the kill ring. 
+	 */
 	string_buffer_t kill_item;
 
 	/**
@@ -509,6 +543,9 @@ static int check_size()
 }
 
 
+/**
+   Compare two completion entrys
+ */
 static int completion_cmp( const void *a, const void *b )
 {
 	completion_t *c= *((completion_t **)a);
@@ -518,6 +555,9 @@ static int completion_cmp( const void *a, const void *b )
 
 }
 
+/**
+   Sort an array_list_t containing compltion_t structs.
+ */
 static void sort_completion_list( array_list_t *comp )
 {
 	qsort( comp->arr, 
@@ -949,9 +989,8 @@ static void get_param( wchar_t *cmd,
    string.
 
    \param val the string to insert
-   \param is_complete Whether this completion is the whole string or
-   just the common prefix of several completions. If the former, end by
-   printing a space (and an end quote if the parameter is quoted).
+   \param flags A union of all flags describing the completion to insert. See the completion_t struct for more information on possible values.
+
 */
 static void completion_insert( const wchar_t *val, int flags )
 {
@@ -959,7 +998,10 @@ static void completion_insert( const wchar_t *val, int flags )
 
 	wchar_t quote;
 	int add_space = !(flags & COMPLETE_NO_SPACE);
-	int do_replace = (flags&COMPLETE_NO_CASE);
+	int do_replace = (flags & COMPLETE_NO_CASE);
+	int do_escape = !(flags & COMPLETE_DONT_ESCAPE);
+	
+	//	debug( 0, L"Insert completion %ls with flags %d", val, flags);
 
 	if( do_replace )
 	{
@@ -978,11 +1020,18 @@ static void completion_insert( const wchar_t *val, int flags )
 		sb_init( &sb );
 		sb_append_substring( &sb, data->buff, begin - data->buff );
 		
-		escaped = escape( val, ESCAPE_ALL | ESCAPE_NO_QUOTED );
+		if( do_escape )
+		{
+			escaped = escape( val, ESCAPE_ALL | ESCAPE_NO_QUOTED );		
+			sb_append( &sb, escaped );
+			free( escaped );
+		}
+		else
+		{
+			sb_append( &sb, val );
+		}
 		
-		sb_append( &sb, escaped );
-		free( escaped );
-		
+
 		if( add_space ) 
 		{
 			sb_append( &sb, L" " );
@@ -1000,52 +1049,60 @@ static void completion_insert( const wchar_t *val, int flags )
 	else
 	{
 		
-		get_param( data->buff,
+		if( do_escape )
+		{
+				
+			get_param( data->buff,
 				   data->buff_pos,
 				   &quote,
 				   0, 0, 0 );
 
-		if( quote == L'\0' )
-		{
-			replaced = escape( val, ESCAPE_ALL | ESCAPE_NO_QUOTED );
+			if( quote == L'\0' )
+			{
+				replaced = escape( val, ESCAPE_ALL | ESCAPE_NO_QUOTED );
+			}
+			else
+			{
+				int unescapable=0;
+
+				const wchar_t *pin;
+				wchar_t *pout;
+				
+				replaced = pout =
+					malloc( sizeof(wchar_t)*(wcslen(val) + 1) );
+
+				for( pin=val; *pin; pin++ )
+				{
+					switch( *pin )
+					{
+						case L'\n':
+						case L'\t':
+						case L'\b':
+						case L'\r':
+							unescapable=1;
+							break;
+						default:
+							*pout++ = *pin;
+							break;
+					}
+				}
+				if( unescapable )
+				{
+					free( replaced );
+					wchar_t *tmp = escape( val, ESCAPE_ALL | ESCAPE_NO_QUOTED );
+					replaced = wcsdupcat( L" ", tmp );
+					free( tmp);
+					replaced[0]=quote;
+				}
+				else
+					*pout = 0;
+			}
 		}
 		else
 		{
-			int unescapable=0;
-
-			const wchar_t *pin;
-			wchar_t *pout;
-
-			replaced = pout =
-				malloc( sizeof(wchar_t)*(wcslen(val) + 1) );
-
-			for( pin=val; *pin; pin++ )
-			{
-				switch( *pin )
-				{
-					case L'\n':
-					case L'\t':
-					case L'\b':
-					case L'\r':
-						unescapable=1;
-						break;
-					default:
-						*pout++ = *pin;
-						break;
-				}
-			}
-			if( unescapable )
-			{
-				free( replaced );
-				wchar_t *tmp = escape( val, ESCAPE_ALL | ESCAPE_NO_QUOTED );
-				replaced = wcsdupcat( L" ", tmp );
-				free( tmp);
-				replaced[0]=quote;
-			}
-			else
-				*pout = 0;
+			replaced = wcsdup(val);
 		}
-
+		
 		if( insert_str( replaced ) )
 		{
 			/*
@@ -1054,8 +1111,8 @@ static void completion_insert( const wchar_t *val, int flags )
 			if( add_space ) 
 			{
 
-				if( (quote) &&
-					(data->buff[data->buff_pos] != quote ) ) 
+				if( quote &&
+				    (data->buff[data->buff_pos] != quote ) ) 
 				{
 					/* 
 					   This is a quoted parameter, first print a quote 
@@ -1225,7 +1282,7 @@ static void run_pager( wchar_t *prefix, int is_quoted, array_list_t *comp )
 	io_buffer_destroy( in);
 }
 
-/*
+/**
   Flash the screen. This function only changed the color of the
   current line, since the flash_screen sequnce is rather painful to
   look at in most terminal emulators.
@@ -1253,6 +1310,46 @@ static void reader_flash()
 	
 }
 
+/**
+   Characters that may not be part of a token that is to be replaced
+   by a case insensitive completion.
+ */
+#define REPLACE_UNCLEAN L"$*?({})"
+
+/**
+   Check if the specified string can be replaced by a case insensitive
+   complition with the specified flags.
+
+   Advanced tokens like those containing {}-style expansion can not at
+   the moment be replaced, other than if the new token is already an
+   exact replacement, e.g. if the COMPLETE_DONT_ESCAPE flag is set.
+ */
+
+int reader_can_replace( const wchar_t *in, int flags )
+{
+
+	const wchar_t * str = in;
+
+	if( flags & COMPLETE_DONT_ESCAPE )
+	{
+		return 1;
+	}
+	
+
+	CHECK( in, 1 );
+
+	/*
+	  Test characters that have a special meaning in any character position
+	*/
+	while( *str )
+	{
+		if( wcschr( REPLACE_UNCLEAN, *str ) )
+			return 0;
+		str++;
+	}
+
+	return 1;
+}
 
 /**
    Handle the list of completions. This means the following:
@@ -1288,24 +1385,39 @@ static int handle_completions( array_list_t *comp )
 	context = halloc( 0, 0 );
 	tok = halloc_wcsndup( context, begin, end-begin );
 	
+	/*
+	  Check trivial cases
+	 */
 	switch( al_get_count( comp ) )
 	{
+		/*
+		  No suitable completions found, flash screen and retur
+		*/
 		case 0:
 		{
 			reader_flash();
 			done = 1;
 			break;
 		}
-		
+
+		/*
+		  Exactly one suitable completion found - insert it
+		 */
 		case 1:
 		{
 			
 			completion_t *c = (completion_t *)al_get( comp, 0 );
 		
-			if( !(c->flags & COMPLETE_NO_CASE) || expand_is_clean( tok ) )
+			/*
+			  If this is a replacement completion, check
+			  that we know how to replace it, e.g. that
+			  the token doesn't contain evil operators
+			  like {}
+			 */
+			if( !(c->flags & COMPLETE_NO_CASE) || reader_can_replace( tok, c->flags ) )
 			{
 				completion_insert( c->completion,
-								   c->flags );			
+						   c->flags );			
 			}
 			done = 1;
 			len = 1;
@@ -1316,12 +1428,17 @@ static int handle_completions( array_list_t *comp )
 		
 	if( !done )
 	{
-		
+		/*
+		  Try to find something to insert whith the correct case
+		 */
 		for( i=0; i<al_get_count( comp ); i++ )
 		{
 			completion_t *c = (completion_t *)al_get( comp, i );
 			int new_len;
 
+			/*
+			  Ignore case insensitive completions for now
+			 */
 			if( c->flags & COMPLETE_NO_CASE )
 				continue;
 			
@@ -1340,6 +1457,9 @@ static int handle_completions( array_list_t *comp )
 			}
 		}
 
+		/*
+		  If we found something to insert, do it.
+		 */
 		if( len > 0 )
 		{
 			if( count > 1 )
@@ -1351,53 +1471,62 @@ static int handle_completions( array_list_t *comp )
 		}
 	}
 	
+	
 
 	if( !done && base == 0 )
 	{
+		/*
+		  Try to find something to insert ignoring case
+		*/
 
 		if( begin )
 		{
 
-			if( expand_is_clean( tok ) )
-			{
-				int offset = wcslen( tok );
-					
-				count = 0;
-					
-				for( i=0; i<al_get_count( comp ); i++ )
-				{
-					completion_t *c = (completion_t *)al_get( comp, i );
-					int new_len;
-
-					if( !(c->flags & COMPLETE_NO_CASE) )
-						continue;
+			int offset = wcslen( tok );
 			
-					count++;
+			count = 0;
+			
+			for( i=0; i<al_get_count( comp ); i++ )
+			{
+				completion_t *c = (completion_t *)al_get( comp, i );
+				int new_len;
 
-					if( base )
-					{
-						new_len = offset +  comp_ilen( base+offset, c->completion+offset );
-						len = new_len < len ? new_len: len;
-					}
-					else
-					{
-						base = wcsdup( c->completion );
-						len = wcslen( base );
-						flags = c->flags;
-							
-					}
+
+				if( !(c->flags & COMPLETE_NO_CASE) )
+					continue;
+			
+				if( !reader_can_replace( tok, c->flags ) )
+				{
+					len=0;
+					break;
 				}
 
-				if( len > offset )
-				{
-					if( count > 1 )
-						flags = flags | COMPLETE_NO_SPACE;
+				count++;
 
-					base[len]=L'\0';
-					completion_insert( base, flags );
-					done = 1;
+				if( base )
+				{
+					new_len = offset +  comp_ilen( base+offset, c->completion+offset );
+					len = new_len < len ? new_len: len;
+				}
+				else
+				{
+					base = wcsdup( c->completion );
+					len = wcslen( base );
+					flags = c->flags;
+					
 				}
 			}
+
+			if( len > offset )
+			{
+				if( count > 1 )
+					flags = flags | COMPLETE_NO_SPACE;
+				
+				base[len]=L'\0';
+				completion_insert( base, flags );
+				done = 1;
+			}
+			
 		}
 	}
 		
@@ -1448,9 +1577,9 @@ static int handle_completions( array_list_t *comp )
 			wchar_t quote;
 			get_param( data->buff, data->buff_pos, &quote, 0, 0, 0 );
 			is_quoted = (quote != L'\0');
-				
-			write(1, "\n", 1 );
-
+			
+			write_loop(1, "\n", 1 );
+			
 			run_pager( prefix, is_quoted, comp );
 		}
 
@@ -1486,11 +1615,52 @@ static void reader_interactive_init()
 	  not enable it for us.
 	*/
 
-	/* Loop until we are in the foreground.  */
-	while (tcgetpgrp( 0 ) != shell_pgid)
+	/* 
+	   Check if we are in control of the terminal, so that we don't do
+	   semi-expensive things like reset signal handlers unless we
+	   really have to, which we often don't.
+	 */
+	if (tcgetpgrp( 0 ) != shell_pgid)
 	{
-		killpg( shell_pgid, SIGTTIN);
+		int block_count = 0;
+		int i;
+		
+		/*
+		  Bummer, we are not in control of the terminal. Stop until
+		  parent has given us control of it. Stopping in fish is a bit
+		  of a challange, what with all the signal fidgeting, we need
+		  to reset a bunch of signal state, making this coda a but
+		  unobvious.
+
+		  In theory, reseting signal handlers could cause us to miss
+		  signal deliveries. In practice, this code should only be run
+		  suring startup, when we're not waiting for any signals.
+		*/
+		while (signal_is_blocked()) 
+		{
+			signal_unblock();
+			block_count++;
+		}
+		signal_reset_handlers();
+	
+		/*
+		  Ok, signal handlers are taken out of the picture. Stop ourself in a loop
+		  until we are in control of the terminal.
+		 */
+		while (tcgetpgrp( 0 ) != shell_pgid)
+		{
+			killpg( shell_pgid, SIGTTIN);
+		}
+		
+		signal_set_handlers();
+
+		for( i=0; i<block_count; i++ ) 
+		{
+			signal_block();
+		}
+		
 	}
+	
 
 	/* Put ourselves in our own process group.  */
 	shell_pgid = getpid ();
@@ -1801,7 +1971,7 @@ static void handle_token_history( int forward, int reset )
 
    \param dir Direction to move/erase. 0 means move left, 1 means move right.
    \param erase Whether to erase the characters along the way or only move past them.
-   \param do_append if erase is true, this flag decides if the new kill item should be appended to the previous kill item.
+   \param new if the new kill item should be appended to the previous kill item or not.
 */
 static void move_word( int dir, int erase, int new )
 {
@@ -1969,6 +2139,10 @@ void reader_set_buffer( wchar_t *b, int p )
 	{
 		data->buff_pos=l;
 	}
+
+	data->search_mode = NO_SEARCH;
+	sb_clear( &data->search_buff );
+	history_reset();
 
 	reader_super_highlight_me_plenty( data->buff_pos,
 					  0 );
@@ -2228,7 +2402,7 @@ static void handle_end_loop()
 	
 	if( !reader_exit_forced() && !data->prev_end_loop && job_count && !is_breakpoint )
 	{
-		writestr(_( L"There are stopped jobs\n" ));
+		writestr(_( L"There are stopped jobs. A second attempt to exit will enforce their termination.\n" ));
 		
 		reader_exit( 0, 0 );
 		data->prev_end_loop=1;
@@ -2517,7 +2691,7 @@ wchar_t *reader_readline()
 			case R_REPAINT:
 			{
 				exec_prompt();
-				write( 1, "\r", 1 );
+				write_loop( 1, "\r", 1 );
 				s_reset( &data->screen, 0 );
 				reader_repaint();
 				break;
@@ -2563,9 +2737,11 @@ wchar_t *reader_readline()
 
 					comp = al_halloc( 0 );
 					data->complete_func( buffcpy, comp );
+					
 
 					sort_completion_list( comp );
 					remove_duplicates( comp );
+					
 
 					free( buffcpy );
 					comp_empty = handle_completions( comp );

@@ -95,6 +95,17 @@ license. Read the source code of the library for more information.
 #define GETOPT_STRING "tfimdalhv"
 
 /**
+   Error message if system call goes wrong.
+*/
+#define ERROR_SYSTEM "%s: Could not execute command \"%s\"\n" 
+
+/**
+   Exit code if system call goes wrong.
+*/
+#define STATUS_ERROR_SYSTEM 1
+
+
+/**
    All types of input and output possible
 */
 enum
@@ -470,7 +481,7 @@ static char *get_description( const char *mimetype )
 	int fd;
 	struct stat st;
 	char *contents;
-	char *start=0, *stop=0;
+	char *start=0, *stop=0, *best_start=0;
 
 	if( !start_re )
 	{
@@ -583,6 +594,7 @@ static char *get_description( const char *mimetype )
 	while( !regexec(start_re, start, 1, match, 0) )
 	{
 		int new_w = match[0].rm_eo - match[0].rm_so;
+		start += match[0].rm_eo;
 		
 		if( new_w > w )
 		{
@@ -591,12 +603,13 @@ static char *get_description( const char *mimetype )
 			   match, so we use the new match
 			*/
 			w=new_w;
-			start += match[0].rm_eo;
+			best_start = start;
 		}
 	}
 	
 	if( w != -1 )
 	{
+		start = best_start;
 		if( !regexec(stop_re, start, 1, match, 0) )
 		{
 			/*
@@ -665,7 +678,7 @@ static char *get_action( const char *mimetype )
 		  Core 3) we also test some common subclassings.
 		*/
 		
-		if( strncmp( mimetype, "text/", 5 ) == 0 )
+		if( strncmp( mimetype, "text/plain", 10) != 0 && strncmp( mimetype, "text/", 5 ) == 0 )
 			return get_action( "text/plain" );
 
 		return 0;
@@ -1125,8 +1138,12 @@ static void launch( char *filter, array_list_t *files, int fileno )
 			writer( '&' );
 			writer( '\0' );
 	
-//			fprintf( stderr, "mimedb: %s\n", launch_buff );
-			system( launch_buff );
+			if( system( launch_buff ) == -1 )
+			{
+				fprintf( stderr, _( ERROR_SYSTEM ), MIMEDB, launch_buff );
+				exit(STATUS_ERROR_SYSTEM);
+			}
+			
 			break;
 		}
 	}

@@ -436,6 +436,7 @@ typedef struct
 /**
    Return the current number of block nestings
 */
+/*
 static int block_count( block_t *b )
 {
 
@@ -443,7 +444,7 @@ static int block_count( block_t *b )
 		return 0;
 	return( block_count(b->outer)+1);
 }
-
+*/
 
 void parser_push_block( int type )
 {
@@ -2086,6 +2087,7 @@ static int parse_job( process_t *p,
 						current_tokenizer_pos=tmp;
 
 						job_set_flag( j, JOB_SKIP, 1 );
+						event_fire_generic(L"fish_command_not_found", (wchar_t *)al_get( args, 0 ) );
 						proc_set_last_status( err==ENOENT?STATUS_UNKNOWN_COMMAND:STATUS_NOT_EXECUTABLE );
 					}
 				}
