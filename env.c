@@ -47,6 +47,9 @@
 */
 #define FISHD_CMD L"if which fishd >/dev/null; fishd ^/tmp/fish.%s.log; end"
 
+/**
+   Value denoting a null string
+*/
 #define ENV_NULL L"\x1d"
 
 /**
@@ -115,6 +118,11 @@ static hash_table_t *global;
    Table of variables that may not be set using the set command.
 */
 static hash_table_t env_read_only;
+
+/**
+   Table of variables whose value is dynamically calculated, such as umask, status, etc
+*/
+static hash_table_t env_electric;
 
 /**
    Exported variable array used by execv
@@ -194,6 +202,21 @@ static void start_fishd()
 	sb_destroy( &cmd );
 }
 
+/**
+   Return the current umask value.
+*/
+static mode_t get_umask()
+{
+	mode_t res;
+	res = umask( 0 );
+	umask( res );
+	return res;
+}
+
+/**
+   Universal variable callback function. This function makes sure the
+   proper events are triggered when an event occurs.
+*/
 static void universal_callback( int type,
 								const wchar_t *name, 
 								const wchar_t *val )
@@ -234,6 +257,8 @@ static void universal_callback( int type,
 void env_init()
 {
 	char **p;
+	struct passwd *pw;
+	wchar_t *uname, *path;
 
 	sb_init( &dyn_var );
 
@@ -253,11 +278,22 @@ void env_init()
 	hash_put( &env_read_only, L"PWD", L"" );
 	
 	/*
-	  HOME should be writeable by root, since this is often a
+	  Names of all dynamically calculated variables
+	*/
+	hash_init( &env_electric, &hash_wcs_func, &hash_wcs_cmp );
+	hash_put( &env_electric, L"history", L"" );
+	hash_put( &env_electric, L"status", L"" );
+	hash_put( &env_electric, L"umask", L"" );
+
+	/*
+	  HOME and USER should be writeable by root, since this can be a
 	  convenient way to install software.
 	*/
 	if( getuid() != 0 )
+	{
 		hash_put( &env_read_only, L"HOME", L"" );
+		hash_put( &env_read_only, L"USER", L"" );
+	}
 	
 	top = malloc( sizeof(env_node_t) );
 	top->next = 0;
@@ -266,7 +302,7 @@ void env_init()
 	hash_init( &top->env, &hash_wcs_func, &hash_wcs_cmp );
 	global_env = top;
 	global = &top->env;	
-
+	
 	/*
 	  Import environment variables
 	*/
@@ -276,12 +312,13 @@ void env_init()
 		wchar_t *pos;
 		
 		key = str2wcs(*p);
-		
+
 		if( !key )
 			continue;
 		
 		val = wcschr( key, L'=' );
 		
+
 		if( val == 0 )
 			env_set( key, L"", ENV_EXPORT );
 		else
@@ -296,12 +333,68 @@ void env_init()
 					*pos = ARRAY_SEP;
 				pos++;
 			}
-			
+
 			env_set( key, val, ENV_EXPORT | ENV_GLOBAL );
 		}		
 		free(key);
-	}		
+	}
 
+	path = env_get( L"PATH" );
+	if( !path )
+	{
+		env_set( L"PATH", L"/bin" ARRAY_SEP_STR L"/usr/bin", ENV_EXPORT | ENV_GLOBAL );
+	}
+	else
+	{
+		int i;
+		array_list_t l;
+		int has_bin=0, has_usr_bin=0;
+		
+		al_init( &l );
+		expand_variable_array( path, &l );
+		
+		for( i=0; i<al_get_count( &l); i++ )
+		{
+			wchar_t * el = (wchar_t *)al_get( &l, i );
+			if( contains_str( el, L"/bin", L"/bin/", (void *)0) )
+			{
+				has_bin = 1;
+			}
+			if( contains_str( el, L"/usr/bin", L"/usr/bin/", (void *)0) )
+			{
+				has_bin = 1;
+			}
+		}
+		
+		if( !( has_bin && has_usr_bin ) )
+		{
+			string_buffer_t b;
+			sb_init( &b );
+			sb_append( &b, path );
+			if( !has_bin )
+				sb_append( &b, ARRAY_SEP_STR L"/bin" );
+			if( !has_usr_bin )
+				sb_append( &b, ARRAY_SEP_STR L"/usr/bin" );
+					
+			env_set( L"PATH", (wchar_t *)b.buff, ENV_GLOBAL | ENV_EXPORT );
+			sb_destroy( &b );
+		}		
+		
+		al_foreach( &l, (void (*)(const void *))&free );
+		al_destroy( &l );
+		
+	}
+	
+	
+	
+	pw = getpwuid( getuid() );
+	if( pw )
+	{
+		uname = str2wcs( pw->pw_name );
+		env_set( L"USER", uname, ENV_GLOBAL | ENV_EXPORT );
+		free( uname );
+	}
+	
 	env_universal_init( env_get( L"FISHD_SOKET_DIR"), 
 						env_get( L"USER" ),
 						&start_fishd,
@@ -321,6 +414,8 @@ void env_destroy()
 		env_pop();
 
 	hash_destroy( &env_read_only );
+
+	hash_destroy( &env_electric );
 	
 	hash_foreach( global, &clear_hash_entry );
 	hash_destroy( global );
@@ -389,17 +484,24 @@ void env_set( const wchar_t *key,
 	{
 		wchar_t *end;
 		int mask;
-		
+
+		/*
+		  Set the new umask
+		*/
 		if( val && wcslen(val) )
 		{				
 			errno=0;
 			mask = wcstol( val, &end, 8 );
 	
-			if( !errno && !*end )
+			if( !errno && (!*end) && (mask <= 0777) && (mask >= 0) )
 			{
 				umask( mask );
 			}
 		}
+		/*
+		  Do not actually create a umask variable, on env_get, it will be calculated dynamically
+		*/
+		return;
 	}
 	
 
@@ -656,6 +758,12 @@ wchar_t *env_get( const wchar_t *key )
 		sb_printf( &dyn_var, L"%d", proc_get_last_status() );		
 		return (wchar_t *)dyn_var.buff;		
 	}
+	else if( wcscmp( key, L"umask" )==0 )
+	{
+		sb_clear( &dyn_var );			
+		sb_printf( &dyn_var, L"0%0.3o", get_umask() );		
+		return (wchar_t *)dyn_var.buff;		
+	}
 	
 	while( env != 0 )
 	{
@@ -694,7 +802,7 @@ int env_exist( const wchar_t *key )
 	env_node_t *env = top;
 	wchar_t *item;
 	
-    if( hash_get( &env_read_only, key ) )
+    if( hash_get( &env_read_only, key ) || hash_get( &env_electric, key ) )
     {
         return 1;
     }
@@ -720,6 +828,9 @@ int env_exist( const wchar_t *key )
 	return item != 0;
 }
 
+/**
+   Returns true if the specified scope or any non-shadowed non-global subscopes contain an exported variable.
+*/
 static int local_scope_exports( env_node_t *n )
 {
 	
@@ -791,11 +902,24 @@ static void add_key_to_hash( const void *key,
 		hash_put( (hash_table_t *)aux, key, 0 );
 }
 
+/**
+   Add key to hashtable
+*/
 static void add_to_hash( const void *k, void *aux )
 {
 	hash_put( (hash_table_t *)aux,
 			  k,
 			  0 );
+}
+
+/**
+   Add key to list
+*/
+static void add_key_to_list( const void * key, 
+							 const void * val, 
+							 void *aux )
+{
+	al_push( (array_list_t *)aux, key );
 }
 
 
@@ -844,11 +968,9 @@ void env_get_names( array_list_t *l, int flags )
 		hash_foreach2( &global_env->env, 
 					   add_key_to_hash,
 					   &names );
+
 		if( get_names_show_unexported )
-		{
-			al_push( l, L"history" );
-			al_push( l, L"status" );
-		}
+			hash_foreach2( &env_electric, &add_key_to_list, l );
 		
 		if( get_names_show_exported )
 		{

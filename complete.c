@@ -309,7 +309,9 @@ static void clear_hash_entry( const void *key, const void *data )
 	free( (void *)data );
 }
 
-
+/**
+   Free hash value, but not hash key
+*/
 static void clear_hash_value( const void *key, const void *data )
 {
 	free( (void *)data );
@@ -1763,10 +1765,10 @@ static void complete_param_expand( wchar_t *str,
 	}
 	else
 		comp_str = str;
-
-//	fwprintf( stderr, L"expand_string( \"%ls\", [list], ACCEPT_INCOMPLETE | %ls )\n", comp_str, do_file?L"0":L"EXPAND_SKIP_WILDCARDS" );
 	
-	expand_string( wcsdup(comp_str), comp_out,  ACCEPT_INCOMPLETE | (do_file?0:EXPAND_SKIP_WILDCARDS) );
+//	fwprintf( stderr, L"expand_string( \"%ls\", [list], EXPAND_SKIP_SUBSHELL | ACCEPT_INCOMPLETE | %ls )\n", comp_str, do_file?L"0":L"EXPAND_SKIP_WILDCARDS" );
+	
+	expand_string( wcsdup(comp_str), comp_out,  EXPAND_SKIP_SUBSHELL | ACCEPT_INCOMPLETE | (do_file?0:EXPAND_SKIP_WILDCARDS) );
 }
 
 /**
@@ -2094,6 +2096,11 @@ void complete( const wchar_t *cmd,
 
 }
 
+/**
+   Print the GNU longopt style switch \c opt, and the argument \c
+   argument to the specified stringbuffer, but only if arguemnt is
+   non-null and longer than 0 characters.
+*/
 static void append_switch( string_buffer_t *out,
 						   const wchar_t *opt, 
 						   const wchar_t *argument )

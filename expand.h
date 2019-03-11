@@ -10,6 +10,9 @@
 */
 
 #ifndef FISH_EXPAND_H
+/**
+   Header guard
+*/
 #define FISH_EXPAND_H
 
 #include <wchar.h>
@@ -51,7 +54,7 @@
 
 #define DIRECTORIES_ONLY 32
 
-/*
+/**
   Use unencoded private-use keycodes for internal characters
 */
 #define EXPAND_RESERVED 0xf000
@@ -122,11 +125,9 @@ wchar_t *expand_one( wchar_t *in, int flag );
 /**
    Expand backslashed escapes and substitute them with their unescaped
    counterparts. Also optionally change the wildcards, the tilde
-   character and a few more into constants which are defined to be
-   outside of the valid character space, but still inside the valid
-   space for a wchar_t. This assumes that a wchar_t is at least 32
-   bits long AND that the characterset is UCS4 or some other 31-bit
-   character set.
+   character and a few more into constants which are defined in a
+   private use area of Unicode. This assumes wchar_t is a unicode
+   character.  character set.
 
    The result must be free()d. The original string is not modified. If
    an invalid sequence is specified, 0 is returned.
@@ -161,7 +162,7 @@ wchar_t *expand_escape_variable( const wchar_t *in );
 wchar_t *expand_tilde(wchar_t *in);
 
 /**
-   Locate the last subshell in the specified string.
+   Locate the first subshell in the specified string.
    
    \param in the string to search for subshells
    \param begin the starting paranthesis of the subshell
