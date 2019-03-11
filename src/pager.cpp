@@ -3,10 +3,10 @@
 // IWYU pragma: no_include <cstddef>
 #include <assert.h>
 #include <stddef.h>
-#include <stdlib.h>
 #include <wchar.h>
 #include <wctype.h>
 #include <map>
+#include <numeric>
 #include <vector>
 
 #include "common.h"
@@ -26,6 +26,9 @@ typedef std::vector<comp_t> comp_info_list_t;
 /// The minimum width (in characters) the terminal must to show completions at all.
 #define PAGER_MIN_WIDTH 16
 
+/// Minimum height to show completions
+#define PAGER_MIN_HEIGHT 4
+
 /// The maximum number of columns of completion to attempt to fit onto the screen.
 #define PAGER_MAX_COLS 6
 
@@ -44,17 +47,6 @@ static size_t divide_round_up(size_t numer, size_t denom) {
     return numer / denom + (has_rem ? 1 : 0);
 }
 
-/// This function calculates the minimum width for each completion entry in the specified
-/// array_list. This width depends on the terminal size, so this function should be called when the
-/// terminal changes size.
-void pager_t::recalc_min_widths(comp_info_list_t *lst) const {
-    for (size_t i = 0; i < lst->size(); i++) {
-        comp_t *c = &lst->at(i);
-        c->min_width = mini(c->desc_width, maxi((size_t)0, available_term_width / 3 - 2)) +
-                       mini(c->desc_width, maxi((size_t)0, available_term_width / 5 - 4)) + 4;
-    }
-}
-
 /// Print the specified string, but use at most the specified amount of space. If the whole string
 /// can't be fitted, ellipsize it.
 ///
@@ -62,47 +54,68 @@ void pager_t::recalc_min_widths(comp_info_list_t *lst) const {
 /// \param color the color to apply to every printed character
 /// \param max the maximum space that may be used for printing
 /// \param has_more if this flag is true, this is not the entire string, and the string should be
-/// ellisiszed even if the string fits but takes up the whole space.
-static int print_max(const wcstring &str, highlight_spec_t color, int max, bool has_more,
-                     line_t *line) {
-    int written = 0;
+/// ellipsized even if the string fits but takes up the whole space.
+static size_t print_max(const wcstring &str, highlight_spec_t color, size_t max, bool has_more,
+                        line_t *line) {
+    size_t remaining = max;
     for (size_t i = 0; i < str.size(); i++) {
         wchar_t c = str.at(i);
+        int iwidth_c = fish_wcwidth(c);
+        if (iwidth_c < 0) {
+            // skip non-printable characters
+            continue;
+        }
+        size_t width_c = size_t(iwidth_c);
 
-        if (written + fish_wcwidth(c) > max) break;
-        if ((written + fish_wcwidth(c) == max) && (has_more || i + 1 < str.size())) {
+        if (width_c > remaining) break;
+
+        if ((width_c == remaining) && (has_more || i + 1 < str.size())) {
             line->append(ellipsis_char, color);
-            written += fish_wcwidth(ellipsis_char);
+            int ellipsis_width = fish_wcwidth(ellipsis_char);
+            remaining -= std::min(remaining, size_t(ellipsis_width));
             break;
         }
 
         line->append(c, color);
-        written += fish_wcwidth(c);
+        assert(remaining >= width_c);
+        remaining -= width_c;
     }
-    return written;
+
+    // return how much we consumed
+    assert(remaining <= max);
+    return max - remaining;
 }
 
 /// Print the specified item using at the specified amount of space.
 line_t pager_t::completion_print_item(const wcstring &prefix, const comp_t *c, size_t row,
-                                      size_t column, int width, bool secondary, bool selected,
+                                      size_t column, size_t width, bool secondary, bool selected,
                                       page_rendering_t *rendering) const {
     UNUSED(column);
     UNUSED(row);
     UNUSED(rendering);
-    int comp_width, desc_width;
+    size_t comp_width, desc_width;
     line_t line_data;
 
-    if (c->pref_width <= width) {
+    if (c->preferred_width() <= width) {
         // The entry fits, we give it as much space as it wants.
         comp_width = c->comp_width;
         desc_width = c->desc_width;
     } else {
         // The completion and description won't fit on the allocated space. Give a maximum of 2/3 of
-        // the space to the completion, and whatever is left to the description.
-        int desc_all = c->desc_width ? c->desc_width + 4 : 0;
+        // the space to the completion, and whatever is left to the description
+        // This expression is an overflow-safe way of calculating (width-4)*2/3
+        size_t width_minus_spacer = width - std::min(width, size_t(4));
+        size_t two_thirds_width = (width_minus_spacer / 3) * 2 + ((width_minus_spacer % 3) * 2) / 3;
+        comp_width = std::min(c->comp_width, two_thirds_width);
 
-        comp_width = maxi(mini((int)c->comp_width, 2 * (width - 4) / 3), width - desc_all);
-        desc_width = c->desc_width ? width - 4 - comp_width : 0;
+        // If the description is short, give the completion the remaining space
+        size_t desc_punct_width = c->description_punctuated_width();
+        if (width > desc_punct_width) {
+            comp_width = std::max(comp_width, width - desc_punct_width);
+        }
+
+        // The description gets what's left
+        assert(comp_width <= width);
     }
 
     int bg_color = secondary ? highlight_spec_pager_secondary : highlight_spec_normal;
@@ -110,38 +123,48 @@ line_t pager_t::completion_print_item(const wcstring &prefix, const comp_t *c, s
         bg_color = highlight_spec_search_match;
     }
 
-    int written = 0;
+    // Print the completion part
+    size_t comp_remaining = comp_width;
     for (size_t i = 0; i < c->comp.size(); i++) {
         const wcstring &comp = c->comp.at(i);
+        if (i > 0) {
+            comp_remaining -= print_max(PAGER_SPACER_STRING, highlight_spec_normal, comp_remaining,
+                                        true /* has_more */, &line_data);
+        }
 
-        if (i != 0)
-            written += print_max(PAGER_SPACER_STRING, highlight_spec_normal, comp_width - written,
-                                 true /* has_more */, &line_data);
-
-        int packed_color = highlight_spec_pager_prefix | highlight_make_background(bg_color);
-        written += print_max(prefix, packed_color, comp_width - written, !comp.empty(), &line_data);
+        highlight_spec_t packed_color =
+            highlight_spec_pager_prefix | highlight_make_background(bg_color);
+        comp_remaining -=
+            print_max(prefix, packed_color, comp_remaining, !comp.empty(), &line_data);
 
         packed_color = highlight_spec_pager_completion | highlight_make_background(bg_color);
-        written +=
-            print_max(comp, packed_color, comp_width - written, i + 1 < c->comp.size(), &line_data);
+        comp_remaining -=
+            print_max(comp, packed_color, comp_remaining, i + 1 < c->comp.size(), &line_data);
     }
 
-    if (desc_width) {
-        int packed_color = highlight_spec_pager_description | highlight_make_background(bg_color);
-        while (written < (width - desc_width - 2))  // the 2 here refers to the parenthesis below
-        {
-            written += print_max(L" ", packed_color, 1, false, &line_data);
+    size_t desc_remaining = width - comp_width + comp_remaining;
+    if (c->desc_width > 0 && desc_remaining > 4) {
+        highlight_spec_t desc_color =
+            highlight_spec_pager_description | highlight_make_background(bg_color);
+        highlight_spec_t punct_color =
+            highlight_spec_pager_completion | highlight_make_background(bg_color);
+
+        // always have at least two spaces to separate completion and description
+        desc_remaining -= print_max(L"  ", punct_color, 2, false, &line_data);
+
+        // right-justify the description by adding spaces
+        // the 2 here refers to the parenthesis below
+        while (desc_remaining > c->desc_width + 2) {
+            desc_remaining -= print_max(L" ", punct_color, 1, false, &line_data);
         }
-        // hack - this just works around the issue
-        print_max(L"(", highlight_spec_pager_completion | highlight_make_background(bg_color), 1,
-                  false, &line_data);
-        print_max(c->desc, packed_color, desc_width, false, &line_data);
-        print_max(L")", highlight_spec_pager_completion | highlight_make_background(bg_color), 1,
-                  false, &line_data);
+
+        assert(desc_remaining >= 2);
+        desc_remaining -= print_max(L"(", punct_color, 1, false, &line_data);
+        desc_remaining -= print_max(c->desc, desc_color, desc_remaining - 1, false, &line_data);
+        desc_remaining -= print_max(L")", punct_color, 1, false, &line_data);
     } else {
-        while (written < width) {
-            written += print_max(L" ", 0, 1, false, &line_data);
-        }
+        // No description, or it won't fit. Just add spaces.
+        print_max(wcstring(desc_remaining, L' '), 0, desc_remaining, false, &line_data);
     }
 
     return line_data;
@@ -151,12 +174,12 @@ line_t pager_t::completion_print_item(const wcstring &prefix, const comp_t *c, s
 /// style.
 ///
 /// \param cols number of columns to print in
-/// \param width_per_column An array specifying the width of each column
+/// \param width_by_column An array specifying the width of each column
 /// \param row_start The first row to print
 /// \param row_stop the row after the last row to print
 /// \param prefix The string to print before each completion
 /// \param lst The list of completions to print
-void pager_t::completion_print(size_t cols, int *width_per_column, size_t row_start,
+void pager_t::completion_print(size_t cols, const size_t *width_by_column, size_t row_start,
                                size_t row_stop, const wcstring &prefix, const comp_info_list_t &lst,
                                page_rendering_t *rendering) const {
     // Teach the rendering about the rows it printed.
@@ -165,14 +188,12 @@ void pager_t::completion_print(size_t cols, int *width_per_column, size_t row_st
     rendering->row_start = row_start;
     rendering->row_end = row_stop;
 
-    size_t rows = (lst.size() - 1) / cols + 1;
+    size_t rows = divide_round_up(lst.size(), cols);
 
     size_t effective_selected_idx = this->visual_selected_completion_index(rows, cols);
 
     for (size_t row = row_start; row < row_stop; row++) {
         for (size_t col = 0; col < cols; col++) {
-            int is_last = (col == (cols - 1));
-
             if (lst.size() <= col * rows + row) continue;
 
             size_t idx = col * rows + row;
@@ -180,10 +201,8 @@ void pager_t::completion_print(size_t cols, int *width_per_column, size_t row_st
             bool is_selected = (idx == effective_selected_idx);
 
             // Print this completion on its own "line".
-            line_t line = completion_print_item(
-                prefix, el, row, col,
-                width_per_column[col] - (is_last ? 0 : PAGER_SPACER_STRING_WIDTH), row % 2,
-                is_selected, rendering);
+            line_t line = completion_print_item(prefix, el, row, col, width_by_column[col], row % 2,
+                                                is_selected, rendering);
 
             // If there's more to come, append two spaces.
             if (col + 1 < cols) {
@@ -214,8 +233,7 @@ static void mangle_1_completion_description(wcstring *str) {
             str->at(trailing++) = wc;
         } else if (!was_space) {  // initial space in a run
             str->at(trailing++) = L' ';
-        } else {  // non-initial space in a run, do nothing
-        }
+        }  // else non-initial space in a run, do nothing
         was_space = is_space;
     }
 
@@ -295,12 +313,7 @@ void pager_t::measure_completion_infos(comp_info_list_t *infos, const wcstring &
 
         // Compute desc_width.
         comp->desc_width = fish_wcswidth(comp->desc.c_str());
-
-        // Compute preferred width.
-        comp->pref_width = comp->comp_width + comp->desc_width + (comp->desc_width ? 4 : 0);
     }
-
-    recalc_min_widths(infos);
 }
 
 // Indicates if the given completion info passes any filtering we have.
@@ -361,23 +374,21 @@ void pager_t::set_term_size(int w, int h) {
     assert(h > 0);
     available_term_width = w;
     available_term_height = h;
-    recalc_min_widths(&completion_infos);
 }
 
-/// Try to print the list of completions l with the prefix prefix using cols as the number of
-/// columns. Return true if the completion list was printed, false if the terminal is to narrow for
+/// Try to print the list of completions lst with the prefix prefix using cols as the number of
+/// columns. Return true if the completion list was printed, false if the terminal is too narrow for
 /// the specified number of columns. Always succeeds if cols is 1.
 bool pager_t::completion_try_print(size_t cols, const wcstring &prefix, const comp_info_list_t &lst,
                                    page_rendering_t *rendering, size_t suggested_start_row) const {
+    assert(cols > 0);
     // The calculated preferred width of each column.
-    int pref_width[PAGER_MAX_COLS] = {0};
-    // The calculated minimum width of each column.
-    int min_width[PAGER_MAX_COLS] = {0};
-    // If the list can be printed with this width, width will contain the width of each column.
-    int *width = pref_width;
+    size_t width_by_column[PAGER_MAX_COLS] = {0};
 
-    // Set to one if the list should be printed at this width.
-    bool print = false;
+    // Skip completions on tiny terminals.
+    if (this->available_term_width < PAGER_MIN_WIDTH ||
+        this->available_term_height < PAGER_MIN_HEIGHT)
+        return true;
 
     // Compute the effective term width and term height, accounting for disclosure.
     size_t term_width = this->available_term_width;
@@ -400,121 +411,107 @@ bool pager_t::completion_try_print(size_t cols, const wcstring &prefix, const co
 
     // If we have only one row remaining to disclose, then squelch the comment row. This prevents us
     // from consuming a line to show "...and 1 more row".
-    if (!this->fully_disclosed && rendering->remaining_to_disclose == 1) {
+    if (rendering->remaining_to_disclose == 1) {
         term_height += 1;
         rendering->remaining_to_disclose = 0;
     }
 
-    size_t pref_tot_width = 0;
-    size_t min_tot_width = 0;
-
-    // Skip completions on tiny terminals.
-    if (term_width < PAGER_MIN_WIDTH) return true;
-
     // Calculate how wide the list would be.
     for (size_t col = 0; col < cols; col++) {
         for (size_t row = 0; row < row_count; row++) {
-            int pref, min;
-            const comp_t *c;
-            if (lst.size() <= col * row_count + row) continue;
-
-            c = &lst.at(col * row_count + row);
-            pref = c->pref_width;
-            min = c->min_width;
-
-            if (col != cols - 1) {
-                pref += 2;
-                min += 2;
-            }
-            min_width[col] = maxi(min_width[col], min);
-            pref_width[col] = maxi(pref_width[col], pref);
+            const size_t comp_idx = col * row_count + row;
+            if (comp_idx >= lst.size()) continue;
+            const comp_t &c = lst.at(comp_idx);
+            width_by_column[col] = std::max(width_by_column[col], c.preferred_width());
         }
-        min_tot_width += min_width[col];
-        pref_tot_width += pref_width[col];
     }
 
+    bool print;
+    assert(cols >= 1);
     // Force fit if one column.
     if (cols == 1) {
-        if (pref_tot_width > term_width) {
-            pref_width[0] = term_width;
-        }
-        width = pref_width;
+        width_by_column[0] = std::min(width_by_column[0], term_width);
         print = true;
-    } else if (pref_tot_width <= term_width) {
-        // Terminal is wide enough. Print the list!
-        width = pref_width;
-        print = true;
+    } else {
+        // Compute total preferred width, plus spacing
+        assert(cols > 0);
+        size_t total_width_needed = std::accumulate(width_by_column, width_by_column + cols, 0);
+        total_width_needed += (cols - 1) * PAGER_SPACER_STRING_WIDTH;
+        print = (total_width_needed <= term_width);
+    }
+    if (!print) {
+        return false;  // no need to continue
     }
 
-    if (print) {
-        // Determine the starting and stop row.
-        size_t start_row = 0, stop_row = 0;
-        if (row_count <= term_height) {
-            // Easy, we can show everything.
-            start_row = 0;
-            stop_row = row_count;
-        } else {
-            // We can only show part of the full list. Determine which part based on the
-            // suggested_start_row.
-            assert(row_count > term_height);
-            size_t last_starting_row = row_count - term_height;
-            start_row = mini(suggested_start_row, last_starting_row);
-            stop_row = start_row + term_height;
-            assert(start_row >= 0 && start_row <= last_starting_row);
-        }
-
-        assert(stop_row >= start_row);
-        assert(stop_row <= row_count);
-        assert(stop_row - start_row <= term_height);
-        completion_print(cols, width, start_row, stop_row, prefix, lst, rendering);
-
-        // Ellipsis helper string. Either empty or containing the ellipsis char.
-        const wchar_t ellipsis_string[] = {ellipsis_char == L'\x2026' ? L'\x2026' : L'\0', L'\0'};
-
-        // Add the progress line. It's a "more to disclose" line if necessary, or a row listing if
-        // it's scrollable; otherwise ignore it.
-        wcstring progress_text;
-        if (rendering->remaining_to_disclose == 1) {
-            // I don't expect this case to ever happen.
-            progress_text = format_string(_(L"%lsand 1 more row"), ellipsis_string);
-        } else if (rendering->remaining_to_disclose > 1) {
-            progress_text = format_string(_(L"%lsand %lu more rows"), ellipsis_string,
-                                          (unsigned long)rendering->remaining_to_disclose);
-        } else if (start_row > 0 || stop_row < row_count) {
-            // We have a scrollable interface. The +1 here is because we are zero indexed, but want
-            // to present things as 1-indexed. We do not add 1 to stop_row or row_count because
-            // these are the "past the last value".
-            progress_text =
-                format_string(_(L"rows %lu to %lu of %lu"), start_row + 1, stop_row, row_count);
-        } else if (completion_infos.empty() && !unfiltered_completion_infos.empty()) {
-            // Everything is filtered.
-            progress_text = _(L"(no matches)");
-        }
-
-        if (!progress_text.empty()) {
-            line_t &line = rendering->screen_data.add_line();
-            print_max(progress_text, highlight_spec_pager_progress |
-                                         highlight_make_background(highlight_spec_pager_progress),
-                      term_width, true /* has_more */, &line);
-        }
-
-        if (search_field_shown) {
-            // Add the search field.
-            wcstring search_field_text = search_field_line.text;
-            // Append spaces to make it at least the required width.
-            if (search_field_text.size() < PAGER_SEARCH_FIELD_WIDTH) {
-                search_field_text.append(PAGER_SEARCH_FIELD_WIDTH - search_field_text.size(), L' ');
-            }
-            line_t *search_field = &rendering->screen_data.insert_line_at_index(0);
-
-            // We limit the width to term_width - 1.
-            int search_field_written = print_max(SEARCH_FIELD_PROMPT, highlight_spec_normal,
-                                                 term_width - 1, false, search_field);
-            print_max(search_field_text, highlight_modifier_force_underline,
-                      term_width - search_field_written - 1, false, search_field);
-        }
+    // Determine the starting and stop row.
+    size_t start_row = 0, stop_row = 0;
+    if (row_count <= term_height) {
+        // Easy, we can show everything.
+        start_row = 0;
+        stop_row = row_count;
+    } else {
+        // We can only show part of the full list. Determine which part based on the
+        // suggested_start_row.
+        assert(row_count > term_height);
+        size_t last_starting_row = row_count - term_height;
+        start_row = mini(suggested_start_row, last_starting_row);
+        stop_row = start_row + term_height;
+        assert(start_row >= 0 && start_row <= last_starting_row);
     }
-    return print;
+
+    assert(stop_row >= start_row);
+    assert(stop_row <= row_count);
+    assert(stop_row - start_row <= term_height);
+    completion_print(cols, width_by_column, start_row, stop_row, prefix, lst, rendering);
+
+    // Ellipsis helper string. Either empty or containing the ellipsis char.
+    const wchar_t ellipsis_string[] = {ellipsis_char == L'\x2026' ? L'\x2026' : L'\0', L'\0'};
+
+    // Add the progress line. It's a "more to disclose" line if necessary, or a row listing if
+    // it's scrollable; otherwise ignore it.
+    // We should never have one row remaining to disclose (else we would have just disclosed it)
+    wcstring progress_text;
+    assert(rendering->remaining_to_disclose != 1);
+    if (rendering->remaining_to_disclose > 1) {
+        progress_text = format_string(_(L"%lsand %lu more rows"), ellipsis_string,
+                                      (unsigned long)rendering->remaining_to_disclose);
+    } else if (start_row > 0 || stop_row < row_count) {
+        // We have a scrollable interface. The +1 here is because we are zero indexed, but want
+        // to present things as 1-indexed. We do not add 1 to stop_row or row_count because
+        // these are the "past the last value".
+        progress_text =
+            format_string(_(L"rows %lu to %lu of %lu"), start_row + 1, stop_row, row_count);
+    } else if (completion_infos.empty() && !unfiltered_completion_infos.empty()) {
+        // Everything is filtered.
+        progress_text = _(L"(no matches)");
+    }
+
+    if (!progress_text.empty()) {
+        line_t &line = rendering->screen_data.add_line();
+        highlight_spec_t spec = highlight_spec_pager_progress |
+                                highlight_make_background(highlight_spec_pager_progress);
+        print_max(progress_text, spec, term_width, true /* has_more */, &line);
+    }
+
+    if (search_field_shown) {
+        // Add the search field.
+        wcstring search_field_text = search_field_line.text;
+        // Append spaces to make it at least the required width.
+        if (search_field_text.size() < PAGER_SEARCH_FIELD_WIDTH) {
+            search_field_text.append(PAGER_SEARCH_FIELD_WIDTH - search_field_text.size(), L' ');
+        }
+        line_t *search_field = &rendering->screen_data.insert_line_at_index(0);
+
+        // We limit the width to term_width - 1.
+        size_t search_field_remaining = term_width - 1;
+        search_field_remaining -= print_max(SEARCH_FIELD_PROMPT, highlight_spec_normal,
+                                            search_field_remaining, false, search_field);
+
+        search_field_remaining -= print_max(search_field_text, highlight_modifier_force_underline,
+                                            search_field_remaining, false, search_field);
+    }
+
+    return true;
 }
 
 page_rendering_t pager_t::render() const {
@@ -611,10 +608,6 @@ bool pager_t::select_next_completion_in_direction(selection_direction_t directio
                 // These do nothing.
                 return false;
             }
-            default: {
-                assert(0 && "Unhandled selection_direction_t constant");
-                abort();
-            }
         }
     }
 
@@ -636,7 +629,7 @@ bool pager_t::select_next_completion_in_direction(selection_direction_t directio
                 new_selected_completion_idx = selected_completion_idx - 1;
             }
         } else {
-            assert(0 && "Unknown non-cardinal direction");
+            DIE("unknown non-cardinal direction");
         }
     } else {
         // Cardinal directions. We have a completion index; we wish to compute its row and column.
@@ -646,10 +639,11 @@ bool pager_t::select_next_completion_in_direction(selection_direction_t directio
 
         switch (direction) {
             case direction_page_north: {
-                if (current_row > page_height)
+                if (current_row > page_height) {
                     current_row = current_row - page_height;
-                else
+                } else {
                     current_row = 0;
+                }
                 break;
             }
             case direction_north: {
@@ -708,7 +702,7 @@ bool pager_t::select_next_completion_in_direction(selection_direction_t directio
                 break;
             }
             default: {
-                assert(0 && "Unknown cardinal direction");
+                DIE("unknown cardinal direction");
                 break;
             }
         }
@@ -717,42 +711,40 @@ bool pager_t::select_next_completion_in_direction(selection_direction_t directio
         new_selected_completion_idx = current_col * rendering.rows + current_row;
     }
 
-    if (new_selected_completion_idx != selected_completion_idx) {
-        selected_completion_idx = new_selected_completion_idx;
-
-        // Update suggested_row_start to ensure the selection is visible. suggested_row_start *
-        // rendering.cols is the first suggested visible completion; add the visible completion
-        // count to that to get the last one.
-        size_t visible_row_count = rendering.row_end - rendering.row_start;
-
-        if (visible_row_count > 0 && selected_completion_idx != PAGER_SELECTION_NONE)  // paranoia
-        {
-            size_t row_containing_selection = this->get_selected_row(rendering);
-
-            // Ensure our suggested row start is not past the selected row.
-            if (suggested_row_start > row_containing_selection) {
-                suggested_row_start = row_containing_selection;
-            }
-
-            // Ensure our suggested row start is not too early before it.
-            if (suggested_row_start + visible_row_count <= row_containing_selection) {
-                // The user moved south past the bottom completion.
-                if (!fully_disclosed && rendering.remaining_to_disclose > 0) {
-                    fully_disclosed = true;  // perform disclosure
-                } else {
-                    // Scroll
-                    suggested_row_start = row_containing_selection - visible_row_count + 1;
-                    // Ensure fully_disclosed is set. I think we can hit this case if the user
-                    // resizes the window - we don't want to drop back to the disclosed style.
-                    fully_disclosed = true;
-                }
-            }
-        }
-
-        return true;
-    } else {
+    if (selected_completion_idx == new_selected_completion_idx) {
         return false;
     }
+    selected_completion_idx = new_selected_completion_idx;
+
+    // Update suggested_row_start to ensure the selection is visible. suggested_row_start *
+    // rendering.cols is the first suggested visible completion; add the visible completion
+    // count to that to get the last one.
+    size_t visible_row_count = rendering.row_end - rendering.row_start;
+    if (visible_row_count == 0 || selected_completion_idx == PAGER_SELECTION_NONE) {
+        return true;  // this should never happen but be paranoid
+    }
+
+    // Ensure our suggested row start is not past the selected row.
+    size_t row_containing_selection = this->get_selected_row(rendering);
+    if (suggested_row_start > row_containing_selection) {
+        suggested_row_start = row_containing_selection;
+    }
+
+    // Ensure our suggested row start is not too early before it.
+    if (suggested_row_start + visible_row_count <= row_containing_selection) {
+        // The user moved south past the bottom completion.
+        if (!fully_disclosed && rendering.remaining_to_disclose > 0) {
+            fully_disclosed = true;  // perform disclosure
+        } else {
+            // Scroll
+            suggested_row_start = row_containing_selection - visible_row_count + 1;
+            // Ensure fully_disclosed is set. I think we can hit this case if the user
+            // resizes the window - we don't want to drop back to the disclosed style.
+            fully_disclosed = true;
+        }
+    }
+
+    return true;
 }
 
 size_t pager_t::visual_selected_completion_index(size_t rows, size_t cols) const {

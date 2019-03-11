@@ -5,6 +5,7 @@
 #include <cxxabi.h>
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -43,7 +44,7 @@ struct termios shell_modes;
 
 // Note we foolishly assume that pthread_t is just a primitive. But it might be a struct.
 static pthread_t main_thread_id = 0;
-static bool thread_assertions_configured_for_testing = false;
+static bool thread_asserts_cfg_for_testing = false;
 
 wchar_t ellipsis_char;
 wchar_t omitted_newline_char;
@@ -56,7 +57,7 @@ int debug_stack_frames = 0;  // default number of stack frames to show on debug(
 static pid_t initial_pid = 0;
 
 /// Be able to restore the term's foreground process group.
-static pid_t initial_foreground_process_group = -1;
+static pid_t initial_fg_process_group = -1;
 
 /// This struct maintains the current state of the terminal size. It is updated on demand after
 /// receiving a SIGWINCH. Do not touch this struct directly, it's managed with a rwlock. Use
@@ -107,6 +108,7 @@ demangled_backtrace(int max_frames, int skip_levels) {
 void __attribute__((noinline))
 show_stackframe(const wchar_t msg_level, int frame_count, int skip_levels) {
     ASSERT_IS_NOT_FORKED_CHILD();
+    if (frame_count < 1) return;
 
     // TODO: Decide if this is still needed. I'm commenting it out because it caused me some grief
     // while trying to debug a test failure. And the tests run just fine without spurious failures
@@ -115,7 +117,6 @@ show_stackframe(const wchar_t msg_level, int frame_count, int skip_levels) {
     // Hack to avoid showing backtraces in the tester.
     // if (program_name && !wcscmp(program_name, L"(ignore)")) return;
 
-    if (frame_count < 1) frame_count = 999;
     debug_shared(msg_level, L"Backtrace:");
     std::vector<wcstring> bt = demangled_backtrace(frame_count, skip_levels + 2);
     for (int i = 0; (size_t)i < bt.size(); i++) {
@@ -196,15 +197,14 @@ static wcstring str2wcs_internal(const char *in, const size_t in_len) {
             // Protect against broken mbrtowc() implementations which attempt to encode UTF-8
             // sequences longer than four bytes (e.g., OS X Snow Leopard).
             use_encode_direct = true;
-        } else if (sizeof(wchar_t) == 2 && (in[in_pos] & 0xF8) == 0xF0) {
+        } else if (sizeof(wchar_t) == 2 &&  //!OCLINT(constant if expression)
+                   (in[in_pos] & 0xF8) == 0xF0) {
             // Assume we are in a UTF-16 environment (e.g., Cygwin) using a UTF-8 encoding.
             // The bits set check will be true for a four byte UTF-8 sequence that requires
             // two UTF-16 chars. Something that doesn't work with our simple use of mbrtowc().
             use_encode_direct = true;
         } else {
             ret = mbrtowc(&wc, &in[in_pos], in_len - in_pos, &state);
-            // fprintf(stderr, "WTF in_pos %d  ret %d\n", in_pos, ret);
-
             // Determine whether to encode this character with our crazy scheme.
             if (wc >= ENCODE_DIRECT_BASE && wc < ENCODE_DIRECT_BASE + 256) {
                 use_encode_direct = true;
@@ -219,7 +219,8 @@ static wcstring str2wcs_internal(const char *in, const size_t in_len) {
             } else if (ret > in_len - in_pos) {
                 // Other error codes? Terrifying, should never happen.
                 use_encode_direct = true;
-            } else if (sizeof(wchar_t) == 2 && wc >= 0xD800 && wc <= 0xDFFF) {
+            } else if (sizeof(wchar_t) == 2 && wc >= 0xD800 &&  //!OCLINT(constant if expression)
+                       wc <= 0xDFFF) {
                 // If we get a surrogate pair char on a UTF-16 system (e.g., Cygwin) then
                 // it's guaranteed the UTF-8 decoding is wrong so use direct encoding.
                 use_encode_direct = true;
@@ -227,24 +228,20 @@ static wcstring str2wcs_internal(const char *in, const size_t in_len) {
         }
 
         if (use_encode_direct) {
-            // fprintf(stderr, "WTF use_encode_direct\n");
             wc = ENCODE_DIRECT_BASE + (unsigned char)in[in_pos];
             result.push_back(wc);
             in_pos++;
             memset(&state, 0, sizeof state);
-        } else if (ret == 0) {
-            // fprintf(stderr, "WTF null byte\n");
-            // Embedded null byte!
+        } else if (ret == 0) {  // embedded null byte!
             result.push_back(L'\0');
             in_pos++;
             memset(&state, 0, sizeof state);
-        } else {
-            // fprintf(stderr, "WTF null byte\n");
-            // Normal case.
+        } else {  // normal case
             result.push_back(wc);
             in_pos += ret;
         }
     }
+
     return result;
 }
 
@@ -286,16 +283,15 @@ std::string wcs2string(const wcstring &input) {
     result.reserve(input.size());
 
     mbstate_t state = {};
-    char converted[MB_LEN_MAX + 1];
+    char converted[MB_LEN_MAX];
 
     for (size_t i = 0; i < input.size(); i++) {
         wchar_t wc = input[i];
         if (wc == INTERNAL_SEPARATOR) {
-            // Do nothing.
+            ;  // do nothing
         } else if (wc >= ENCODE_DIRECT_BASE && wc < ENCODE_DIRECT_BASE + 256) {
             result.push_back(wc - ENCODE_DIRECT_BASE);
-        } else if (MB_CUR_MAX == 1)  // single-byte locale (C/POSIX/ISO-8859)
-        {
+        } else if (MB_CUR_MAX == 1) {  // single-byte locale (C/POSIX/ISO-8859)
             // If `wc` contains a wide character we emit a question-mark.
             if (wc & ~0xFF) {
                 wc = '?';
@@ -305,8 +301,8 @@ std::string wcs2string(const wcstring &input) {
         } else {
             memset(converted, 0, sizeof converted);
             size_t len = wcrtomb(converted, wc, &state);
-            if (len == (size_t)(-1)) {
-                debug(1, L"Wide character %d has no narrow representation", wc);
+            if (len == (size_t)-1) {
+                debug(1, L"Wide character U+%4X has no narrow representation", wc);
                 memset(&state, 0, sizeof(state));
             } else {
                 result.append(converted, len);
@@ -332,7 +328,7 @@ static char *wcs2str_internal(const wchar_t *in, char *out) {
 
     while (in[in_pos]) {
         if (in[in_pos] == INTERNAL_SEPARATOR) {
-            // Do nothing.
+            ;  // do nothing
         } else if (in[in_pos] >= ENCODE_DIRECT_BASE && in[in_pos] < ENCODE_DIRECT_BASE + 256) {
             out[out_pos++] = in[in_pos] - ENCODE_DIRECT_BASE;
         } else if (MB_CUR_MAX == 1)  // single-byte locale (C/POSIX/ISO-8859)
@@ -346,7 +342,7 @@ static char *wcs2str_internal(const wchar_t *in, char *out) {
         } else {
             size_t len = wcrtomb(&out[out_pos], in[in_pos], &state);
             if (len == (size_t)-1) {
-                debug(1, L"Wide character %d has no narrow representation", in[in_pos]);
+                debug(1, L"Wide character U+%4X has no narrow representation", in[in_pos]);
                 memset(&state, 0, sizeof(state));
             } else {
                 out_pos += len;
@@ -357,6 +353,14 @@ static char *wcs2str_internal(const wchar_t *in, char *out) {
     out[out_pos] = 0;
 
     return out;
+}
+
+/// Test if the character can be encoded using the current locale.
+static bool can_be_encoded(wchar_t wc) {
+    char converted[MB_LEN_MAX];
+    mbstate_t state = {};
+
+    return wcrtomb(converted, wc, &state) != (size_t)-1;
 }
 
 wcstring format_string(const wchar_t *format, ...) {
@@ -449,11 +453,11 @@ wchar_t *quote_end(const wchar_t *pos) {
 }
 
 void fish_setlocale() {
-    // Use ellipsis if on known unicode system, otherwise use $.
-    ellipsis_char = (fish_wcwidth(L'\x2026') > 0) ? L'\x2026' : L'$';
+    // Use the Unicode "ellipsis" symbol if it can be encoded using the current locale.
+    ellipsis_char = can_be_encoded(L'\x2026') ? L'\x2026' : L'$';
 
-    // U+23CE is the "return" character
-    omitted_newline_char = (fish_wcwidth(L'\x23CE') > 0) ? L'\x23CE' : L'~';
+    // Use the Unicode "return" symbol if it can be encoded using the current locale.
+    omitted_newline_char = can_be_encoded(L'\x23CE') ? L'\x23CE' : L'~';
 }
 
 bool contains_internal(const wchar_t *a, int vararg_handle, ...) {
@@ -507,6 +511,8 @@ long read_blocked(int fd, void *buf, size_t count) {
     return res;
 }
 
+/// Loop a write request while failure is non-critical. Return -1 and set errno in case of critical
+/// error.
 ssize_t write_loop(int fd, const char *buff, size_t count) {
     size_t out_cum = 0;
     while (out_cum < count) {
@@ -530,12 +536,14 @@ ssize_t read_loop(int fd, void *buff, size_t count) {
     return result;
 }
 
+bool should_suppress_stderr_for_tests() {
+    // Hack to not print error messages in the tests.
+    return program_name && !wcscmp(program_name, TESTS_PROGRAM_NAME);
+}
+
 static bool should_debug(int level) {
     if (level > debug_level) return false;
-
-    // Hack to not print error messages in the tests.
-    if (program_name && !wcscmp(program_name, L"(ignore)")) return false;
-
+    if (should_suppress_stderr_for_tests()) return false;
     return true;
 }
 
@@ -600,7 +608,7 @@ void debug_safe(int level, const char *msg, const char *param1, const char *para
                                   param7, param8, param9, param10, param11, param12};
     if (!msg) return;
 
-    // Can't call printf, that may allocate memory Just call write() over and over.
+    // Can't call wprintf, that may allocate memory Just call write() over and over.
     if (level > debug_level) return;
     int errno_old = errno;
 
@@ -768,9 +776,9 @@ static void escape_string_internal(const wchar_t *orig_in, size_t in_len, wcstri
     assert(orig_in != NULL);
 
     const wchar_t *in = orig_in;
-    bool escape_all = !!(flags & ESCAPE_ALL);
-    bool no_quoted = !!(flags & ESCAPE_NO_QUOTED);
-    bool no_tilde = !!(flags & ESCAPE_NO_TILDE);
+    bool escape_all = static_cast<bool>(flags & ESCAPE_ALL);
+    bool no_quoted = static_cast<bool>(flags & ESCAPE_NO_QUOTED);
+    bool no_tilde = static_cast<bool>(flags & ESCAPE_NO_TILDE);
 
     int need_escape = 0;
     int need_complex_escape = 0;
@@ -825,7 +833,7 @@ static void escape_string_internal(const wchar_t *orig_in, size_t in_len, wcstri
                     need_escape = need_complex_escape = 1;
                     break;
                 }
-                case L'\x1b': {
+                case L'\e': {
                     out += L'\\';
                     out += L'e';
                     need_escape = need_complex_escape = 1;
@@ -1058,9 +1066,9 @@ size_t read_unquoted_escape(const wchar_t *input, wcstring *result, bool allow_i
             }
             break;
         }
-        // \x1b means escape.
+        // \e means escape.
         case L'e': {
-            result_char_or_none = L'\x1b';
+            result_char_or_none = L'\e';
             break;
         }
         // \f means form feed.
@@ -1117,8 +1125,8 @@ static bool unescape_string_internal(const wchar_t *const input, const size_t in
     wcstring result;
     result.reserve(input_len);
 
-    const bool unescape_special = !!(flags & UNESCAPE_SPECIAL);
-    const bool allow_incomplete = !!(flags & UNESCAPE_INCOMPLETE);
+    const bool unescape_special = static_cast<bool>(flags & UNESCAPE_SPECIAL);
+    const bool allow_incomplete = static_cast<bool>(flags & UNESCAPE_INCOMPLETE);
 
     int bracket_count = 0;
 
@@ -1220,6 +1228,7 @@ static bool unescape_string_internal(const wchar_t *const input, const size_t in
                     to_append_or_none = unescape_special ? INTERNAL_SEPARATOR : NOT_A_WCHAR;
                     break;
                 }
+                default: { break; }
             }
         } else if (mode == mode_single_quotes) {
             if (c == L'\\') {
@@ -1297,6 +1306,7 @@ static bool unescape_string_internal(const wchar_t *const input, const size_t in
                     }
                     break;
                 }
+                default: { break; }
             }
         }
 
@@ -1505,7 +1515,7 @@ bool list_contains_string(const wcstring_list_t &list, const wcstring &str) {
 }
 
 int create_directory(const wcstring &d) {
-    int ok = 0;
+    bool ok = false;
     struct stat buf;
     int stat_res = 0;
 
@@ -1514,27 +1524,18 @@ int create_directory(const wcstring &d) {
     }
 
     if (stat_res == 0) {
-        if (S_ISDIR(buf.st_mode)) {
-            ok = 1;
-        }
-    } else {
-        if (errno == ENOENT) {
-            wcstring dir = wdirname(d);
-            if (!create_directory(dir)) {
-                if (!wmkdir(d, 0700)) {
-                    ok = 1;
-                }
-            }
-        }
+        if (S_ISDIR(buf.st_mode)) ok = true;
+    } else if (errno == ENOENT) {
+        wcstring dir = wdirname(d);
+        if (!create_directory(dir) && !wmkdir(d, 0700)) ok = true;
     }
 
     return ok ? 0 : -1;
 }
 
 __attribute__((noinline)) void bugreport() {
-    debug(1, _(L"This is a bug. Break on bugreport to debug. "
-               L"If you can reproduce it, please send a bug report to %s."),
-          PACKAGE_BUGREPORT);
+    debug(0, _(L"This is a bug. Break on bugreport to debug."));
+    debug(0, _(L"If you can reproduce it, please send a bug report to %s."), PACKAGE_BUGREPORT);
 }
 
 wcstring format_size(long long sz) {
@@ -1682,9 +1683,7 @@ __attribute__((noinline)) void debug_thread_error(void) {
 
 void set_main_thread() { main_thread_id = pthread_self(); }
 
-void configure_thread_assertions_for_testing(void) {
-    thread_assertions_configured_for_testing = true;
-}
+void configure_thread_assertions_for_testing(void) { thread_asserts_cfg_for_testing = true; }
 
 bool is_forked_child(void) {
     // Just bail if nobody's called setup_fork_guards, e.g. some of our tools.
@@ -1692,7 +1691,7 @@ bool is_forked_child(void) {
 
     bool is_child_of_fork = (getpid() != initial_pid);
     if (is_child_of_fork) {
-        printf("Uh-oh: %d\n", getpid());
+        wprintf(L"Uh-oh: %d\n", getpid());
         while (1) sleep(10000);
     }
     return is_child_of_fork;
@@ -1704,14 +1703,14 @@ void setup_fork_guards(void) {
 }
 
 void save_term_foreground_process_group(void) {
-    initial_foreground_process_group = tcgetpgrp(STDIN_FILENO);
+    initial_fg_process_group = tcgetpgrp(STDIN_FILENO);
 }
 
 void restore_term_foreground_process_group(void) {
-    if (initial_foreground_process_group != -1) {
+    if (initial_fg_process_group != -1) {
         // This is called during shutdown and from a signal handler. We don't bother to complain on
         // failure.
-        tcsetpgrp(STDIN_FILENO, initial_foreground_process_group);
+        tcsetpgrp(STDIN_FILENO, initial_fg_process_group);
     }
 }
 
@@ -1721,29 +1720,25 @@ bool is_main_thread() {
 }
 
 void assert_is_main_thread(const char *who) {
-    if (!is_main_thread() && !thread_assertions_configured_for_testing) {
-        fprintf(stderr,
-                "Warning: %s called off of main thread. Break on debug_thread_error to debug.\n",
-                who);
+    if (!is_main_thread() && !thread_asserts_cfg_for_testing) {
+        debug(0, "%s called off of main thread.", who);
+        debug(0, "Break on debug_thread_error to debug.");
         debug_thread_error();
     }
 }
 
 void assert_is_not_forked_child(const char *who) {
     if (is_forked_child()) {
-        fprintf(stderr,
-                "Warning: %s called in a forked child. Break on debug_thread_error to debug.\n",
-                who);
+        debug(0, "%s called in a forked child.", who);
+        debug(0, "Break on debug_thread_error to debug.");
         debug_thread_error();
     }
 }
 
 void assert_is_background_thread(const char *who) {
-    if (is_main_thread() && !thread_assertions_configured_for_testing) {
-        fprintf(stderr,
-                "Warning: %s called on the main thread (may block!). Break on debug_thread_error "
-                "to debug.\n",
-                who);
+    if (is_main_thread() && !thread_asserts_cfg_for_testing) {
+        debug(0, "%s called on the main thread (may block!).", who);
+        debug(0, "Break on debug_thread_error to debug.");
         debug_thread_error();
     }
 }
@@ -1751,17 +1746,15 @@ void assert_is_background_thread(const char *who) {
 void assert_is_locked(void *vmutex, const char *who, const char *caller) {
     pthread_mutex_t *mutex = static_cast<pthread_mutex_t *>(vmutex);
     if (0 == pthread_mutex_trylock(mutex)) {
-        fprintf(stderr,
-                "Warning: %s is not locked when it should be in '%s'. Break on debug_thread_error "
-                "to debug.\n",
-                who, caller);
+        debug(0, "%s is not locked when it should be in '%s'", who, caller);
+        debug(0, "Break on debug_thread_error to debug.");
         debug_thread_error();
         pthread_mutex_unlock(mutex);
     }
 }
 
 void scoped_lock::lock(void) {
-    assert(!locked);
+    assert(!locked);  //!OCLINT(multiple unary operator)
     ASSERT_IS_NOT_FORKED_CHILD();
     VOMIT_ON_FAILURE_NO_ERRNO(pthread_mutex_lock(lock_obj));
     locked = true;
@@ -1785,7 +1778,7 @@ scoped_lock::~scoped_lock() {
 }
 
 void scoped_rwlock::lock(void) {
-    assert(!(locked || locked_shared));
+    assert(!(locked || locked_shared));  //!OCLINT(multiple unary operator)
     ASSERT_IS_NOT_FORKED_CHILD();
     VOMIT_ON_FAILURE_NO_ERRNO(pthread_rwlock_rdlock(rwlock_obj));
     locked = true;
@@ -1799,7 +1792,7 @@ void scoped_rwlock::unlock(void) {
 }
 
 void scoped_rwlock::lock_shared(void) {
-    assert(!(locked || locked_shared));
+    assert(!(locked || locked_shared));  //!OCLINT(multiple unary operator)
     ASSERT_IS_NOT_FORKED_CHILD();
     VOMIT_ON_FAILURE_NO_ERRNO(pthread_rwlock_wrlock(rwlock_obj));
     locked_shared = true;
@@ -1936,16 +1929,27 @@ long convert_digit(wchar_t d, int base) {
     return res;
 }
 
-// Test if the specified character is in a range that fish uses interally to store special tokens.
-//
-// NOTE: This is used when tokenizing the input. It is also used when reading input, before
-// tokenization, to replace such chars with REPLACEMENT_WCHAR if they're not part of a quoted
-// string. We don't want external input to be able to feed reserved characters into our lexer/parser
-// or code evaluator.
+/// Test if the specified character is in a range that fish uses interally to store special tokens.
+///
+/// NOTE: This is used when tokenizing the input. It is also used when reading input, before
+/// tokenization, to replace such chars with REPLACEMENT_WCHAR if they're not part of a quoted
+/// string. We don't want external input to be able to feed reserved characters into our
+/// lexer/parser or code evaluator.
 //
 // TODO: Actually implement the replacement as documented above.
 bool fish_reserved_codepoint(wchar_t c) {
     return (c >= RESERVED_CHAR_BASE && c < RESERVED_CHAR_END) ||
            (c >= ENCODE_DIRECT_BASE && c < ENCODE_DIRECT_END) ||
            (c >= INPUT_COMMON_BASE && c < INPUT_COMMON_END);
+}
+
+/// Reopen stdout and/or stderr on /dev/null. This is invoked when we find that our tty has become
+/// invalid.
+void redirect_tty_output() {
+    struct termios t;
+    int fd = open("/dev/null", O_WRONLY);
+    if (tcgetattr(STDIN_FILENO, &t) == -1) dup2(fd, STDIN_FILENO);
+    if (tcgetattr(STDOUT_FILENO, &t) == -1) dup2(fd, STDOUT_FILENO);
+    if (tcgetattr(STDERR_FILENO, &t) == -1) dup2(fd, STDERR_FILENO);
+    close(fd);
 }

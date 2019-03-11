@@ -14,7 +14,6 @@
 #include "fallback.h"  // IWYU pragma: keep
 #include "proc.h"
 #include "reader.h"
-#include "signal.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 /// Struct describing an entry for the lookup table used to convert between signal names and signal
@@ -151,19 +150,15 @@ static int match_signal_name(const wchar_t *canonical, const wchar_t *name) {
 }
 
 int wcs2sig(const wchar_t *str) {
-    int i;
-    wchar_t *end = 0;
-
-    for (i = 0; lookup[i].desc; i++) {
+    for (int i = 0; lookup[i].desc; i++) {
         if (match_signal_name(lookup[i].name, str)) {
             return lookup[i].signal;
         }
     }
-    errno = 0;
-    int res = fish_wcstoi(str, &end, 10);
-    if (!errno && res >= 0 && !*end) return res;
 
-    return -1;
+    int res = fish_wcstoi(str);
+    if (errno || res < 0) return -1;
+    return res;
 }
 
 const wchar_t *sig2wcs(int sig) {
@@ -403,4 +398,4 @@ void signal_unblock() {
     //	debug( 0, L"signal block level decreased to %d", block_count );
 }
 
-bool signal_is_blocked() { return !!block_count; }
+bool signal_is_blocked() { return static_cast<bool>(block_count); }

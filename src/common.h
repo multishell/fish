@@ -143,6 +143,26 @@ inline bool selection_direction_is_cardinal(selection_direction_t dir) {
     }
 }
 
+/// Issue a debug message with printf-style string formating and automatic line breaking. The string
+/// will begin with the string \c program_name, followed by a colon and a whitespace.
+///
+/// Because debug is often called to tell the user about an error, before using wperror to give a
+/// specific error message, debug will never ever modify the value of errno.
+///
+/// \param level the priority of the message. Lower number means higher priority. Messages with a
+/// priority_number higher than \c debug_level will be ignored..
+/// \param msg the message format string.
+///
+/// Example:
+///
+/// <code>debug( 1, L"Pi = %.3f", M_PI );</code>
+///
+/// will print the string 'fish: Pi = 3.141', given that debug_level is 1 or higher, and that
+/// program_name is 'fish'.
+void __attribute__((noinline)) debug(int level, const char *msg, ...)
+    __attribute__((format(printf, 2, 3)));
+void __attribute__((noinline)) debug(int level, const wchar_t *msg, ...);
+
 /// Helper macro for errors.
 #define VOMIT_ON_FAILURE(a)         \
     do {                            \
@@ -157,16 +177,16 @@ inline bool selection_direction_is_cardinal(selection_direction_t dir) {
             VOMIT_ABORT(err, #a);    \
         }                            \
     } while (0)
-#define VOMIT_ABORT(err, str)                                                                  \
-    do {                                                                                       \
-        int code = (err);                                                                      \
-        fprintf(stderr, "%s failed on line %d in file %s: %d (%s)\n", str, __LINE__, __FILE__, \
-                code, strerror(code));                                                         \
-        abort();                                                                               \
+#define VOMIT_ABORT(err, str)                                                               \
+    do {                                                                                    \
+        int code = (err);                                                                   \
+        debug(0, "%s failed on line %d in file %s: %d (%s)", str, __LINE__, __FILE__, code, \
+              strerror(code));                                                              \
+        abort();                                                                            \
     } while (0)
 
 /// Exits without invoking destructors (via _exit), useful for code after fork.
-void exit_without_destructors(int code) __attribute__((noreturn));
+[[noreturn]] void exit_without_destructors(int code);
 
 /// Save the shell mode on startup so we can restore them on exit.
 extern struct termios shell_modes;
@@ -199,18 +219,22 @@ void write_ignore(int fd, const void *buff, size_t count);
 /// the tty.
 extern bool has_working_tty_timestamps;
 
-/// This macro is used to check that an input argument is not null. It is a bit lika a non-fatal
-/// form of assert. Instead of exit-ing on failure, the current function is ended at once. The
-/// second parameter is the return value of the current function on failure.
-#define CHECK(arg, retval)                                                                \
-    if (!(arg)) {                                                                         \
-        debug(0, "function %s called with null value for argument %s. ", __func__, #arg); \
-        bugreport();                                                                      \
-        show_stackframe(L'E');                                                            \
-        return retval;                                                                    \
+/// This macro is used to check that an argument is true. It is a bit like a non-fatal form of
+/// assert. Instead of exiting on failure, the current function is ended at once. The second
+/// parameter is the return value of the current function on failure.
+#define CHECK(arg, retval)                                                               \
+    if (!(arg)) {                                                                        \
+        debug(0, "function %s called with false value for argument %s", __func__, #arg); \
+        bugreport();                                                                     \
+        show_stackframe(L'E');                                                           \
+        return retval;                                                                   \
     }
 
-/// Pause for input, then exit the program. If supported, print a backtrace first.
+// Pause for input, then exit the program. If supported, print a backtrace first.
+// The `return` will never be run  but silences oclint warnings. Especially when this is called
+// from within a `switch` block. As of the time I'm writing this oclint doesn't recognize the
+// `__attribute__((noreturn))` on the exit_without_destructors() function.
+// TODO: we use C++11 [[noreturn]] now, does that change things?
 #define FATAL_EXIT()                        \
     {                                       \
         char exit_read_buff;                \
@@ -220,11 +244,10 @@ extern bool has_working_tty_timestamps;
     }
 
 /// Exit program at once after emitting an error message.
-#define DIE(msg)                                                                      \
-    {                                                                                 \
-        fprintf(stderr, "fish: %s on line %ld of file %s, shutting down fish\n", msg, \
-                (long)__LINE__, __FILE__);                                            \
-        FATAL_EXIT();                                                                 \
+#define DIE(msg)                                                                                  \
+    {                                                                                             \
+        debug(0, "%s on line %ld of file %s, shutting down fish", msg, (long)__LINE__, __FILE__); \
+        FATAL_EXIT();                                                                             \
     }
 
 /// Exit program at once, leaving an error message about running out of memory.
@@ -258,7 +281,7 @@ extern bool has_working_tty_timestamps;
 #define contains(str, ...) contains_internal(str, 0, __VA_ARGS__, NULL)
 
 /// Print a stack trace to stderr.
-void show_stackframe(const wchar_t msg_level, int frame_count = -1, int skip_levels = 0);
+void show_stackframe(const wchar_t msg_level, int frame_count = 100, int skip_levels = 0);
 
 /// Read a line from the stream f into the string. Returns the number of bytes read or -1 on
 /// failure.
@@ -368,6 +391,10 @@ string_fuzzy_match_t string_fuzzy_match_string(const wcstring &string,
 
 /// Test if a list contains a string using a linear search.
 bool list_contains_string(const wcstring_list_t &list, const wcstring &str);
+
+// Check if we are running in the test mode, where we should suppress error output
+#define TESTS_PROGRAM_NAME L"(ignore)"
+bool should_suppress_stderr_for_tests();
 
 void assert_is_main_thread(const char *who);
 #define ASSERT_IS_MAIN_THREAD_TRAMPOLINE(x) assert_is_main_thread(x)
@@ -651,24 +678,6 @@ ssize_t write_loop(int fd, const char *buff, size_t count);
 /// error.
 ssize_t read_loop(int fd, void *buff, size_t count);
 
-/// Issue a debug message with printf-style string formating and automatic line breaking. The string
-/// will begin with the string \c program_name, followed by a colon and a whitespace.
-///
-/// Because debug is often called to tell the user about an error, before using wperror to give a
-/// specific error message, debug will never ever modify the value of errno.
-///
-/// \param level the priority of the message. Lower number means higher priority. Messages with a
-/// priority_number higher than \c debug_level will be ignored..
-/// \param msg the message format string.
-///
-/// Example:
-///
-/// <code>debug( 1, L"Pi = %.3f", M_PI );</code>
-///
-/// will print the string 'fish: Pi = 3.141', given that debug_level is 1 or higher, and that
-/// program_name is 'fish'.
-void __attribute__((noinline)) debug(int level, const char *msg, ...);
-void __attribute__((noinline)) debug(int level, const wchar_t *msg, ...);
 
 /// Replace special characters with backslash escape sequences. Newline is replaced with \n, etc.
 ///
@@ -775,7 +784,64 @@ long convert_digit(wchar_t d, int base);
         (void)(expr); \
     } while (0)
 
-#endif
-
 // Return true if the character is in a range reserved for fish's private use.
 bool fish_reserved_codepoint(wchar_t c);
+
+/// Used for constructing mappings between enums and strings. The resulting array must be sorted
+/// according to the `str` member since str_to_enum() does a binary search. Also the last entry must
+/// have NULL for the `str` member and the default value for `val` to be returned if the string
+/// isn't found.
+template <typename T>
+struct enum_map {
+    T val;
+    const wchar_t *const str;
+};
+
+/// Given a string return the matching enum. Return the sentinal enum if no match is made. The map
+/// must be sorted by the `str` member. A binary search is twice as fast as a linear search with 16
+/// elements in the map.
+template <typename T>
+static T str_to_enum(const wchar_t *name, const enum_map<T> map[], int len) {
+    // Ignore the sentinel value when searching as it is the "not found" value.
+    size_t left = 0, right = len - 1;
+
+    while (left < right) {
+        size_t mid = left + (right - left) / 2;
+        int cmp = wcscmp(name, map[mid].str);
+        if (cmp < 0) {
+            right = mid;  // name was smaller than mid
+        } else if (cmp > 0) {
+            left = mid + 1;  // name was larger than mid
+        } else {
+            return map[mid].val;  // found it
+        }
+    }
+    return map[len - 1].val;  // return the sentinel value
+}
+
+/// Given an enum return the matching string.
+template <typename T>
+static const wchar_t *enum_to_str(T enum_val, const enum_map<T> map[]) {
+    for (const enum_map<T> *entry = map; entry->str; entry++) {
+        if (enum_val == entry->val) {
+            return entry->str;
+        }
+    }
+    return NULL;
+};
+
+#if !defined(HAVE_WCSDUP) && defined(HAVE_STD__WCSDUP)
+using std::wcsdup;
+#endif
+
+#if !defined(HAVE_WCSCASECMP) && defined(HAVE_STD__WCSCASECMP)
+using std::wcscasecmp;
+#endif
+
+#if !defined(HAVE_WCSNCASECMP) && defined(HAVE_STD__WCSNCASECMP)
+using std::wcsncasecmp;
+#endif
+
+#endif
+
+void redirect_tty_output(void);

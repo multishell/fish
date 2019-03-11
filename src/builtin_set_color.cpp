@@ -56,11 +56,14 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
                                            {L"help", no_argument, 0, 'h'},
                                            {L"bold", no_argument, 0, 'o'},
                                            {L"underline", no_argument, 0, 'u'},
+                                           {L"italics", no_argument, 0, 'i'},
+                                           {L"dim", no_argument, 0, 'd'},
+                                           {L"reverse", no_argument, 0, 'r'},
                                            {L"version", no_argument, 0, 'v'},
                                            {L"print-colors", no_argument, 0, 'c'},
                                            {0, 0, 0, 0}};
 
-    const wchar_t *short_options = L"b:hvocu";
+    const wchar_t *short_options = L"b:hvoidrcu";
 
     int argc = builtin_count_args(argv);
 
@@ -71,19 +74,19 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     }
 
     const wchar_t *bgcolor = NULL;
-    bool bold = false, underline = false;
+    bool bold = false, underline = false, italics = false, dim = false, reverse = false;
     int errret;
 
     // Parse options to obtain the requested operation and the modifiers.
     w.woptind = 0;
     while (1) {
-        int c = w.wgetopt_long(argc, argv, short_options, long_options, 0);
+        int opt = w.wgetopt_long(argc, argv, short_options, long_options, 0);
 
-        if (c == -1) {
+        if (opt == -1) {
             break;
         }
 
-        switch (c) {
+        switch (opt) {
             case 0: {
                 break;
             }
@@ -99,6 +102,18 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
                 bold = true;
                 break;
             }
+            case 'i': {
+                italics = true;
+                break;
+            }
+            case 'd': {
+                dim = true;
+                break;
+            }
+            case 'r': {
+                reverse = true;
+                break;
+            }
             case 'u': {
                 underline = true;
                 break;
@@ -109,6 +124,10 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
             }
             case '?': {
                 return STATUS_BUILTIN_ERROR;
+            }
+            default: {
+                DIE("unexpected opt");
+                break;
             }
         }
     }
@@ -124,7 +143,7 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         fgcolors.push_back(fg);
     }
 
-    if (fgcolors.empty() && bgcolor == NULL && !bold && !underline) {
+    if (fgcolors.empty() && bgcolor == NULL && !bold && !underline && !italics && !dim && !reverse) {
         streams.err.append_format(_(L"%ls: Expected an argument\n"), argv[0]);
         return STATUS_BUILTIN_ERROR;
     }
@@ -159,19 +178,31 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     builtin_set_color_output.clear();
     output_set_writer(set_color_builtin_outputter);
 
-    if (bold) {
-        if (enter_bold_mode) writembs(tparm(enter_bold_mode));
+    if (bold && enter_bold_mode) {
+        writembs(tparm(enter_bold_mode));
     }
 
-    if (underline) {
-        if (enter_underline_mode) writembs(enter_underline_mode);
+    if (underline && enter_underline_mode) {
+        writembs(enter_underline_mode);
     }
 
-    if (bgcolor != NULL) {
-        if (bg.is_normal()) {
-            write_color(rgb_color_t::black(), false /* not is_fg */);
-            writembs(tparm(exit_attribute_mode));
-        }
+    if (italics && enter_italics_mode) {
+        writembs(enter_italics_mode);
+    }
+
+    if (dim && enter_dim_mode) {
+        writembs(enter_dim_mode);
+    }
+
+    if (reverse && enter_reverse_mode) {
+        writembs(enter_reverse_mode);
+    } else if (reverse && enter_standout_mode) {
+        writembs(enter_standout_mode);
+    }
+
+    if (bgcolor != NULL && bg.is_normal()) {
+        write_color(rgb_color_t::black(), false /* not is_fg */);
+        writembs(tparm(exit_attribute_mode));
     }
 
     if (!fg.is_none()) {
@@ -188,10 +219,8 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         }
     }
 
-    if (bgcolor != NULL) {
-        if (!bg.is_normal() && !bg.is_reset()) {
-            write_color(bg, false /* not is_fg */);
-        }
+    if (bgcolor != NULL && !bg.is_normal() && !bg.is_reset()) {
+        write_color(bg, false /* not is_fg */);
     }
 
     // Restore saved writer function.

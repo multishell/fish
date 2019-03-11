@@ -105,24 +105,29 @@ static bool allow_soft_wrap(void) {
 
 /// Does this look like the escape sequence for setting a screen name.
 static bool is_screen_name_escape_seq(const wchar_t *code, size_t *resulting_length) {
-    bool found = false;
-    if (code[1] == L'k') {
-        const env_var_t term_name = env_get_string(L"TERM");
-        if (!term_name.missing() && string_prefixes_string(L"screen", term_name)) {
-            const wchar_t *const screen_name_end_sentinel = L"\x1b\\";
-            const wchar_t *screen_name_end = wcsstr(&code[2], screen_name_end_sentinel);
-            if (screen_name_end == NULL) {
-                // Consider just <esc>k to be the code.
-                *resulting_length = 2;
-            } else {
-                const wchar_t *escape_sequence_end =
-                    screen_name_end + wcslen(screen_name_end_sentinel);
-                *resulting_length = escape_sequence_end - code;
-            }
-            found = true;
-        }
+    if (code[1] != L'k') {
+        return false;
     }
-    return found;
+
+#if 0
+    // TODO: Decide if this should be removed or modified to also test for TERM values that begin
+    // with "tmux". See issue #3512.
+    const env_var_t term_name = env_get_string(L"TERM");
+    if (term_name.missing() || !string_prefixes_string(L"screen", term_name)) {
+        return false;
+    }
+#endif
+
+    const wchar_t *const screen_name_end_sentinel = L"\e\\";
+    const wchar_t *screen_name_end = wcsstr(&code[2], screen_name_end_sentinel);
+    if (screen_name_end == NULL) {
+        // Consider just <esc>k to be the code.
+        *resulting_length = 2;
+    } else {
+        const wchar_t *escape_sequence_end = screen_name_end + wcslen(screen_name_end_sentinel);
+        *resulting_length = escape_sequence_end - code;
+    }
+    return true;
 }
 
 /// iTerm2 escape codes: CSI followed by ], terminated by either BEL or escape + backslash.
@@ -134,7 +139,7 @@ static bool is_iterm2_escape_seq(const wchar_t *code, size_t *resulting_length) 
         size_t cursor = 2;
         for (; code[cursor] != L'\0'; cursor++) {
             // Consume a sequence of characters up to <esc>\ or <bel>.
-            if (code[cursor] == '\x07' || (code[cursor] == '\\' && code[cursor - 1] == '\x1b')) {
+            if (code[cursor] == '\x07' || (code[cursor] == '\\' && code[cursor - 1] == '\e')) {
                 found = true;
                 break;
             }
@@ -169,37 +174,37 @@ static bool is_two_byte_escape_seq(const wchar_t *code, size_t *resulting_length
 /// Generic VT100 CSI-style sequence. <esc>, followed by zero or more ASCII characters NOT in
 /// the range [@,_], followed by one character in that range.
 static bool is_csi_style_escape_seq(const wchar_t *code, size_t *resulting_length) {
-    bool found = false;
-    if (code[1] == L'[') {
-        // Start at 2 to skip over <esc>[
-        size_t cursor = 2;
-        for (; code[cursor] != L'\0'; cursor++) {
-            // Consume a sequence of ASCII characters not in the range [@, ~].
-            wchar_t widechar = code[cursor];
-
-            // If we're not in ASCII, just stop.
-            if (widechar > 127) break;
-
-            // If we're the end character, then consume it and then stop.
-            if (widechar >= L'@' && widechar <= L'~') {
-                cursor++;
-                break;
-            }
-        }
-        // curs now indexes just beyond the end of the sequence (or at the terminating zero).
-        found = true;
-        *resulting_length = cursor;
+    if (code[1] != L'[') {
+        return false;
     }
-    return found;
+
+    // Start at 2 to skip over <esc>[
+    size_t cursor = 2;
+    for (; code[cursor] != L'\0'; cursor++) {
+        // Consume a sequence of ASCII characters not in the range [@, ~].
+        wchar_t widechar = code[cursor];
+
+        // If we're not in ASCII, just stop.
+        if (widechar > 127) break;
+
+        // If we're the end character, then consume it and then stop.
+        if (widechar >= L'@' && widechar <= L'~') {
+            cursor++;
+            break;
+        }
+    }
+    // cursor now indexes just beyond the end of the sequence (or at the terminating zero).
+    *resulting_length = cursor;
+    return true;
 }
 
 /// Returns the number of characters in the escape code starting at 'code' (which should initially
-/// contain \x1b).
+/// contain \e).
 size_t escape_code_length(const wchar_t *code) {
     assert(code != NULL);
 
-    // The only escape codes we recognize start with \x1b.
-    if (code[0] != L'\x1b') return 0;
+    // The only escape codes we recognize start with \e.
+    if (code[0] != L'\e') return 0;
 
     size_t resulting_length = 0;
     bool found = false;
@@ -279,7 +284,7 @@ static prompt_layout_t calc_prompt_layout(const wchar_t *prompt) {
     prompt_layout.line_count = 1;
 
     for (j = 0; prompt[j]; j++) {
-        if (prompt[j] == L'\x1b') {
+        if (prompt[j] == L'\e') {
             // This is the start of an escape code. Skip over it if it's at least one character
             // long.
             size_t escape_len = escape_code_length(&prompt[j]);
@@ -411,7 +416,7 @@ static void s_desired_append_char(screen_t *s, wchar_t b, int c, int indent, siz
         if ((s->desired.cursor.x + cw) > screen_width) {
             // Current line is soft wrapped (assuming we support it).
             s->desired.line(s->desired.cursor.y).is_soft_wrapped = true;
-            // fprintf(stderr, "\n\n1 Soft wrapping %d\n\n", s->desired.cursor.y);
+            // fwprintf(stderr, L"\n\n1 Soft wrapping %d\n\n", s->desired.cursor.y);
 
             line_no = (int)s->desired.line_count();
             s->desired.add_line();
@@ -656,7 +661,7 @@ static bool test_stuff(screen_t *scr)
         int c = getchar();
         if (c != EOF) break;
     }
-    puts("Bye");
+    wprintf(L"Bye\n");
     exit(0);
     while (1) sleep(10000);
     return true;
@@ -817,7 +822,7 @@ static void s_update(screen_t *scr, const wchar_t *left_prompt, const wchar_t *r
         }
 
         // Output any rprompt if this is the first line.
-        if (i == 0 && right_prompt_width > 0) {
+        if (i == 0 && right_prompt_width > 0) {  //!OCLINT(Use early exit/continue)
             s_move(scr, &output, (int)(screen_width - right_prompt_width), (int)i);
             s_set_color(scr, &output, 0xffffffff);
             s_write_str(&output, right_prompt);
@@ -1190,7 +1195,8 @@ void s_reset(screen_t *s, screen_reset_mode_t mode) {
         // Don't need to check for fish_wcwidth errors; this is done when setting up
         // omitted_newline_char in common.cpp.
         int non_space_width = fish_wcwidth(omitted_newline_char);
-        if (screen_width >= non_space_width) {
+        // We do `>` rather than `>=` because the code below might require one extra space.
+        if (screen_width > non_space_width) {
             bool justgrey = true;
             if (enter_dim_mode) {
                 std::string dim = tparm(enter_dim_mode);
@@ -1220,16 +1226,22 @@ void s_reset(screen_t *s, screen_reset_mode_t mode) {
                 abandon_line_string.append(
                     str2wcstring(tparm(exit_attribute_mode)));  // normal text ANSI escape sequence
             }
-            abandon_line_string.append(screen_width - non_space_width, L' ');
+            int newline_glitch_width = term_has_xn ? 0 : 1;
+            abandon_line_string.append(screen_width - non_space_width - newline_glitch_width, L' ');
         }
         abandon_line_string.push_back(L'\r');
+        abandon_line_string.push_back(omitted_newline_char);
         // Now we are certainly on a new line. But we may have dropped the omitted newline char on
         // it. So append enough spaces to overwrite the omitted newline char, and then clear all the
-        // spaces from the new line
+        // spaces from the new line.
         abandon_line_string.append(non_space_width, L' ');
         abandon_line_string.push_back(L'\r');
-        // clear entire line - el2
-        abandon_line_string.append(L"\x1b[2K");
+        // Clear entire line. Zsh doesn't do this. Fish added this with commit 4417a6ee: If you have
+        // a prompt preceded by a new line, you'll get a line full of spaces instead of an empty
+        // line above your prompt. This doesn't make a difference in normal usage, but copying and
+        // pasting your terminal log becomes a pain. This commit clears that line, making it an
+        // actual empty line.
+        abandon_line_string.append(L"\e[2K");
 
         const std::string narrow_abandon_line_string = wcs2string(abandon_line_string);
         write_loop(STDOUT_FILENO, narrow_abandon_line_string.c_str(),

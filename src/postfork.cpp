@@ -11,6 +11,7 @@
 #if FISH_USE_POSIX_SPAWN
 #include <spawn.h>
 #endif
+#include <wchar.h>
 
 #include "common.h"
 #include "exec.h"
@@ -58,15 +59,24 @@ static void debug_safe_int(int level, const char *format, int val) {
     debug_safe(level, format, buff);
 }
 
-int set_child_group(job_t *j, process_t *p, int print_errors) {
-    int res = 0;
+/// This function should be called by both the parent process and the child right after fork() has
+/// been called. If job control is enabled, the child is put in the jobs group, and if the child is
+/// also in the foreground, it is also given control of the terminal. When called in the parent
+/// process, this function may fail, since the child might have already finished and called exit.
+/// The parent process may safely ignore the exit status of this call.
+///
+/// Returns true on sucess, false on failiure.
+bool set_child_group(job_t *j, process_t *p, int print_errors) {
+    bool retval = true;
 
     if (job_get_flag(j, JOB_CONTROL)) {
         if (!j->pgid) {
             j->pgid = p->pid;
         }
 
-        if (setpgid(p->pid, j->pgid)) {
+        if (setpgid(p->pid, j->pgid)) {  //!OCLINT(collapsible if statements)
+            // TODO: Figure out why we're testing whether the pgid is correct after attempting to
+            // set it failed. This was added in commit 4e912ef8 from 2012-02-27.
             if (getpgid(p->pid) != j->pgid && print_errors) {
                 char pid_buff[128];
                 char job_id_buff[128];
@@ -87,26 +97,31 @@ int set_child_group(job_t *j, process_t *p, int print_errors) {
                     pid_buff, argv0, job_id_buff, command, getpgid_buff, job_pgid_buff);
 
                 safe_perror("setpgid");
-                res = -1;
+                retval = false;
             }
         }
     } else {
         j->pgid = getpid();
     }
 
-    if (job_get_flag(j, JOB_TERMINAL) && job_get_flag(j, JOB_FOREGROUND)) {
-        if (tcsetpgrp(0, j->pgid) && print_errors) {
-            char job_id_buff[64];
-            char command_buff[64];
-            format_long_safe(job_id_buff, j->job_id);
-            narrow_string_safe(command_buff, j->command_wcstr());
-            debug_safe(1, "Could not send job %s ('%s') to foreground", job_id_buff, command_buff);
-            safe_perror("tcsetpgrp");
-            res = -1;
+    if (job_get_flag(j, JOB_TERMINAL) && job_get_flag(j, JOB_FOREGROUND)) {  //!OCLINT(early exit)
+        int result = tcsetpgrp(STDIN_FILENO, j->pgid);  // to avoid "collapsible if statements" warn
+        if (result == -1) {
+            if (errno == ENOTTY) redirect_tty_output();
+            if (print_errors) {
+                char job_id_buff[64];
+                char command_buff[64];
+                format_long_safe(job_id_buff, j->job_id);
+                narrow_string_safe(command_buff, j->command_wcstr());
+                debug_safe(1, "Could not send job %s ('%s') to foreground", job_id_buff,
+                           command_buff);
+                safe_perror("tcsetpgrp");
+                retval = false;
+            }
         }
     }
 
-    return res;
+    return retval;
 }
 
 /// Set up a childs io redirections. Should only be called by setup_child_process(). Does the
@@ -127,7 +142,7 @@ static int handle_child_io(const io_chain_t &io_chain) {
 
         switch (io->io_mode) {
             case IO_CLOSE: {
-                if (log_redirections) fprintf(stderr, "%d: close %d\n", getpid(), io->fd);
+                if (log_redirections) fwprintf(stderr, L"%d: close %d\n", getpid(), io->fd);
                 if (close(io->fd)) {
                     debug_safe_int(0, "Failed to close file descriptor %s", io->fd);
                     safe_perror("close");
@@ -166,7 +181,7 @@ static int handle_child_io(const io_chain_t &io_chain) {
             case IO_FD: {
                 int old_fd = static_cast<const io_fd_t *>(io)->old_fd;
                 if (log_redirections)
-                    fprintf(stderr, "%d: fd dup %d to %d\n", getpid(), old_fd, io->fd);
+                    fwprintf(stderr, L"%d: fd dup %d to %d\n", getpid(), old_fd, io->fd);
 
                 // This call will sometimes fail, but that is ok, this is just a precausion.
                 close(io->fd);
@@ -186,14 +201,14 @@ static int handle_child_io(const io_chain_t &io_chain) {
                 // fd). If it's 1, we're connecting to the write end (second pipe fd).
                 unsigned int write_pipe_idx = (io_pipe->is_input ? 0 : 1);
 #if 0
-                debug( 0, L"%ls %ls on fd %d (%d %d)", write_pipe?L"write":L"read",
-                        (io->io_mode == IO_BUFFER)?L"buffer":L"pipe", io->fd, io->pipe_fd[0],
-                        io->pipe_fd[1]);
+                debug(0, L"%ls %ls on fd %d (%d %d)", write_pipe?L"write":L"read",
+                      (io->io_mode == IO_BUFFER)?L"buffer":L"pipe", io->fd, io->pipe_fd[0],
+                      io->pipe_fd[1]);
 #endif
                 if (log_redirections)
-                    fprintf(stderr, "%d: %s dup %d to %d\n", getpid(),
-                            io->io_mode == IO_BUFFER ? "buffer" : "pipe",
-                            io_pipe->pipe_fd[write_pipe_idx], io->fd);
+                    fwprintf(stderr, L"%d: %s dup %d to %d\n", getpid(),
+                             io->io_mode == IO_BUFFER ? "buffer" : "pipe",
+                             io_pipe->pipe_fd[write_pipe_idx], io->fd);
                 if (dup2(io_pipe->pipe_fd[write_pipe_idx], io->fd) != io->fd) {
                     debug_safe(1, LOCAL_PIPE_ERROR);
                     safe_perror("dup2");
@@ -214,7 +229,7 @@ int setup_child_process(job_t *j, process_t *p, const io_chain_t &io_chain) {
     bool ok = true;
 
     if (p) {
-        ok = (0 == set_child_group(j, p, 1));
+        ok = set_child_group(j, p, 1);
     }
 
     if (ok) {
@@ -484,21 +499,23 @@ void safe_report_exec_error(int err, const char *actual_cmd, const char *const *
 /// Perform output from builtins. May be called from a forked child, so don't do anything that may
 /// allocate memory, etc.
 bool do_builtin_io(const char *out, size_t outlen, const char *err, size_t errlen) {
+    int saved_errno = 0;
     bool success = true;
-    if (out && outlen) {
-        if (write_loop(STDOUT_FILENO, out, outlen) < 0) {
-            int e = errno;
+    if (out && outlen && write_loop(STDOUT_FILENO, out, outlen) < 0) {
+        saved_errno = errno;
+        if (errno != EPIPE) {
             debug_safe(0, "Error while writing to stdout");
+            errno = saved_errno;
             safe_perror("write_loop");
-            success = false;
-            errno = e;
         }
+        success = false;
     }
 
-    if (err && errlen) {
-        if (write_loop(STDERR_FILENO, err, errlen) < 0) {
-            success = false;
-        }
+    if (err && errlen && write_loop(STDERR_FILENO, err, errlen) < 0) {
+        saved_errno = errno;
+        success = false;
     }
+
+    errno = saved_errno;
     return success;
 }

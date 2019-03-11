@@ -3,7 +3,6 @@
 
 #include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <wchar.h>
 #include <algorithm>
 #include <memory>
@@ -270,44 +269,45 @@ static void print_profile(const std::vector<profile_item_t *> &items, FILE *out)
         int my_time;
 
         me = items.at(pos);
-        if (!me->skipped) {
-            my_time = me->parse + me->exec;
+        if (me->skipped) {
+            continue;
+        }
 
-            for (i = pos + 1; i < items.size(); i++) {
-                prev = items.at(i);
-                if (prev->skipped) {
-                    continue;
-                }
-
-                if (prev->level <= me->level) {
-                    break;
-                }
-
-                if (prev->level > me->level + 1) {
-                    continue;
-                }
-
-                my_time -= prev->parse;
-                my_time -= prev->exec;
+        my_time = me->parse + me->exec;
+        for (i = pos + 1; i < items.size(); i++) {
+            prev = items.at(i);
+            if (prev->skipped) {
+                continue;
+            }
+            if (prev->level <= me->level) {
+                break;
+            }
+            if (prev->level > me->level + 1) {
+                continue;
             }
 
-            if (me->cmd.size() > 0) {
-                if (fwprintf(out, L"%d\t%d\t", my_time, me->parse + me->exec) < 0) {
-                    wperror(L"fwprintf");
-                    return;
-                }
+            my_time -= prev->parse + prev->exec;
+        }
 
-                for (i = 0; i < me->level; i++) {
-                    if (fwprintf(out, L"-") < 0) {
-                        wperror(L"fwprintf");
-                        return;
-                    }
-                }
-                if (fwprintf(out, L"> %ls\n", me->cmd.c_str()) < 0) {
-                    wperror(L"fwprintf");
-                    return;
-                }
+        if (me->cmd.size() == 0) {
+            continue;
+        }
+
+        if (fwprintf(out, L"%d\t%d\t", my_time, me->parse + me->exec) < 0) {
+            wperror(L"fwprintf");
+            return;
+        }
+
+        for (i = 0; i < me->level; i++) {
+            if (fwprintf(out, L"-") < 0) {
+                wperror(L"fwprintf");
+                return;
             }
+        }
+
+        if (fwprintf(out, L"> %ls\n", me->cmd.c_str()) < 0) {
+            wperror(L"fwprintf");
+            return;
         }
     }
 }
@@ -344,7 +344,7 @@ void parser_t::expand_argument_list(const wcstring &arg_list_src, expand_flags_t
     }
 
     // Get the root argument list.
-    assert(!tree.empty());
+    assert(!tree.empty());  //!OCLINT(multiple unary operator)
     const parse_node_t *arg_list = &tree.at(0);
     assert(arg_list->type == symbol_freestanding_argument_list);
 
@@ -558,16 +558,16 @@ void parser_t::job_add(job_t *job) {
     this->my_job_list.push_front(job);
 }
 
-bool parser_t::job_remove(job_t *j) {
-    job_list_t::iterator iter = std::find(my_job_list.begin(), my_job_list.end(), j);
+bool parser_t::job_remove(job_t *job) {
+    job_list_t::iterator iter = std::find(my_job_list.begin(), my_job_list.end(), job);
     if (iter != my_job_list.end()) {
         my_job_list.erase(iter);
         return true;
-    } else {
-        debug(1, _(L"Job inconsistency"));
-        sanity_lose();
-        return false;
     }
+
+    debug(1, _(L"Job inconsistency"));
+    sanity_lose();
+    return false;
 }
 
 void parser_t::job_promote(job_t *job) {
@@ -615,8 +615,7 @@ int parser_t::eval(const wcstring &cmd, const io_chain_t &io, enum block_type_t 
         this->get_backtrace(cmd, error_list, &backtrace_and_desc);
 
         // Print it.
-        fprintf(stderr, "%ls", backtrace_and_desc.c_str());
-
+        fwprintf(stderr, L"%ls\n", backtrace_and_desc.c_str());
         return 1;
     }
     return this->eval_acquiring_tree(cmd, io, block_type, moved_ref<parse_node_tree_t>(tree));
@@ -713,9 +712,7 @@ bool parser_t::detect_errors_in_argument_list(const wcstring &arg_list_src, wcst
     parse_error_list_t errors;
 
     // Use empty string for the prefix if it's NULL.
-    if (prefix == NULL) {
-        prefix = L"";
-    }
+    if (!prefix) prefix = L"";  //!OCLINT(parameter reassignment)
 
     // Parse the string as an argument list.
     parse_node_tree_t tree;
@@ -727,7 +724,7 @@ bool parser_t::detect_errors_in_argument_list(const wcstring &arg_list_src, wcst
 
     if (!errored) {
         // Get the root argument list.
-        assert(!tree.empty());
+        assert(!tree.empty());  //!OCLINT(multiple unary operator)
         const parse_node_t *arg_list = &tree.at(0);
         assert(arg_list->type == symbol_freestanding_argument_list);
 
@@ -868,10 +865,6 @@ wcstring block_t::description() const {
         case BREAKPOINT: {
             result.append(L"breakpoint");
             break;
-        }
-        default: {
-            assert(0 && "Unhandled block_type_t constant");
-            abort();
         }
     }
 

@@ -17,20 +17,16 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 */
 #include "config.h"
 
-#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <limits.h>
 #include <locale.h>
-#include <pwd.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>  // IWYU pragma: keep
 #include <sys/stat.h>
-#include <sys/un.h>
 #include <unistd.h>
 #include <wchar.h>
 #include <memory>
@@ -47,13 +43,11 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #include "function.h"
 #include "history.h"
 #include "input.h"
-#include "input_common.h"
 #include "io.h"
 #include "parser.h"
 #include "path.h"
 #include "proc.h"
 #include "reader.h"
-#include "wildcard.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 // PATH_MAX may not exist.
@@ -202,82 +196,6 @@ static void source_config_in_directory(const wcstring &dir) {
     parser.set_is_within_fish_initialization(false);
 }
 
-static int try_connect_socket(std::string &name) {
-    int s, r, ret = -1;
-
-    /// Connect to a DGRAM socket rather than the expected STREAM. This avoids any notification to a
-    /// remote socket that we have connected, preventing any surprising behaviour. If the connection
-    /// fails with EPROTOTYPE, the connection is probably a STREAM; if it succeeds or fails any
-    /// other way, there is no cause for alarm. With thanks to Andrew Lutomirski <github.com/amluto>
-    if ((s = socket(AF_UNIX, SOCK_DGRAM, 0)) == -1) {
-        wperror(L"socket");
-        return -1;
-    }
-
-    debug(3, L"Connect to socket %s at fd %d", name.c_str(), s);
-
-    struct sockaddr_un local = {};
-    local.sun_family = AF_UNIX;
-    strncpy(local.sun_path, name.c_str(), (sizeof local.sun_path) - 1);
-
-    r = connect(s, (struct sockaddr *)&local, sizeof local);
-
-    if (r == -1 && errno == EPROTOTYPE) {
-        ret = 0;
-    }
-
-    close(s);
-    return ret;
-}
-
-/// Check for a running fishd from old versions and warn about not being able to share variables.
-/// https://github.com/fish-shell/fish-shell/issues/1730
-static void check_running_fishd() {
-    // There are two paths to check:
-    // $FISHD_SOCKET_DIR/fishd.socket.$USER or /tmp/fishd.socket.$USER
-    //   - referred to as the "old socket"
-    // $XDG_RUNTIME_DIR/fishd.socket or /tmp/fish.$USER/fishd.socket
-    //   - referred to as the "new socket"
-    // All existing versions of fish attempt to create the old socket, but
-    // failure in newer versions is not treated as critical, so both need
-    // to be checked.
-    const char *uname = getenv("USER");
-    if (uname == NULL) {
-        const struct passwd *pw = getpwuid(getuid());
-        uname = pw->pw_name;
-    }
-
-    const char *dir_old_socket = getenv("FISHD_SOCKET_DIR");
-    std::string path_old_socket;
-
-    if (dir_old_socket == NULL) {
-        path_old_socket = "/tmp/";
-    } else {
-        path_old_socket.append(dir_old_socket);
-    }
-
-    path_old_socket.append("fishd.socket.");
-    path_old_socket.append(uname);
-
-    const char *dir_new_socket = getenv("XDG_RUNTIME_DIR");
-    std::string path_new_socket;
-    if (dir_new_socket == NULL) {
-        path_new_socket = "/tmp/fish.";
-        path_new_socket.append(uname);
-        path_new_socket.push_back('/');
-    } else {
-        path_new_socket.append(dir_new_socket);
-    }
-
-    path_new_socket.append("fishd.socket");
-
-    if (try_connect_socket(path_old_socket) == 0 || try_connect_socket(path_new_socket) == 0) {
-        debug(1, _(L"Old versions of fish appear to be running. You will not be able to share "
-                   L"variable values between old and new fish sessions. For best results, restart "
-                   L"all running instances of fish."));
-    }
-}
-
 /// Parse init files. exec_path is the path of fish executable as determined by argv[0].
 static int read_init(const struct config_paths_t &paths) {
     source_config_in_directory(paths.data);
@@ -314,6 +232,7 @@ static int fish_parse_opt(int argc, char **argv, std::vector<std::string> *cmds)
             case 0: {
                 fwprintf(stderr, _(L"getopt_long() unexpectedly returned zero\n"));
                 exit(127);
+                break;
             }
             case 'c': {
                 cmds->push_back(optarg);
@@ -358,6 +277,7 @@ static int fish_parse_opt(int argc, char **argv, std::vector<std::string> *cmds)
             case 'v': {
                 fwprintf(stdout, _(L"%s, version %s\n"), PACKAGE_NAME, get_fish_version());
                 exit(0);
+                break;
             }
             case 'D': {
                 char *end;
@@ -377,6 +297,7 @@ static int fish_parse_opt(int argc, char **argv, std::vector<std::string> *cmds)
             default: {
                 // We assume getopt_long() has already emitted a diagnostic msg.
                 exit(1);
+                break;
             }
         }
     }
@@ -423,11 +344,6 @@ static void misc_init() {
 int main(int argc, char **argv) {
     int res = 1;
     int my_optind = 0;
-
-    // We can't do this at compile time due to the use of enum symbols.
-    assert(EXPAND_SENTINAL >= EXPAND_RESERVED_BASE && EXPAND_SENTINAL <= EXPAND_RESERVED_END);
-    assert(ANY_SENTINAL >= WILDCARD_RESERVED_BASE && ANY_SENTINAL <= WILDCARD_RESERVED_END);
-    assert(R_SENTINAL >= INPUT_COMMON_BASE && R_SENTINAL <= INPUT_COMMON_END);
 
     program_name = L"fish";
     set_main_thread();
@@ -492,7 +408,6 @@ int main(int argc, char **argv) {
             reader_exit(0, 0);
         } else if (my_optind == argc) {
             // Interactive mode
-            check_running_fishd();
             res = reader_read(STDIN_FILENO, empty_ios);
         } else {
             char *file = *(argv + (my_optind++));

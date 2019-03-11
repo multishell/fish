@@ -102,7 +102,7 @@ static void dump_node(indent_t node_indent, const parse_node_t &node, const wcst
         nextc_str[1] = L'c';
         nextc_str[2] = nextc + '@';
     }
-    fwprintf(stderr, L"{off %4d, len %4d, indent %2u, kw %ls, %ls} [%ls|%ls|%ls]\n",
+    fwprintf(stderr, L"{off %4u, len %4u, indent %2u, kw %ls, %ls} [%ls|%ls|%ls]\n",
              node.source_start, node.source_length, node_indent, keyword_description(node.keyword),
              token_type_description(node.type), prevc_str, source_txt.c_str(), nextc_str);
 }
@@ -491,7 +491,7 @@ int main(int argc, char *argv[]) {
         case output_type_file: {
             FILE *fh = fopen(output_location, "w");
             if (fh) {
-                fputs(wcs2str(output_wtext), fh);
+                fputws(output_wtext.c_str(), fh);
                 fclose(fh);
                 exit(0);
             } else {
@@ -511,6 +511,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    fputs(colored_output.c_str(), stdout);
+    fputws(str2wcstring(colored_output).c_str(), stdout);
     return 0;
 }

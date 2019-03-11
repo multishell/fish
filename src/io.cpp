@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <wchar.h>
 
 #include "common.h"
 #include "exec.h"
@@ -15,19 +16,20 @@
 
 io_data_t::~io_data_t() {}
 
-void io_close_t::print() const { fprintf(stderr, "close %d\n", fd); }
+void io_close_t::print() const { fwprintf(stderr, L"close %d\n", fd); }
 
-void io_fd_t::print() const { fprintf(stderr, "FD map %d -> %d\n", old_fd, fd); }
+void io_fd_t::print() const { fwprintf(stderr, L"FD map %d -> %d\n", old_fd, fd); }
 
-void io_file_t::print() const { fprintf(stderr, "file (%s)\n", filename_cstr); }
+void io_file_t::print() const { fwprintf(stderr, L"file (%s)\n", filename_cstr); }
 
 void io_pipe_t::print() const {
-    fprintf(stderr, "pipe {%d, %d} (input: %s)\n", pipe_fd[0], pipe_fd[1], is_input ? "yes" : "no");
+    fwprintf(stderr, L"pipe {%d, %d} (input: %s)\n", pipe_fd[0], pipe_fd[1],
+             is_input ? "yes" : "no");
 }
 
 void io_buffer_t::print() const {
-    fprintf(stderr, "buffer %p (input: %s, size %lu)\n", out_buffer_ptr(), is_input ? "yes" : "no",
-            (unsigned long)out_buffer_size());
+    fwprintf(stderr, L"buffer %p (input: %s, size %lu)\n", out_buffer_ptr(),
+             is_input ? "yes" : "no", (unsigned long)out_buffer_size());
 }
 
 void io_buffer_t::read() {
@@ -139,21 +141,21 @@ void io_print(const io_chain_t &chain)
 {
     if (chain.empty())
     {
-        fprintf(stderr, "Empty chain %p\n", &chain);
+        fwprintf(stderr, L"Empty chain %p\n", &chain);
         return;
     }
 
-    fprintf(stderr, "Chain %p (%ld items):\n", &chain, (long)chain.size());
+    fwprintf(stderr, L"Chain %p (%ld items):\n", &chain, (long)chain.size());
     for (size_t i=0; i < chain.size(); i++)
     {
         const shared_ptr<io_data_t> &io = chain.at(i);
         if (io.get() == NULL)
         {
-            fprintf(stderr, "\t(null)\n");
+            fwprintf(stderr, L"\t(null)\n");
         }
         else
         {
-            fprintf(stderr, "\t%lu: fd:%d, ", (unsigned long)i, io->fd);
+            fwprintf(stderr, L"\t%lu: fd:%d, ", (unsigned long)i, io->fd);
             io->print();
         }
     }
@@ -165,35 +167,35 @@ void io_print(const io_chain_t &chain)
 /// created is marked close-on-exec. Returns -1 on failure (in which case the given fd is still
 /// closed).
 static int move_fd_to_unused(int fd, const io_chain_t &io_chain) {
-    int new_fd = fd;
-    if (fd >= 0 && io_chain.get_io_for_fd(fd).get() != NULL) {
-        // We have fd >= 0, and it's a conflict. dup it and recurse. Note that we recurse before
-        // anything is closed; this forces the kernel to give us a new one (or report fd
-        // exhaustion).
-        int tmp_fd;
-        do {
-            tmp_fd = dup(fd);
-        } while (tmp_fd < 0 && errno == EINTR);
-
-        assert(tmp_fd != fd);
-        if (tmp_fd < 0) {
-            // Likely fd exhaustion.
-            new_fd = -1;
-        } else {
-            // Ok, we have a new candidate fd. Recurse. If we get a valid fd, either it's the same
-            // as what we gave it, or it's a new fd and what we gave it has been closed. If we get a
-            // negative value, the fd also has been closed.
-            set_cloexec(tmp_fd);
-            new_fd = move_fd_to_unused(tmp_fd, io_chain);
-        }
-
-        // We're either returning a new fd or an error. In both cases, we promise to close the old
-        // one.
-        assert(new_fd != fd);
-        int saved_errno = errno;
-        exec_close(fd);
-        errno = saved_errno;
+    if (fd < 0 || io_chain.get_io_for_fd(fd).get() == NULL) {
+        return fd;
     }
+
+    // We have fd >= 0, and it's a conflict. dup it and recurse. Note that we recurse before
+    // anything is closed; this forces the kernel to give us a new one (or report fd exhaustion).
+    int new_fd = fd;
+    int tmp_fd;
+    do {
+        tmp_fd = dup(fd);
+    } while (tmp_fd < 0 && errno == EINTR);
+
+    assert(tmp_fd != fd);
+    if (tmp_fd < 0) {
+        // Likely fd exhaustion.
+        new_fd = -1;
+    } else {
+        // Ok, we have a new candidate fd. Recurse. If we get a valid fd, either it's the same as
+        // what we gave it, or it's a new fd and what we gave it has been closed. If we get a
+        // negative value, the fd also has been closed.
+        set_cloexec(tmp_fd);
+        new_fd = move_fd_to_unused(tmp_fd, io_chain);
+    }
+
+    // We're either returning a new fd or an error. In both cases, we promise to close the old one.
+    assert(new_fd != fd);
+    int saved_errno = errno;
+    exec_close(fd);
+    errno = saved_errno;
     return new_fd;
 }
 

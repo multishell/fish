@@ -101,6 +101,10 @@ static void builtin_jobs_print(const job_t *j, int mode, int header, io_streams_
             }
             break;
         }
+        default: {
+            DIE("unexpected mode");
+            break;
+        }
     }
 }
 
@@ -159,6 +163,10 @@ int builtin_jobs(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
                 builtin_unknown_option(parser, streams, argv[0], argv[w.woptind - 1]);
                 return 1;
             }
+            default: {
+                DIE("unexpected opt");
+                break;
+            }
         }
     }
 
@@ -178,11 +186,8 @@ int builtin_jobs(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
             int i;
 
             for (i = w.woptind; i < argc; i++) {
-                int pid;
-                wchar_t *end;
-                errno = 0;
-                pid = fish_wcstoi(argv[i], &end, 10);
-                if (errno || *end) {
+                int pid = fish_wcstoi(argv[i]);
+                if (errno || pid < 0) {
                     streams.err.append_format(_(L"%ls: '%ls' is not a job\n"), argv[0], argv[i]);
                     return 1;
                 }

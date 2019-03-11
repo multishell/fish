@@ -88,6 +88,10 @@ static int event_match(const event_t &classv, const event_t &instance) {
         case EVENT_GENERIC: {
             return instance.str_param1 == classv.str_param1;
         }
+        default: {
+            DIE("unexpected classv.type");
+            break;
+        }
     }
 
     // This should never be reached.
@@ -158,11 +162,11 @@ wcstring event_get_desc(const event_t &e) {
 
 #if 0
 static void show_all_handlers(void) {
-    puts("event handlers:");
+    wprintf(L"event handlers:\n");
     for (event_list_t::const_iterator iter = events.begin(); iter != events.end(); ++iter) {
         const event_t *foo = *iter;
         wcstring tmp = event_get_desc(foo);
-        printf("    handler now %ls\n", tmp.c_str());
+        wprintf(L"    handler now %ls\n", tmp.c_str());
     }
 }
 #endif
@@ -226,7 +230,10 @@ static wcstring event_desc_compact(const event_t &event) {
             res = format_string(L"EVENT_GENERIC(%ls)", event.str_param1.c_str());
             break;
         }
-        default: { res = format_string(L"unknown/illegal event(%x)", event.type); }
+        default: {
+            res = format_string(L"unknown/illegal event(%x)", event.type);
+            break;
+        }
     }
     if (event.function_name.size()) {
         return format_string(L"%ls: \"%ls\"", res.c_str(), event.function_name.c_str());

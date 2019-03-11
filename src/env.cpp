@@ -8,15 +8,19 @@
 #include <pwd.h>
 #include <stddef.h>
 #include <stdlib.h>
-#ifdef HAVE__NL_MSG_CAT_CNTR
 #include <string.h>
-#endif
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
 #include <wchar.h>
-#include <wctype.h>
+
+#if HAVE_TERM_H
+#include <term.h>
+#elif HAVE_NCURSES_TERM_H
+#include <ncurses/term.h>
+#endif
+
 #include <algorithm>
 #include <map>
 #include <set>
@@ -52,6 +56,9 @@
 extern char **environ;
 
 bool g_use_posix_spawn = false;  // will usually be set to true
+
+/// Does the terminal have the "eat_newline_glitch".
+bool term_has_xn = false;
 
 /// Struct representing one level in the function variable stack.
 struct env_node_t {
@@ -231,6 +238,47 @@ static bool var_is_curses(const wcstring &key) {
     return false;
 }
 
+/// True if we think we can set the terminal title else false.
+static bool can_set_term_title = false;
+
+/// Returns true if we think the terminal supports setting its title.
+bool term_supports_setting_title() {
+    return can_set_term_title;
+}
+
+/// This is a pretty lame heuristic for detecting terminals that do not support setting the
+/// title. If we recognise the terminal name as that of a virtual terminal, we assume it supports
+/// setting the title. If we recognise it as that of a console, we assume it does not support
+/// setting the title. Otherwise we check the ttyname and see if we believe it is a virtual
+/// terminal.
+///
+/// One situation in which this breaks down is with screen, since screen supports setting the
+/// terminal title if the underlying terminal does so, but will print garbage on terminals that
+/// don't. Since we can't see the underlying terminal below screen there is no way to fix this.
+static bool does_term_support_setting_title() {
+    const env_var_t term_str = env_get_string(L"TERM");
+    if (term_str.missing()) return false;
+
+    const wchar_t *term = term_str.c_str();
+    bool recognized = contains(term, L"xterm", L"screen", L"tmux", L"nxterm", L"rxvt");
+    if (!recognized) recognized = !wcsncmp(term, L"xterm-", wcslen(L"xterm-"));
+    if (!recognized) recognized = !wcsncmp(term, L"screen-", wcslen(L"screen-"));
+    if (!recognized) recognized = !wcsncmp(term, L"tmux-", wcslen(L"tmux-"));
+    if (!recognized) {
+        if (contains(term, L"linux", L"dumb")) return false;
+
+        char *n = ttyname(STDIN_FILENO);
+        if (!n || strstr(n, "tty") || strstr(n, "/vc/")) return false;
+    }
+
+    return true;
+}
+
+/// Handle changes to the TERM env var that do not involves the curses subsystem.
+static void handle_term() {
+    can_set_term_title = does_term_support_setting_title();
+}
+
 /// Push all curses/terminfo env vars into the global environment where they can be found by those
 /// libraries.
 static void handle_curses(const wchar_t *env_var_name) {
@@ -248,6 +296,7 @@ static void handle_curses(const wchar_t *env_var_name) {
     // changed. At the present time it can be called just once. Also, we should really only do this
     // if the TERM var is set.
     // input_init();
+    term_has_xn = tgetflag((char *)"xn") == 1;  // does terminal have the eat_newline_glitch
 }
 
 /// React to modifying the given variable.
@@ -256,6 +305,7 @@ static void react_to_variable_change(const wcstring &key) {
         handle_locale(key.c_str());
     } else if (var_is_curses(key)) {
         handle_curses(key.c_str());
+        if (key == L"TERM") handle_term();
     } else if (var_is_timezone(key)) {
         handle_timezone(key.c_str());
     } else if (key == L"fish_term256" || key == L"fish_term24bit") {
@@ -282,10 +332,6 @@ static void universal_callback(fish_message_type_t type, const wchar_t *name) {
         case ERASE: {
             str = L"ERASE";
             break;
-        }
-        default: {
-            assert(0 && "Unhandled fish_message_type_t constant!");
-            abort();
         }
     }
 
@@ -338,6 +384,17 @@ wcstring env_get_pwd_slash(void) {
 // values like CLASSPATH.
 static bool variable_is_colon_delimited_array(const wcstring &str) {
     return contains(str, L"PATH", L"MANPATH", L"CDPATH");
+}
+
+/// Set up the USER variable.
+static void setup_user(bool force) {
+    if (env_get_string(L"USER").missing_or_empty() || force) {
+        const struct passwd *pw = getpwuid(getuid());
+        if (pw && pw->pw_name) {
+            const wcstring uname = str2wcstring(pw->pw_name);
+            env_set(L"USER", uname.c_str(), ENV_GLOBAL | ENV_EXPORT);
+        }
+    }
 }
 
 void env_init(const struct config_paths_t *paths /* or NULL */) {
@@ -398,17 +455,9 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
         env_set(FISH_BIN_DIR, paths->bin.c_str(), ENV_GLOBAL);
     }
 
-    // Set up the PATH variable.
+    // Set up the USER and PATH variables
     setup_path();
-
-    // Set up the USER variable.
-    if (env_get_string(L"USER").missing_or_empty()) {
-        const struct passwd *pw = getpwuid(getuid());
-        if (pw && pw->pw_name) {
-            const wcstring uname = str2wcstring(pw->pw_name);
-            env_set(L"USER", uname.c_str(), ENV_GLOBAL | ENV_EXPORT);
-        }
-    }
+    setup_user(false);
 
     // Set up the version variable.
     wcstring version = str2wcstring(get_fish_version());
@@ -418,10 +467,10 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
     const env_var_t shlvl_str = env_get_string(L"SHLVL");
     wcstring nshlvl_str = L"1";
     if (!shlvl_str.missing()) {
-        wchar_t *end;
-        long shlvl_i = wcstol(shlvl_str.c_str(), &end, 10);
-        while (iswspace(*end)) ++end;  // skip trailing whitespace
-        if (shlvl_i >= 0 && *end == '\0') {
+        const wchar_t *end;
+        // TODO: Figure out how to handle invalid numbers better. Shouldn't we issue a diagnostic?
+        long shlvl_i = fish_wcstol(shlvl_str.c_str(), &end);
+        if (!errno && shlvl_i >= 0) {
             nshlvl_str = to_string<long>(shlvl_i + 1);
         }
     }
@@ -433,7 +482,14 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
         const env_var_t unam = env_get_string(L"USER");
         char *unam_narrow = wcs2str(unam.c_str());
         struct passwd *pw = getpwnam(unam_narrow);
-        if (pw->pw_dir != NULL) {
+        if (pw == NULL) {
+            // Maybe USER is set but it's bogus. Reset USER from the db and try again.
+            setup_user(true);
+            const env_var_t unam = env_get_string(L"USER");
+            unam_narrow = wcs2str(unam.c_str());
+            pw = getpwnam(unam_narrow);
+        }
+        if (pw && pw->pw_dir) {
             const wcstring dir = str2wcstring(pw->pw_dir);
             env_set(L"HOME", dir.c_str(), ENV_GLOBAL | ENV_EXPORT);
         }
@@ -476,6 +532,25 @@ static env_node_t *env_get_node(const wcstring &key) {
     return env;
 }
 
+/// Set the value of the environment variable whose name matches key to val.
+///
+/// Memory policy: All keys and values are copied, the parameters can and should be freed by the
+/// caller afterwards
+///
+/// \param key The key
+/// \param val The value
+/// \param var_mode The type of the variable. Can be any combination of ENV_GLOBAL, ENV_LOCAL,
+/// ENV_EXPORT and ENV_USER. If mode is zero, the current variable space is searched and the current
+/// mode is used. If no current variable with the same name is found, ENV_LOCAL is assumed.
+///
+/// Returns:
+///
+/// * ENV_OK on success.
+/// * ENV_PERM, can only be returned when setting as a user, e.g. ENV_USER is set. This means that
+/// the user tried to change a read-only variable.
+/// * ENV_SCOPE, the variable cannot be set in the given scope. This applies to readonly/electric
+/// variables set from the local or universal scopes, or set as exported.
+/// * ENV_INVALID, the variable value was invalid. This applies only to special variables.
 int env_set(const wcstring &key, const wchar_t *val, env_mode_flags_t var_mode) {
     ASSERT_IS_MAIN_THREAD();
     bool has_changed_old = has_changed_exported;
@@ -501,18 +576,14 @@ int env_set(const wcstring &key, const wchar_t *val, env_mode_flags_t var_mode) 
     }
 
     if (key == L"umask") {
-        wchar_t *end;
-
         // Set the new umask.
         if (val && wcslen(val)) {
-            errno = 0;
-            long mask = wcstol(val, &end, 8);
-
-            if (!errno && (!*end) && (mask <= 0777) && (mask >= 0)) {
+            long mask = fish_wcstol(val, NULL, 8);
+            if (!errno && mask <= 0777 && mask >= 0) {
                 umask(mask);
                 // Do not actually create a umask variable, on env_get, it will be calculated
                 // dynamically.
-                return 0;
+                return ENV_OK;
             }
         }
 
@@ -521,7 +592,7 @@ int env_set(const wcstring &key, const wchar_t *val, env_mode_flags_t var_mode) 
 
     // Zero element arrays are internaly not coded as null but as this placeholder string.
     if (!val) {
-        val = ENV_NULL;
+        val = ENV_NULL;  //!OCLINT(parameter reassignment)
     }
 
     if (var_mode & ENV_UNIVERSAL) {
@@ -566,10 +637,10 @@ int env_set(const wcstring &key, const wchar_t *val, env_mode_flags_t var_mode) 
             node = top;
         } else if (preexisting_node != NULL) {
             node = preexisting_node;
-
             if ((var_mode & (ENV_EXPORT | ENV_UNEXPORT)) == 0) {
                 // use existing entry's exportv
-                var_mode = preexisting_entry_exportv ? ENV_EXPORT : 0;
+                var_mode =  //!OCLINT(parameter reassignment)
+                    preexisting_entry_exportv ? ENV_EXPORT : 0;
             }
         } else {
             if (!get_proc_had_barrier()) {
@@ -635,7 +706,7 @@ int env_set(const wcstring &key, const wchar_t *val, env_mode_flags_t var_mode) 
     // debug( 1, L"env_set: return from event firing" );
 
     react_to_variable_change(key);
-    return 0;
+    return ENV_OK;
 }
 
 /// Attempt to remove/free the specified key/value pair from the specified map.
@@ -713,7 +784,7 @@ int env_remove(const wcstring &key, int var_mode) {
 }
 
 const wchar_t *env_var_t::c_str(void) const {
-    assert(!is_missing);
+    assert(!is_missing);  //!OCLINT(multiple unary operator)
     return wcstring::c_str();
 }
 
@@ -730,9 +801,12 @@ env_var_t env_get_string(const wcstring &key, env_mode_flags_t mode) {
     // that in env_set().
     if (is_electric(key)) {
         if (!search_global) return env_var_t::missing_var();
-        // Big hack. We only allow getting the history on the main thread. Note that history_t may
-        // ask for an environment variable, so don't take the lock here (we don't need it).
-        if (key == L"history" && is_main_thread()) {
+        if (key == L"history") {
+            // Big hack. We only allow getting the history on the main thread. Note that history_t
+            // may ask for an environment variable, so don't take the lock here (we don't need it).
+            if (!is_main_thread()) {
+                return env_var_t::missing_var();
+            }
             env_var_t result;
 
             history_t *history = reader_get_history();
@@ -750,7 +824,8 @@ env_var_t env_get_string(const wcstring &key, env_mode_flags_t mode) {
         } else if (key == L"umask") {
             return format_string(L"0%0.3o", get_umask());
         }
-        // We should never get here unless the electric var list is out of sync.
+        // We should never get here unless the electric var list is out of sync with the above code.
+        DIE("unerecognized electric var name");
     }
 
     if (search_local || search_global) {
@@ -864,9 +939,7 @@ void env_push(bool new_scope) {
     node->next = top;
     node->new_scope = new_scope;
 
-    if (new_scope) {
-        if (local_scope_exports(top)) mark_changed_exported();
-    }
+    if (new_scope && local_scope_exports(top)) mark_changed_exported();
     top = node;
 }
 
@@ -884,7 +957,7 @@ void env_pop() {
             }
         }
 
-        if (killme->new_scope) {
+        if (killme->new_scope) {  //!OCLINT(collapsible if statements)
             if (killme->exportv || local_scope_exports(killme->next)) mark_changed_exported();
         }
 

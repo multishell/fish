@@ -14,29 +14,30 @@
 #include "config.h"
 
 // IWYU pragma: no_include <type_traits>
+#include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/time.h>
-#include <termios.h>
-#include <time.h>
-#include <unistd.h>
-#include <wctype.h>
-#include <algorithm>
-#include <stack>
 #ifdef HAVE_SIGINFO_H
 #include <siginfo.h>
 #endif
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #ifdef HAVE_SYS_SELECT_H
 #include <sys/select.h>
 #endif
-#include <assert.h>
-#include <fcntl.h>
-#include <signal.h>
+#include <sys/time.h>
 #include <sys/types.h>
+#include <termios.h>
+#include <time.h>
+#include <unistd.h>
 #include <wchar.h>
+#include <wctype.h>
+
+#include <algorithm>
+#include <stack>
 #include <memory>
 
 #include "color.h"
@@ -70,6 +71,10 @@
 #include "tokenizer.h"
 #include "util.h"
 #include "wutil.h"  // IWYU pragma: keep
+
+// Name of the variable that tells how long it took, in milliseconds, for the previous
+// interactive command to complete.
+#define ENV_CMD_DURATION L"CMD_DURATION"
 
 /// Maximum length of prefix string when printing completion list. Longer prefixes will be
 /// ellipsized.
@@ -135,8 +140,8 @@ static void set_command_line_and_position(editable_line_t *el, const wcstring &n
 void editable_line_t::insert_string(const wcstring &str, size_t start, size_t len) {
     // Clamp the range to something valid.
     size_t string_length = str.size();
-    start = mini(start, string_length);
-    len = mini(len, string_length - start);
+    start = mini(start, string_length);      //!OCLINT(parameter reassignment)
+    len = mini(len, string_length - start);  //!OCLINT(parameter reassignment)
     this->text.insert(this->position, str, start, len);
     this->position += len;
 }
@@ -300,7 +305,7 @@ static wchar_t unescaped_quote(const wcstring &str, size_t pos);
 static struct termios terminal_mode_on_startup;
 
 /// Mode we use to execute programs.
-static struct termios terminal_mode_for_executing_programs;
+static struct termios tty_modes_for_external_cmds;
 
 static void reader_super_highlight_me_plenty(int highlight_pos_adjust = 0, bool no_io = false);
 
@@ -312,7 +317,8 @@ static void term_donate() {
     set_color(rgb_color_t::normal(), rgb_color_t::normal());
 
     while (1) {
-        if (tcsetattr(0, TCSANOW, &terminal_mode_for_executing_programs)) {
+        if (tcsetattr(STDIN_FILENO, TCSANOW, &tty_modes_for_external_cmds) == -1) {
+            if (errno == ENOTTY) redirect_tty_output();
             if (errno != EINTR) {
                 debug(1, _(L"Could not set terminal mode for new job"));
                 wperror(L"tcsetattr");
@@ -340,10 +346,11 @@ static void update_buff_pos(editable_line_t *el, size_t buff_pos) {
 /// Grab control of terminal.
 static void term_steal() {
     while (1) {
-        if (tcsetattr(0, TCSANOW, &shell_modes)) {
+        if (tcsetattr(STDIN_FILENO, TCSANOW, &shell_modes) == -1) {
+            if (errno == ENOTTY) redirect_tty_output();
             if (errno != EINTR) {
                 debug(1, _(L"Could not set terminal mode for shell"));
-                wperror(L"tcsetattr");
+                perror("tcsetattr");
                 break;
             }
         } else
@@ -412,7 +419,7 @@ static void reader_repaint() {
 
     if (data->sel_active) {
         highlight_spec_t selection_color = highlight_make_background(highlight_spec_selection);
-        for (size_t i = data->sel_start_pos; i <= std::min(len - 1, data->sel_stop_pos); i++) {
+        for (size_t i = data->sel_start_pos; i < std::min(len, data->sel_stop_pos); i++) {
             colors[i] = selection_color;
         }
     }
@@ -654,36 +661,7 @@ bool reader_thread_job_is_stale() {
 }
 
 void reader_write_title(const wcstring &cmd, bool reset_cursor_position) {
-    const env_var_t term_str = env_get_string(L"TERM");
-
-    // This is a pretty lame heuristic for detecting terminals that do not support setting the
-    // title. If we recognise the terminal name as that of a virtual terminal, we assume it supports
-    // setting the title. If we recognise it as that of a console, we assume it does not support
-    // setting the title. Otherwise we check the ttyname and see if we believe it is a virtual
-    // terminal.
-    //
-    // One situation in which this breaks down is with screen, since screen supports setting the
-    // terminal title if the underlying terminal does so, but will print garbage on terminals that
-    // don't. Since we can't see the underlying terminal below screen there is no way to fix this.
-    if (term_str.missing()) return;
-
-    const wchar_t *term = term_str.c_str();
-    bool recognized = false;
-    recognized = recognized || contains(term, L"xterm", L"screen", L"nxterm", L"rxvt");
-    recognized = recognized || !wcsncmp(term, L"xterm-", wcslen(L"xterm-"));
-    recognized = recognized || !wcsncmp(term, L"screen-", wcslen(L"screen-"));
-
-    if (!recognized) {
-        char *n = ttyname(STDIN_FILENO);
-
-        if (contains(term, L"linux")) {
-            return;
-        }
-
-        if (contains(term, L"dumb")) return;
-
-        if (strstr(n, "tty") || strstr(n, "/vc/")) return;
-    }
+    if (!term_supports_setting_title()) return;
 
     wcstring fish_title_command = DEFAULT_TITLE;
     if (function_exists(L"fish_title")) {
@@ -695,22 +673,20 @@ void reader_write_title(const wcstring &cmd, bool reset_cursor_position) {
     }
 
     wcstring_list_t lst;
-
     proc_push_interactive(0);
-    if (exec_subshell(fish_title_command, lst, false /* do not apply exit status */) != -1) {
-        if (!lst.empty()) {
-            writestr(L"\x1b]0;");
-            for (size_t i = 0; i < lst.size(); i++) {
-                writestr(lst.at(i).c_str());
-            }
-            writestr(L"\7");
+    if (exec_subshell(fish_title_command, lst, false /* ignore exit status */) != -1 &&
+        !lst.empty()) {
+        fputws(L"\e]0;", stdout);
+        for (size_t i = 0; i < lst.size(); i++) {
+            fputws(lst.at(i).c_str(), stdout);
         }
+        fputwc(L'\a', stdout);
     }
     proc_pop_interactive();
     set_color(rgb_color_t::reset(), rgb_color_t::reset());
     if (reset_cursor_position && !lst.empty()) {
         // Put the cursor back at the beginning of the line (issue #2453).
-        writestr(L"\r");
+        fputwc(L'\r', stdout);
     }
 }
 
@@ -770,14 +746,19 @@ static void exec_prompt() {
 void reader_init() {
     VOMIT_ON_FAILURE(pthread_key_create(&generation_count_key, NULL));
 
+    // Ensure this var is present even before an interactive command is run so that if it is used
+    // in a function like `fish_prompt` or `fish_right_prompt` it is defined at the time the first
+    // prompt is issued.
+    env_set(ENV_CMD_DURATION, L"0", ENV_UNEXPORT);
+
     // Save the initial terminal mode.
     tcgetattr(STDIN_FILENO, &terminal_mode_on_startup);
 
     // Set the mode used for program execution, initialized to the current mode.
-    memcpy(&terminal_mode_for_executing_programs, &terminal_mode_on_startup,
-           sizeof terminal_mode_for_executing_programs);
-    terminal_mode_for_executing_programs.c_iflag &= ~IXON;   // disable flow control
-    terminal_mode_for_executing_programs.c_iflag &= ~IXOFF;  // disable flow control
+    memcpy(&tty_modes_for_external_cmds, &terminal_mode_on_startup,
+           sizeof tty_modes_for_external_cmds);
+    tty_modes_for_external_cmds.c_iflag &= ~IXON;   // disable flow control
+    tty_modes_for_external_cmds.c_iflag &= ~IXOFF;  // disable flow control
 
     // Set the mode used for the terminal, initialized to the current mode.
     memcpy(&shell_modes, &terminal_mode_on_startup, sizeof shell_modes);
@@ -813,7 +794,9 @@ void restore_term_mode() {
     // Restore the term mode if we own the terminal. It's important we do this before
     // restore_foreground_process_group, otherwise we won't think we own the terminal.
     if (getpid() == tcgetpgrp(STDIN_FILENO)) {
-        tcsetattr(STDIN_FILENO, TCSANOW, &terminal_mode_on_startup);
+        if (tcsetattr(STDIN_FILENO, TCSANOW, &terminal_mode_on_startup) == -1 && errno == ENOTTY) {
+            redirect_tty_output();
+        }
     }
 }
 
@@ -883,9 +866,8 @@ static bool command_ends_paging(wchar_t c, bool focused_on_search_field) {
         case R_REPAINT:
         case R_SUPPRESS_AUTOSUGGESTION:
         case R_BEGINNING_OF_HISTORY:
-        case R_END_OF_HISTORY:
-        default: {
-            // These commands never do.
+        case R_END_OF_HISTORY: {
+            // These commands never end paging.
             return false;
         }
         case R_EXECUTE: {
@@ -924,6 +906,7 @@ static bool command_ends_paging(wchar_t c, bool focused_on_search_field) {
             // These commands operate on the search field if that's where the focus is.
             return !focused_on_search_field;
         }
+        default: { return false; }
     }
 }
 
@@ -1027,9 +1010,9 @@ wcstring completion_apply_to_command_line(const wcstring &val_str, complete_flag
                                           const wcstring &command_line, size_t *inout_cursor_pos,
                                           bool append_only) {
     const wchar_t *val = val_str.c_str();
-    bool add_space = !(flags & COMPLETE_NO_SPACE);
-    bool do_replace = !!(flags & COMPLETE_REPLACES_TOKEN);
-    bool do_escape = !(flags & COMPLETE_DONT_ESCAPE);
+    bool add_space = !static_cast<bool>(flags & COMPLETE_NO_SPACE);
+    bool do_replace = static_cast<bool>(flags & COMPLETE_REPLACES_TOKEN);
+    bool do_escape = !static_cast<bool>(flags & COMPLETE_DONT_ESCAPE);
 
     const size_t cursor_pos = *inout_cursor_pos;
     bool back_into_trailing_quote = false;
@@ -1046,7 +1029,7 @@ wcstring completion_apply_to_command_line(const wcstring &val_str, complete_flag
 
         if (do_escape) {
             // Respect COMPLETE_DONT_ESCAPE_TILDES.
-            bool no_tilde = !!(flags & COMPLETE_DONT_ESCAPE_TILDES);
+            bool no_tilde = static_cast<bool>(flags & COMPLETE_DONT_ESCAPE_TILDES);
             wcstring escaped =
                 escape(val, ESCAPE_ALL | ESCAPE_NO_QUOTED | (no_tilde ? ESCAPE_NO_TILDE : 0));
             sb.append(escaped);
@@ -1300,7 +1283,7 @@ static void reader_flash() {
     }
 
     reader_repaint();
-    writestr(L"\a");
+    fputwc(L'\a', stdout);
 
     pollint.tv_sec = 0;
     pollint.tv_nsec = 100 * 1000000;
@@ -1363,12 +1346,12 @@ static fuzzy_match_type_t get_best_match_type(const std::vector<completion_t> &c
 /// through the completions.
 ///
 /// \param comp the list of completion strings
-/// \param continue_after_prefix_insertion If we have a shared prefix, whether to print the list of
+/// \param cont_after_prefix_insertion If we have a shared prefix, whether to print the list of
 /// completions after inserting it.
 ///
 /// Return true if we inserted text into the command line, false if we did not.
 static bool handle_completions(const std::vector<completion_t> &comp,
-                               bool continue_after_prefix_insertion) {
+                               bool cont_after_prefix_insertion) {
     bool done = false;
     bool success = false;
     const editable_line_t *el = &data->command_line;
@@ -1380,148 +1363,146 @@ static bool handle_completions(const std::vector<completion_t> &comp,
     const wcstring tok(begin, end - begin);
 
     // Check trivial cases.
-    switch (comp.size()) {
-        case 0: {
-            // No suitable completions found, flash screen and return.
-            reader_flash();
-            done = true;
-            success = false;
-            break;
-        }
-        case 1: {
-            // Exactly one suitable completion found - insert it.
-            const completion_t &c = comp.at(0);
+    size_t size = comp.size();
+    if (size == 0) {
+        // No suitable completions found, flash screen and return.
+        reader_flash();
+        done = true;
+        success = false;
+    } else if (size == 1) {
+        // Exactly one suitable completion found - insert it.
+        const completion_t &c = comp.at(0);
 
-            // If this is a replacement completion, check that we know how to replace it, e.g. that
-            // the token doesn't contain evil operators like {}.
-            if (!(c.flags & COMPLETE_REPLACES_TOKEN) || reader_can_replace(tok, c.flags)) {
-                completion_insert(c.completion.c_str(), c.flags);
-            }
-            done = true;
-            success = true;
+        // If this is a replacement completion, check that we know how to replace it, e.g. that
+        // the token doesn't contain evil operators like {}.
+        if (!(c.flags & COMPLETE_REPLACES_TOKEN) || reader_can_replace(tok, c.flags)) {
+            completion_insert(c.completion.c_str(), c.flags);
+        }
+        done = true;
+        success = true;
+    }
+
+    if (done) {
+        return success;
+    }
+
+    fuzzy_match_type_t best_match_type = get_best_match_type(comp);
+
+    // Determine whether we are going to replace the token or not. If any commands of the best
+    // type do not require replacement, then ignore all those that want to use replacement.
+    bool will_replace_token = true;
+    for (size_t i = 0; i < comp.size(); i++) {
+        const completion_t &el = comp.at(i);
+        if (el.match.type <= best_match_type && !(el.flags & COMPLETE_REPLACES_TOKEN)) {
+            will_replace_token = false;
             break;
         }
     }
 
-    if (!done) {
-        fuzzy_match_type_t best_match_type = get_best_match_type(comp);
+    // Decide which completions survived. There may be a lot of them; it would be nice if we could
+    // figure out how to avoid copying them here.
+    std::vector<completion_t> surviving_completions;
+    for (size_t i = 0; i < comp.size(); i++) {
+        const completion_t &el = comp.at(i);
+        // Ignore completions with a less suitable match type than the best.
+        if (el.match.type > best_match_type) continue;
 
-        // Determine whether we are going to replace the token or not. If any commands of the best
-        // type do not require replacement, then ignore all those that want to use replacement.
-        bool will_replace_token = true;
-        for (size_t i = 0; i < comp.size(); i++) {
-            const completion_t &el = comp.at(i);
-            if (el.match.type <= best_match_type && !(el.flags & COMPLETE_REPLACES_TOKEN)) {
-                will_replace_token = false;
-                break;
-            }
-        }
+        // Only use completions that match replace_token.
+        bool completion_replace_token = static_cast<bool>(el.flags & COMPLETE_REPLACES_TOKEN);
+        if (completion_replace_token != will_replace_token) continue;
 
-        // Decide which completions survived. There may be a lot of them; it would be nice if we
-        // could figure out how to avoid copying them here.
-        std::vector<completion_t> surviving_completions;
-        for (size_t i = 0; i < comp.size(); i++) {
-            const completion_t &el = comp.at(i);
-            // Ignore completions with a less suitable match type than the best.
-            if (el.match.type > best_match_type) continue;
+        // Don't use completions that want to replace, if we cannot replace them.
+        if (completion_replace_token && !reader_can_replace(tok, el.flags)) continue;
 
-            // Only use completions that match replace_token.
-            bool completion_replace_token = !!(el.flags & COMPLETE_REPLACES_TOKEN);
-            if (completion_replace_token != will_replace_token) continue;
+        // This completion survived.
+        surviving_completions.push_back(el);
+    }
 
-            // Don't use completions that want to replace, if we cannot replace them.
-            if (completion_replace_token && !reader_can_replace(tok, el.flags)) continue;
-
-            // This completion survived.
-            surviving_completions.push_back(el);
-        }
-
-        bool use_prefix = false;
-        if (match_type_shares_prefix(best_match_type)) {
-            // Try to find a common prefix to insert among the surviving completions.
-            wcstring common_prefix;
-            complete_flags_t flags = 0;
-            bool prefix_is_partial_completion = false;
-            for (size_t i = 0; i < surviving_completions.size(); i++) {
-                const completion_t &el = surviving_completions.at(i);
-                if (i == 0) {
-                    // First entry, use the whole string.
-                    common_prefix = el.completion;
-                    flags = el.flags;
-                } else {
-                    // Determine the shared prefix length.
-                    size_t idx, max = mini(common_prefix.size(), el.completion.size());
-                    for (idx = 0; idx < max; idx++) {
-                        wchar_t ac = common_prefix.at(idx), bc = el.completion.at(idx);
-                        bool matches = (ac == bc);
-                        // If we are replacing the token, allow case to vary.
-                        if (will_replace_token && !matches) {
-                            // Hackish way to compare two strings in a case insensitive way,
-                            // hopefully better than towlower().
-                            matches = (wcsncasecmp(&ac, &bc, 1) == 0);
-                        }
-                        if (!matches) break;
-                    }
-
-                    // idx is now the length of the new common prefix.
-                    common_prefix.resize(idx);
-                    prefix_is_partial_completion = true;
-
-                    // Early out if we decide there's no common prefix.
-                    if (idx == 0) break;
-                }
-            }
-
-            // Determine if we use the prefix. We use it if it's non-empty and it will actually make
-            // the command line longer. It may make the command line longer by virtue of not using
-            // REPLACE_TOKEN (so it always appends to the command line), or by virtue of replacing
-            // the token but being longer than it.
-            use_prefix = common_prefix.size() > (will_replace_token ? tok.size() : 0);
-            assert(!use_prefix || !common_prefix.empty());
-
-            if (use_prefix) {
-                // We got something. If more than one completion contributed, then it means we have
-                // a prefix; don't insert a space after it.
-                if (prefix_is_partial_completion) flags |= COMPLETE_NO_SPACE;
-                completion_insert(common_prefix.c_str(), flags);
-                success = true;
-            }
-        }
-
-        if (continue_after_prefix_insertion || !use_prefix) {
-            // We didn't get a common prefix, or we want to print the list anyways.
-            size_t len, prefix_start = 0;
-            wcstring prefix;
-            parse_util_get_parameter_info(el->text, el->position, NULL, &prefix_start, NULL);
-
-            assert(el->position >= prefix_start);
-            len = el->position - prefix_start;
-
-            if (will_replace_token || match_type_requires_full_replacement(best_match_type)) {
-                // No prefix.
-                prefix.clear();
-            } else if (len <= PREFIX_MAX_LEN) {
-                prefix.append(el->text, prefix_start, len);
+    bool use_prefix = false;
+    if (match_type_shares_prefix(best_match_type)) {
+        // Try to find a common prefix to insert among the surviving completions.
+        wcstring common_prefix;
+        complete_flags_t flags = 0;
+        bool prefix_is_partial_completion = false;
+        for (size_t i = 0; i < surviving_completions.size(); i++) {
+            const completion_t &el = surviving_completions.at(i);
+            if (i == 0) {
+                // First entry, use the whole string.
+                common_prefix = el.completion;
+                flags = el.flags;
             } else {
-                // Append just the end of the string.
-                prefix = wcstring(&ellipsis_char, 1);
-                prefix.append(el->text, prefix_start + len - PREFIX_MAX_LEN, PREFIX_MAX_LEN);
-            }
+                // Determine the shared prefix length.
+                size_t idx, max = mini(common_prefix.size(), el.completion.size());
+                for (idx = 0; idx < max; idx++) {
+                    wchar_t ac = common_prefix.at(idx), bc = el.completion.at(idx);
+                    bool matches = (ac == bc);
+                    // If we are replacing the token, allow case to vary.
+                    if (will_replace_token && !matches) {
+                        // Hackish way to compare two strings in a case insensitive way,
+                        // hopefully better than towlower().
+                        matches = (wcsncasecmp(&ac, &bc, 1) == 0);
+                    }
+                    if (!matches) break;
+                }
 
-            wchar_t quote;
-            parse_util_get_parameter_info(el->text, el->position, &quote, NULL, NULL);
-            // Update the pager data.
-            data->pager.set_prefix(prefix);
-            data->pager.set_completions(surviving_completions);
-            // Invalidate our rendering.
-            data->current_page_rendering = page_rendering_t();
-            // Modify the command line to reflect the new pager.
-            data->pager_selection_changed();
-            reader_repaint_needed();
-            success = false;
+                // idx is now the length of the new common prefix.
+                common_prefix.resize(idx);
+                prefix_is_partial_completion = true;
+
+                // Early out if we decide there's no common prefix.
+                if (idx == 0) break;
+            }
+        }
+
+        // Determine if we use the prefix. We use it if it's non-empty and it will actually make
+        // the command line longer. It may make the command line longer by virtue of not using
+        // REPLACE_TOKEN (so it always appends to the command line), or by virtue of replacing
+        // the token but being longer than it.
+        use_prefix = common_prefix.size() > (will_replace_token ? tok.size() : 0);
+        assert(!use_prefix || !common_prefix.empty());
+
+        if (use_prefix) {
+            // We got something. If more than one completion contributed, then it means we have
+            // a prefix; don't insert a space after it.
+            if (prefix_is_partial_completion) flags |= COMPLETE_NO_SPACE;
+            completion_insert(common_prefix.c_str(), flags);
+            success = true;
         }
     }
-    return success;
+
+    if (!cont_after_prefix_insertion && use_prefix) {
+        return success;
+    }
+
+    // We didn't get a common prefix, or we want to print the list anyways.
+    size_t len, prefix_start = 0;
+    wcstring prefix;
+    parse_util_get_parameter_info(el->text, el->position, NULL, &prefix_start, NULL);
+
+    assert(el->position >= prefix_start);
+    len = el->position - prefix_start;
+
+    if (will_replace_token || match_type_requires_full_replacement(best_match_type)) {
+        prefix.clear();  // no prefix
+    } else if (len <= PREFIX_MAX_LEN) {
+        prefix.append(el->text, prefix_start, len);
+    } else {
+        // Append just the end of the string.
+        prefix = wcstring(&ellipsis_char, 1);
+        prefix.append(el->text, prefix_start + len - PREFIX_MAX_LEN, PREFIX_MAX_LEN);
+    }
+
+    wchar_t quote;
+    parse_util_get_parameter_info(el->text, el->position, &quote, NULL, NULL);
+    // Update the pager data.
+    data->pager.set_prefix(prefix);
+    data->pager.set_completions(surviving_completions);
+    // Invalidate our rendering.
+    data->current_page_rendering = page_rendering_t();
+    // Modify the command line to reflect the new pager.
+    data->pager_selection_changed();
+    reader_repaint_needed();
+    return false;
 }
 
 /// Return true if we believe ourselves to be orphaned. loop_count is how many times we've tried to
@@ -1531,10 +1512,8 @@ static bool check_for_orphaned_process(unsigned long loop_count, pid_t shell_pgi
     // Try kill-0'ing the process whose pid corresponds to our process group ID. It's possible this
     // will fail because we don't have permission to signal it. But more likely it will fail because
     // it no longer exists, and we are orphaned.
-    if (loop_count % 64 == 0) {
-        if (kill(shell_pgid, 0) < 0 && errno == ESRCH) {
-            we_think_we_are_orphaned = true;
-        }
+    if (loop_count % 64 == 0 && kill(shell_pgid, 0) < 0 && errno == ESRCH) {
+        we_think_we_are_orphaned = true;
     }
 
     if (!we_think_we_are_orphaned && loop_count % 128 == 0) {
@@ -1646,25 +1625,25 @@ static void reader_interactive_init() {
 
     // Put ourselves in our own process group.
     shell_pgid = getpid();
-    if (getpgrp() != shell_pgid) {
-        if (setpgid(shell_pgid, shell_pgid) < 0) {
-            debug(1, _(L"Couldn't put the shell in its own process group"));
-            wperror(L"setpgid");
-            exit_without_destructors(1);
-        }
+    if (getpgrp() != shell_pgid && setpgid(shell_pgid, shell_pgid) < 0) {
+        debug(0, _(L"Couldn't put the shell in its own process group"));
+        wperror(L"setpgid");
+        exit_without_destructors(1);
     }
 
     // Grab control of the terminal.
-    if (tcsetpgrp(STDIN_FILENO, shell_pgid)) {
-        debug(1, _(L"Couldn't grab control of terminal"));
+    if (tcsetpgrp(STDIN_FILENO, shell_pgid) == -1) {
+        if (errno == ENOTTY) redirect_tty_output();
+        debug(0, _(L"Couldn't grab control of terminal"));
         wperror(L"tcsetpgrp");
         exit_without_destructors(1);
     }
 
     common_handle_winch(0);
 
-    if (tcsetattr(0, TCSANOW, &shell_modes))  // set the new modes
-    {
+    // Set the new modes.
+    if (tcsetattr(0, TCSANOW, &shell_modes) == -1) {
+        if (errno == ENOTTY) redirect_tty_output();
         wperror(L"tcsetattr");
     }
 
@@ -1674,7 +1653,6 @@ static void reader_interactive_init() {
 /// Destroy data for interactive use.
 static void reader_interactive_destroy() {
     kill_destroy();
-    writestr(L"\n");
     set_color(rgb_color_t::reset(), rgb_color_t::reset());
     input_destroy();
 }
@@ -1795,24 +1773,22 @@ static void handle_token_history(int forward, int reset) {
             tokenizer_t tok(data->token_history_buff.c_str(), TOK_ACCEPT_UNFINISHED);
             tok_t token;
             while (tok.next(&token)) {
-                switch (token.type) {
-                    case TOK_STRING: {
-                        if (token.text.find(data->search_buff) != wcstring::npos) {
-                            // debug( 3, L"Found token at pos %d\n", tok_get_pos( &tok ) );
-                            if (token.offset >= current_pos) {
-                                break;
-                            }
-                            // debug( 3, L"ok pos" );
-
-                            if (find(data->search_prev.begin(), data->search_prev.end(),
-                                     token.text) == data->search_prev.end()) {
-                                data->token_history_pos = token.offset;
-                                str = token.text;
-                            }
+                if (token.type == TOK_STRING) {
+                    if (token.text.find(data->search_buff) != wcstring::npos) {
+                        // debug( 3, L"Found token at pos %d\n", tok_get_pos( &tok ) );
+                        if (token.offset >= current_pos) {
+                            break;
                         }
-                        break;
+                        // debug( 3, L"ok pos" );
+
+                        if (find(data->search_prev.begin(), data->search_prev.end(), token.text) ==
+                            data->search_prev.end()) {
+                            data->token_history_pos = token.offset;
+                            str = token.text;
+                        }
                     }
-                    default: { break; }
+                } else {
+                    break;
                 }
             }
         }
@@ -1898,7 +1874,7 @@ static void reader_set_buffer_maintaining_pager(const wcstring &b, size_t pos) {
     data->command_line_changed(&data->command_line);
 
     // Don't set a position past the command line length.
-    if (pos > command_line_len) pos = command_line_len;
+    if (pos > command_line_len) pos = command_line_len;  //!OCLINT(parameter reassignment)
 
     update_buff_pos(&data->command_line, pos);
 
@@ -1929,13 +1905,11 @@ bool reader_get_selection(size_t *start, size_t *len) {
     bool result = false;
     if (data != NULL && data->sel_active) {
         *start = data->sel_start_pos;
-        *len = std::min(data->sel_stop_pos - data->sel_start_pos + 1, data->command_line.size());
+        *len = std::min(data->sel_stop_pos - data->sel_start_pos, data->command_line.size());
         result = true;
     }
     return result;
 }
-
-#define ENV_CMD_DURATION L"CMD_DURATION"
 
 void set_env_cmd_duration(struct timeval *after, struct timeval *before) {
     time_t secs = after->tv_sec - before->tv_sec;
@@ -2214,62 +2188,56 @@ static void reader_super_highlight_me_plenty(int match_highlight_pos_adjust, boo
     const wcstring &cmd = el->text, &suggest = data->autosuggestion;
     if (can_autosuggest() && !suggest.empty() &&
         string_prefixes_string_case_insensitive(cmd, suggest)) {
-        // The autosuggestion is still reasonable, so do nothing.
+        ;  // the autosuggestion is still reasonable, so do nothing
     } else {
         update_autosuggestion();
     }
 }
 
 bool shell_is_exiting() {
-    if (shell_is_interactive())
+    if (shell_is_interactive()) {
         return job_list_is_empty() && data != NULL && data->end_loop;
-    else
-        return end_loop;
+    }
+    return end_loop;
 }
 
 /// This function is called when the main loop notices that end_loop has been set while in
 /// interactive mode. It checks if it is ok to exit.
 static void handle_end_loop() {
-    job_t *j;
-    int stopped_jobs_count = 0;
-    int is_breakpoint = 0;
-    const parser_t &parser = parser_t::principal_parser();
-
-    for (size_t i = 0; i < parser.block_count(); i++) {
-        if (parser.block_at_index(i)->type() == BREAKPOINT) {
-            is_breakpoint = 1;
-            break;
+    if (!reader_exit_forced()) {
+        const parser_t &parser = parser_t::principal_parser();
+        for (size_t i = 0; i < parser.block_count(); i++) {
+            if (parser.block_at_index(i)->type() == BREAKPOINT) {
+                // We're executing within a breakpoint so we do not want to terminate the shell and
+                // kill background jobs.
+                return;
+            }
         }
     }
 
+    bool bg_jobs = false;
     job_iterator_t jobs;
-    while ((j = jobs.next())) {
-        if (!job_is_completed(j) && (job_is_stopped(j))) {
-            stopped_jobs_count++;
+    while (job_t *j = jobs.next()) {
+        if (!job_is_completed(j)) {
+            bg_jobs = true;
             break;
         }
     }
 
-    if (!reader_exit_forced() && !data->prev_end_loop && stopped_jobs_count && !is_breakpoint) {
-        writestr(_(
-            L"There are stopped jobs. A second attempt to exit will enforce their termination.\n"));
-
+    if (!data->prev_end_loop && bg_jobs) {
+        fputws(_(L"There are still jobs active (use the jobs command to see them).\n"), stdout);
+        fputws(_(L"A second attempt to exit will terminate them.\n"), stdout);
         reader_exit(0, 0);
         data->prev_end_loop = 1;
-    } else {
-        // PCA: We used to only hangup jobs if stdin was closed. This prevented child processes from
-        // exiting. It's unclear to my why it matters if stdin is closed, but it seems to me if
-        // we're forcing an exit, we definitely want to hang up our processes. See issue #138.
-        if (reader_exit_forced() || !isatty(0)) {
-            // We already know that stdin is a tty since we're in interactive mode. If isatty
-            // returns false, it means stdin must have been closed.
-            job_iterator_t jobs;
-            while ((j = jobs.next())) {
-                // Send SIGHUP only to foreground processes. See issue #1771.
-                if (!job_is_completed(j) && job_get_flag(j, JOB_FOREGROUND)) {
-                    job_signal(j, SIGHUP);
-                }
-            }
+        return;
+    }
+
+    // Kill remaining jobs before exiting.
+    jobs.reset();
+    while (job_t *j = jobs.next()) {
+        if (!job_is_completed(j)) {
+            if (job_is_stopped(j)) job_signal(j, SIGCONT);
+            job_signal(j, SIGHUP);
         }
     }
 }
@@ -2382,7 +2350,7 @@ static bool text_ends_in_comment(const wcstring &text) {
     tokenizer_t tok(text.c_str(), TOK_ACCEPT_UNFINISHED | TOK_SHOW_COMMENTS | TOK_SQUASH_ERRORS);
     tok_t token;
     while (tok.next(&token)) {
-        // pass
+        ;  // pass
     }
     return token.type == TOK_COMMENT;
 }
@@ -2415,9 +2383,10 @@ const wchar_t *reader_readline(int nchars) {
     reader_repaint();
 
     // Get the current terminal modes. These will be restored when the function returns.
-    tcgetattr(0, &old_modes);
+    tcgetattr(STDIN_FILENO, &old_modes);
     // Set the new modes.
-    if (tcsetattr(0, TCSANOW, &shell_modes)) {
+    if (tcsetattr(0, TCSANOW, &shell_modes) == -1) {
+        if (errno == ENOTTY) redirect_tty_output();
         wperror(L"tcsetattr");
     }
 
@@ -2436,44 +2405,42 @@ const wchar_t *reader_readline(int nchars) {
             is_interactive_read = 1;
             c = input_readch();
             is_interactive_read = was_interactive_read;
-            // fprintf(stderr, "C: %lx\n", (long)c);
+            // fwprintf(stderr, L"C: %lx\n", (long)c);
 
-            if (((!fish_reserved_codepoint(c))) && (c > 31) && (c != 127)) {
-                if (can_read(0)) {
-                    wchar_t arr[READAHEAD_MAX + 1];
-                    size_t i;
-                    size_t limit = 0 < nchars ? std::min((size_t)nchars - data->command_line.size(),
-                                                         (size_t)READAHEAD_MAX)
-                                              : READAHEAD_MAX;
+            if (((!fish_reserved_codepoint(c))) && (c > 31) && (c != 127) && can_read(0)) {
+                wchar_t arr[READAHEAD_MAX + 1];
+                size_t i;
+                size_t limit = 0 < nchars ? std::min((size_t)nchars - data->command_line.size(),
+                                                     (size_t)READAHEAD_MAX)
+                                          : READAHEAD_MAX;
 
-                    memset(arr, 0, sizeof(arr));
-                    arr[0] = c;
+                memset(arr, 0, sizeof(arr));
+                arr[0] = c;
 
-                    for (i = 1; i < limit; ++i) {
-                        if (!can_read(0)) {
-                            c = 0;
-                            break;
-                        }
-                        // Only allow commands on the first key; otherwise, we might have data we
-                        // need to insert on the commandline that the commmand might need to be able
-                        // to see.
-                        c = input_readch(false);
-                        if ((!fish_reserved_codepoint(c)) && (c > 31) && (c != 127)) {
-                            arr[i] = c;
-                            c = 0;
-                        } else
-                            break;
+                for (i = 1; i < limit; ++i) {
+                    if (!can_read(0)) {
+                        c = 0;
+                        break;
                     }
-
-                    editable_line_t *el = data->active_edit_line();
-                    insert_string(el, arr, true);
-
-                    // End paging upon inserting into the normal command line.
-                    if (el == &data->command_line) {
-                        clear_pager();
-                    }
-                    last_char = c;
+                    // Only allow commands on the first key; otherwise, we might have data we
+                    // need to insert on the commandline that the commmand might need to be able
+                    // to see.
+                    c = input_readch(false);
+                    if (!fish_reserved_codepoint(c) && c > 31 && c != 127) {
+                        arr[i] = c;
+                        c = 0;
+                    } else
+                        break;
                 }
+
+                editable_line_t *el = data->active_edit_line();
+                insert_string(el, arr, true);
+
+                // End paging upon inserting into the normal command line.
+                if (el == &data->command_line) {
+                    clear_pager();
+                }
+                last_char = c;
             }
 
             if (c != 0) break;
@@ -2500,7 +2467,7 @@ const wchar_t *reader_readline(int nchars) {
         if (command_ends_paging(c, focused_on_search_field)) {
             clear_pager();
         }
-        // fprintf(stderr, "\n\nchar: %ls\n\n", describe_char(c).c_str());
+        // fwprintf(stderr, L"\n\nchar: %ls\n\n", describe_char(c).c_str());
 
         switch (c) {
             // Go to beginning of line.
@@ -2621,7 +2588,7 @@ const wchar_t *reader_readline(int nchars) {
                     // up to the end of the token we're completing.
                     const wcstring buffcpy = wcstring(cmdsub_begin, token_end);
 
-                    // fprintf(stderr, "Complete (%ls)\n", buffcpy.c_str());
+                    // fwprintf(stderr, L"Complete (%ls)\n", buffcpy.c_str());
                     complete_flags_t complete_flags = COMPLETION_REQUEST_DEFAULT |
                                                       COMPLETION_REQUEST_DESCRIPTIONS |
                                                       COMPLETION_REQUEST_FUZZY_MATCH;
@@ -2635,8 +2602,8 @@ const wchar_t *reader_readline(int nchars) {
                     data->cycle_command_line = el->text;
                     data->cycle_cursor_pos = el->position;
 
-                    bool continue_after_prefix_insertion = (c == R_COMPLETE_AND_SEARCH);
-                    comp_empty = handle_completions(comp, continue_after_prefix_insertion);
+                    bool cont_after_prefix_insertion = (c == R_COMPLETE_AND_SEARCH);
+                    comp_empty = handle_completions(comp, cont_after_prefix_insertion);
 
                     // Show the search field if requested and if we printed a list of completions.
                     if (c == R_COMPLETE_AND_SEARCH && !comp_empty && !data->pager.empty()) {
@@ -2665,26 +2632,24 @@ const wchar_t *reader_readline(int nchars) {
             }
             case R_BACKWARD_KILL_LINE: {
                 editable_line_t *el = data->active_edit_line();
-                if (el->position > 0) {
-                    const wchar_t *buff = el->text.c_str();
-                    const wchar_t *end = &buff[el->position];
-                    const wchar_t *begin = end;
-
-                    begin--;  // make sure we delete at least one character (see issue #580)
-
-                    // Delete until we hit a newline, or the beginning of the string.
-                    while (begin > buff && *begin != L'\n') begin--;
-
-                    // If we landed on a newline, don't delete it.
-                    if (*begin == L'\n') begin++;
-
-                    assert(end >= begin);
-                    size_t len = maxi<size_t>(end - begin, 1);
-                    begin = end - len;
-
-                    reader_kill(el, begin - buff, len, KILL_PREPEND,
-                                last_char != R_BACKWARD_KILL_LINE);
+                if (el->position <= 0) {
+                    break;
                 }
+                const wchar_t *buff = el->text.c_str();
+                const wchar_t *end = &buff[el->position];
+                const wchar_t *begin = end;
+
+                begin--;  // make sure we delete at least one character (see issue #580)
+
+                // Delete until we hit a newline, or the beginning of the string.
+                while (begin > buff && *begin != L'\n') begin--;
+
+                // If we landed on a newline, don't delete it.
+                if (*begin == L'\n') begin++;
+                assert(end >= begin);
+                size_t len = maxi<size_t>(end - begin, 1);
+                begin = end - len;
+                reader_kill(el, begin - buff, len, KILL_PREPEND, last_char != R_BACKWARD_KILL_LINE);
                 break;
             }
             case R_KILL_WHOLE_LINE: {
@@ -2735,7 +2700,7 @@ const wchar_t *reader_readline(int nchars) {
                 break;
             }
             // Escape was pressed.
-            case L'\x1b': {
+            case L'\e': {
                 if (data->search_mode) {
                     data->search_mode = NO_SEARCH;
 
@@ -2764,6 +2729,9 @@ const wchar_t *reader_readline(int nchars) {
                 if (el->position < el->size()) {
                     update_buff_pos(el, el->position + 1);
                     remove_backward();
+                    if (el->position > 0 && el->position == el->size()) {
+                        update_buff_pos(el, el->position - 1);
+                    }
                 }
                 break;
             }
@@ -2821,31 +2789,24 @@ const wchar_t *reader_readline(int nchars) {
                     }
                 }
 
-                switch (command_test_result) {
-                    case 0: {
-                        // Finished command, execute it. Don't add items that start with a leading
-                        // space.
-                        const editable_line_t *el = &data->command_line;
-                        if (data->history != NULL && !el->empty() && el->text.at(0) != L' ') {
-                            data->history->add_pending_with_file_detection(el->text);
-                        }
-                        finished = 1;
-                        update_buff_pos(&data->command_line, data->command_line.size());
-                        reader_repaint();
-                        break;
+                if (command_test_result == 0) {
+                    // Finished command, execute it. Don't add items that start with a leading
+                    // space.
+                    const editable_line_t *el = &data->command_line;
+                    if (data->history != NULL && !el->empty() && el->text.at(0) != L' ') {
+                        data->history->add_pending_with_file_detection(el->text);
                     }
-                    case PARSER_TEST_INCOMPLETE: {
-                        // We are incomplete, continue editing.
-                        insert_char(el, '\n');
-                        break;
-                    }
-                    default: {
-                        // Result must be some combination including an error. The error message
-                        // will already be printed, all we need to do is repaint.
-                        s_reset(&data->screen, screen_reset_abandon_line);
-                        reader_repaint_needed();
-                        break;
-                    }
+                    finished = 1;
+                    update_buff_pos(&data->command_line, data->command_line.size());
+                    reader_repaint();
+                } else if (command_test_result == PARSER_TEST_INCOMPLETE) {
+                    // We are incomplete, continue editing.
+                    insert_char(el, '\n');
+                } else {
+                    // Result must be some combination including an error. The error message will
+                    // already be printed, all we need to do is repaint.
+                    s_reset(&data->screen, screen_reset_abandon_line);
+                    reader_repaint_needed();
                 }
 
                 break;
@@ -2880,36 +2841,30 @@ const wchar_t *reader_readline(int nchars) {
                     data->history_search.skip_matches(skip_list);
                 }
 
-                switch (data->search_mode) {
-                    case LINE_SEARCH: {
-                        if ((c == R_HISTORY_SEARCH_BACKWARD) ||
-                            (c == R_HISTORY_TOKEN_SEARCH_BACKWARD)) {
-                            data->history_search.go_backwards();
-                        } else {
-                            if (!data->history_search.go_forwards()) {
-                                // If you try to go forwards past the end, we just go to the end.
-                                data->history_search.go_to_end();
-                            }
+                if (data->search_mode == LINE_SEARCH) {
+                    if ((c == R_HISTORY_SEARCH_BACKWARD) ||
+                        (c == R_HISTORY_TOKEN_SEARCH_BACKWARD)) {
+                        data->history_search.go_backwards();
+                    } else {
+                        if (!data->history_search.go_forwards()) {
+                            // If you try to go forwards past the end, we just go to the end.
+                            data->history_search.go_to_end();
                         }
-
-                        wcstring new_text;
-                        if (data->history_search.is_at_end()) {
-                            new_text = data->search_buff;
-                        } else {
-                            new_text = data->history_search.current_string();
-                        }
-                        set_command_line_and_position(&data->command_line, new_text,
-                                                      new_text.size());
-                        break;
                     }
-                    case TOKEN_SEARCH: {
-                        if ((c == R_HISTORY_SEARCH_BACKWARD) ||
-                            (c == R_HISTORY_TOKEN_SEARCH_BACKWARD)) {
-                            handle_token_history(SEARCH_BACKWARD, reset);
-                        } else {
-                            handle_token_history(SEARCH_FORWARD, reset);
-                        }
-                        break;
+
+                    wcstring new_text;
+                    if (data->history_search.is_at_end()) {
+                        new_text = data->search_buff;
+                    } else {
+                        new_text = data->history_search.current_string();
+                    }
+                    set_command_line_and_position(&data->command_line, new_text, new_text.size());
+                } else if (data->search_mode == TOKEN_SEARCH) {
+                    if ((c == R_HISTORY_SEARCH_BACKWARD) ||
+                        (c == R_HISTORY_TOKEN_SEARCH_BACKWARD)) {
+                        handle_token_history(SEARCH_BACKWARD, reset);
+                    } else {
+                        handle_token_history(SEARCH_FORWARD, reset);
                     }
                 }
                 break;
@@ -3286,7 +3241,7 @@ const wchar_t *reader_readline(int nchars) {
         reader_repaint_if_needed();
     }
 
-    writestr(L"\n");
+    fputwc(L'\n', stdout);
 
     // Ensure we have no pager contents when we exit.
     if (!data->pager.empty()) {
@@ -3297,7 +3252,8 @@ const wchar_t *reader_readline(int nchars) {
     }
 
     if (!reader_exit_forced()) {
-        if (tcsetattr(0, TCSANOW, &old_modes)) {
+        if (tcsetattr(0, TCSANOW, &old_modes) == -1) {
+            if (errno == ENOTTY) redirect_tty_output();
             wperror(L"tcsetattr");  // return to previous mode
         }
         set_color(rgb_color_t::reset(), rgb_color_t::reset());
@@ -3310,7 +3266,7 @@ int reader_search_mode() {
     if (!data) {
         return -1;
     }
-    return !!data->search_mode;
+    return data->search_mode == NO_SEARCH ? 0 : 1;
 }
 
 int reader_has_pager_contents() {

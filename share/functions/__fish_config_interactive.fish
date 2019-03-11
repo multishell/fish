@@ -110,8 +110,9 @@ function __fish_config_interactive -d "Initializations that should be performed 
     # Generate man page completions if not present.
     #
     if not test -d $userdatadir/fish/generated_completions
-        #fish_update_completions is a function, so it can not be directly run in background.
-        eval (string escape "$__fish_bin_dir/fish") "-c 'fish_update_completions > /dev/null ^/dev/null' &"
+        command -s python >/dev/null # feature needs python, don't try this on launch without it (#3588)
+        # fish_update_completions is a function, so it can not be directly run in background.
+        and eval (string escape "$__fish_bin_dir/fish") "-c 'fish_update_completions >/dev/null ^/dev/null' &"
     end
 
     #
@@ -179,8 +180,11 @@ function __fish_config_interactive -d "Initializations that should be performed 
         # Also print an error so the user knows
         if not functions -q "$fish_key_bindings"
             echo "There is no fish_key_bindings function called: '$fish_key_bindings'" >&2
-            if set -q __fish_active_key_bindings
+            # We need to see if this is a defined function, otherwise we'd be in an endless loop.
+            if functions -q $__fish_active_key_bindings
                 echo "Keeping $__fish_active_key_bindings" >&2
+                # Set the variable to the old value so this error doesn't happen again.
+                set fish_key_bindings $__fish_active_key_bindings
                 return 1
             else if functions -q fish_default_key_bindings
                 echo "Reverting to default bindings" >&2
@@ -228,8 +232,10 @@ function __fish_config_interactive -d "Initializations that should be performed 
         end
         if test "$TERM_PROGRAM" = "Apple_Terminal"
             # Suppress duplicative title display on Terminal.app
-            echo -n \e\]0\;\a # clear existing title
-            function fish_title
+            if not functions -q fish_title
+                echo -n \e\]0\;\a # clear existing title
+                function fish_title -d 'no-op terminal title'
+                end
             end
         end
         __update_cwd_osc # Run once because we might have already inherited a PWD from an old tab
