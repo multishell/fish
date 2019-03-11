@@ -40,10 +40,8 @@ static int parse_fill_name( string_buffer_t *name,
 	
 	if (*src != L'[' && *src != L'\0') 
 	{
-	
-		sb_append(sb_err, L"set: Invalid character in variable name: ");
-		sb_append_char(sb_err, *src);
-		sb_append2(sb_err, L"\n", 				  parser_current_line(), L"\n", (void *)0 );
+		sb_printf( sb_err, BUILTIN_ERR_VARCHAR, L"set", *src );
+		sb_append2(sb_err, parser_current_line(), L"\n", (void *)0 );
 //		builtin_print_help( L"set", sb_err );
 
 		return -1;
@@ -435,6 +433,13 @@ int builtin_set( wchar_t **argv )
 	{
 		dest = wcsdup(argv[woptind++]);
 		//fwprintf(stderr, L"Dest: %ls\n", dest);
+
+		if( !wcslen( dest ) )
+		{
+			free( dest );
+			sb_printf( sb_err, BUILTIN_ERR_VARNAME_ZERO, argv[0] );
+			return 1;
+		}		
 	}
 
 	/* Parse values */

@@ -70,7 +70,7 @@ int wildcard_has( const wchar_t *str, int internal )
   
    \param str String to be matched.
    \param wc The wildcard.
-   \param is_first Whether files beginning with dots should not be matched against wildcards.
+   \param is_first Whether files beginning with dots should not be matched against wildcards. 
    \param wc_unescaped Whether the unescaped special character ANY_CHAR abd ANY_STRING should be used instead of '?' and '*' for wildcard matching
 */
 
@@ -307,7 +307,7 @@ void get_desc( wchar_t *fn, string_buffer_t *sb, int is_cmd )
 
 /*
   Test if the file specified by the given filename matches the
-  expantion flags specified. flags can be a combination of
+  expansion flags specified. flags can be a combination of
   EXECUTABLES_ONLY and DIRECTORIES_ONLY.
 */
 static int test_flags( wchar_t *filename,
@@ -358,7 +358,7 @@ int wildcard_expand( const wchar_t *wc,
 	/* Description for completions */
 	string_buffer_t sb_desc;
 	
-//	debug( 3, L"WILDCARD_EXPAND %ls in %ls", wc, base_dir );
+	//	debug( 3, L"WILDCARD_EXPAND %ls in %ls", wc, base_dir );
 
 	if( flags & ACCEPT_INCOMPLETE )
 	{	

@@ -132,18 +132,20 @@ function help -d "Show help for the fish shell"
 		return 1
 	end
 
-	set fish_help_item $argv[1]
+	if count $argv >/dev/null
+		set fish_help_item $argv[1]
+	end
 	set fish_help_page ""
 
-	if test $fish_help_item = .
+	if test "$fish_help_item" = .
 		set fish_help_page "builtins.html\#source"
 	end
 
-	if test $fish_help_item = difference
+	if test "$fish_help_item" = difference
 		set fish_help_page difference.html
 	end
 
-	if test $fish_help_item = globbing
+	if test "$fish_help_item" = globbing
 		set fish_help_page "index.html\#expand"
 	end
 
@@ -156,8 +158,9 @@ function help -d "Show help for the fish shell"
 	end
 	
 	set idx_subj syntax completion editor job-control todo bugs history
-	set idx_subj $idx_subj killring help color prompt title expand variables
-	set idx_subj $idx_subj builtin-overview changes
+	set idx_subj $idx_subj killring help color prompt title variables
+	set idx_subj $idx_subj builtin-overview changes 
+	set idx_subj $idx_subj expand expand-variable expand-home expand-brace expand-wildcard expand-command-substitution expand-process 
 
 	if contains -- $fish_help_item $idx_subj
 		set fish_help_page "index.html\#"$fish_help_item
@@ -561,7 +564,7 @@ function __fish_type_help -d "Help for the type shellscript function"
 
 set bullet \*
 if expr match "$LANG" ".*UTF" >/dev/null
-	set bullet \u2022
+		set bullet \u2022
 end
 
 echo \ttype - Indicate how a name would be interpreted if used as a \n\tcommand name
@@ -1002,3 +1005,4 @@ function delete-or-exit --key-binding
 		exit
 	end
 end
+

@@ -67,6 +67,9 @@ parameter expansion.
 */
 #define COMPLETE_LAST_DESC COMPLETE_SEP_STR L"Last background job"
 
+#define COMPLETE_VAR_DESC L"Variable name is zero characters long."
+#define COMPLETE_VAR2_DESC L" Did you mean {$VARIABLE}? For information on how variable expansion in fish differs from Posix variable expansion, see the manual section on variable expansion by typing 'help expand-variable'."
+
 /**
    String in process expansion denoting ourself
 */
@@ -92,8 +95,8 @@ parameter expansion.
    any tokens which need to be expanded or otherwise altered. Clean
    strings can be passed through expand_string and expand_one without
    changing them. About 90% of all strings are clean, so skipping
-   expantion on them actually does save a small amount of time, since
-   it avoids multiple memory allocations during the expantion process.
+   expansion on them actually does save a small amount of time, since
+   it avoids multiple memory allocations during the expansion process.
 */
 static int is_clean( const wchar_t *in )
 {
@@ -727,6 +730,27 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 /*			printf( "Stop for '%c'\n", in[stop_pos]);*/
 			
 			var_len = stop_pos - start_pos;
+
+			if( var_len == 0 )
+			{
+				if( in[stop_pos] == BRACKET_BEGIN )
+				{
+										
+					error( SYNTAX_ERROR,
+						   -1, COMPLETE_VAR_DESC
+						   COMPLETE_VAR2_DESC );
+				}
+				else
+				{
+					error( SYNTAX_ERROR,
+						   -1,
+						   COMPLETE_VAR_DESC);
+				}
+				
+				is_ok = 0;
+				break;
+			}
+			
 			
 			if( !(var_name = malloc( sizeof(wchar_t)*(var_len+1) )))
 			{
@@ -770,8 +794,9 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 						if( ( errno ) || ( end == &in[stop_pos] ) )
 						{
 							error( SYNTAX_ERROR, 
-								   L"Expected integer or \']\'", 
-								   -1 );
+								   -1, 
+								   L"Expected integer or \']\'" );
+															   
 							is_ok = 0;
 							break;
 						}
@@ -791,7 +816,9 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 							int tmp = (int)al_get( &idx, j );
 							if( tmp < 1 || tmp > al_get_count( &l ) )
 							{
-								error( SYNTAX_ERROR, L"Array index out of bounds", -1 );
+								error( SYNTAX_ERROR, 
+									   -1,
+									   L"Array index out of bounds" );
 								is_ok=0;
 								al_truncate( &idx, j );
 								break;
@@ -852,8 +879,7 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 							
 							if( !(new_in = malloc( sizeof(wchar_t)*new_len )))
 							{
-								error( OOM, L"Out of memory", -1 );				
-								is_ok = 0;
+								die_mem();
 							}
 							else
 							{
@@ -893,14 +919,14 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 				if( c == VARIABLE_EXPAND )
 				{
 					/*
-					  Regular expantion, i.e. expand this argument to nothing
+					  Regular expansion, i.e. expand this argument to nothing
 					*/
 					empty = 1;
 				}
 				else
 				{
 					/*
-					  Expantion to single argument. 
+					  Expansion to single argument. 
 					*/
 					string_buffer_t res;
 					sb_init( &res );
@@ -1022,7 +1048,9 @@ static int expand_brackets( wchar_t *in, int flags, array_list_t *out )
 	
 	if( syntax_error )
 	{
-		error( SYNTAX_ERROR, L"Mismatched brackets", -1 );
+		error( SYNTAX_ERROR, 
+			   -1,
+			   L"Mismatched brackets" );
 		return 0;
 	}
 	
@@ -1168,7 +1196,9 @@ static int expand_subshell( wchar_t *in, array_list_t *out )
 								   0 ) )
 	{
 		case -1:
-			error( SYNTAX_ERROR, L"Mismatched parans", -1 );
+			error( SYNTAX_ERROR, 
+				   -1,
+				   L"Mismatched parans" );
 			return 0;
 		case 0:
 			al_push( out, in );
@@ -1247,7 +1277,7 @@ wchar_t *expand_unescape( const wchar_t * in, int escape_special )
 {
 	wchar_t *res = unescape( in, escape_special );
 	if( !res )
-		error( SYNTAX_ERROR, L"Unexpected end of string", -1 );
+		error( SYNTAX_ERROR, -1, L"Unexpected end of string" );
 	return res;
 }
 
@@ -1379,7 +1409,7 @@ static void remove_internal_separator( const void *s, int conv )
 
 
 /**
-   The real expantion function. expand_one is just a wrapper around this one.
+   The real expansion function. expand_one is just a wrapper around this one.
 */
 int expand_string( wchar_t *str,
 				   array_list_t *end_out, 
@@ -1390,11 +1420,15 @@ int expand_string( wchar_t *str,
 	
 	int i;
 	int subshell_ok = 1;
+	int res = EXPAND_OK;
+	
+//	debug( 1, L"Expand %ls", str );
+	
 
 	if( (!(flags & ACCEPT_INCOMPLETE)) && is_clean( str ) )
 	{
 		al_push( end_out, str );
-		return 1;
+		return EXPAND_OK;
 	}
 
 	al_init( &list1 );
@@ -1412,11 +1446,11 @@ int expand_string( wchar_t *str,
 			
 			if( (pos == str) || ( *(pos-1) != L'\\' ) )
 			{
-				error( SUBSHELL_ERROR, L"Subshells not allowed", -1 );
+				error( SUBSHELL_ERROR, -1, L"Subshells not allowed" );
 				free( str );
 				al_destroy( &list1 );
 				al_destroy( &list2 );
-				return 0;
+				return EXPAND_ERROR;
 			}
 			pos++;
 		}		
@@ -1430,7 +1464,7 @@ int expand_string( wchar_t *str,
 	if( !subshell_ok )
 	{
 		al_destroy( &list1 );
-		return 0;
+		return EXPAND_ERROR;
 	}
 	else
 	{
@@ -1464,7 +1498,7 @@ int expand_string( wchar_t *str,
 				{
 					al_destroy( in );
 					al_destroy( out );
-					return 0;	
+					return EXPAND_ERROR;	
 				}
 			}
 		}
@@ -1481,7 +1515,7 @@ int expand_string( wchar_t *str,
 			{
 				al_destroy( in );
 				al_destroy( out );
-				return 0;
+				return EXPAND_ERROR;
 			}
 		}
 		al_truncate( in, 0 );
@@ -1496,17 +1530,22 @@ int expand_string( wchar_t *str,
 			{
 				al_destroy( in );
 				al_destroy( out );
-				return 0;
+				return EXPAND_ERROR;
 			}
 		
 			if( flags & ACCEPT_INCOMPLETE )
 			{
 				if( *next == PROCESS_EXPAND )
 				{
+					/*
+					  If process expansion matches, we are not
+					  interested in other completions, so we
+					  short-circut and return
+					*/
 					expand_pid( next, flags, end_out );
 					al_destroy( in );
 					al_destroy( out );
-					return 1;
+					return EXPAND_OK;
 				}
 				else
 					al_push( out, next );
@@ -1517,7 +1556,7 @@ int expand_string( wchar_t *str,
 				{
 					al_destroy( in );
 					al_destroy( out );
-					return 0;
+					return EXPAND_ERROR;
 				}
 			}
 		}
@@ -1550,19 +1589,18 @@ int expand_string( wchar_t *str,
 					case 0:
 						if( !(flags & ACCEPT_INCOMPLETE) )
 						{	
+							if( res == EXPAND_OK )
+								res = EXPAND_WILDCARD_NO_MATCH;
 							break;
 						}
+						
 					case 1:
+						res = EXPAND_WILDCARD_MATCH;
 						sort_list( out );
 						al_push_all( end_out, out );
 						al_truncate( out, 0 );						
 						break;
 						
-					default:
-						fwprintf( stderr, L"error\n" );
-						/*al_destroy( &list1 );*/
-						/*al_destroy( &list2 );*/
-						/*return 0;*/
 				}			
 			}
 			else
@@ -1577,7 +1615,8 @@ int expand_string( wchar_t *str,
 		al_destroy( out );
 	}
 
-	return 1;
+	return res;
+	
 }
 
 

@@ -1213,10 +1213,12 @@ static void complete_cmd( const wchar_t *cmd,
 		array_list_t tmp;
 		al_init( &tmp );
 		
-		expand_string( wcsdup(cmd), 
-					   comp,
-					   ACCEPT_INCOMPLETE | EXECUTABLES_ONLY );
-		complete_cmd_desc( cmd, comp );
+		if( expand_string( wcsdup(cmd), 
+						   comp,
+						   ACCEPT_INCOMPLETE | EXECUTABLES_ONLY ) != EXPAND_ERROR )
+		{
+			complete_cmd_desc( cmd, comp );
+		}
 		al_destroy( &tmp );
 	}
 	else
@@ -1237,14 +1239,15 @@ static void complete_cmd( const wchar_t *cmd,
 			
 			al_init( &tmp );
 
-			expand_string( nxt_completion, 
+			if( expand_string( nxt_completion, 
 						   &tmp, 
 						   ACCEPT_INCOMPLETE | 
-						   EXECUTABLES_ONLY );
-
-			for( i=0; i<al_get_count(&tmp); i++ )
+							   EXECUTABLES_ONLY ) != EXPAND_ERROR )
 			{
-				al_push( comp, al_get( &tmp, i ) );
+				for( i=0; i<al_get_count(&tmp); i++ )
+				{
+					al_push( comp, al_get( &tmp, i ) );
+				}
 			}
 			
 			al_destroy( &tmp );
@@ -1290,24 +1293,26 @@ static void complete_cmd( const wchar_t *cmd,
 
 		al_init( &tmp );
 
-		expand_string( nxt_completion, 
+		if( expand_string( nxt_completion, 
 					   &tmp,
-					   ACCEPT_INCOMPLETE | DIRECTORIES_ONLY );
-
-		for( i=0; i<al_get_count(&tmp); i++ )
+						   ACCEPT_INCOMPLETE | DIRECTORIES_ONLY ) != EXPAND_ERROR )
 		{
-			wchar_t *nxt = (wchar_t *)al_get( &tmp, i );
-
-			wchar_t *desc = wcsrchr( nxt, COMPLETE_SEP );
-			int is_valid = (desc && (wcscmp(desc, 
-											COMPLETE_DIRECTORY_DESC)==0));
-			if( is_valid )
+			
+			for( i=0; i<al_get_count(&tmp); i++ )
 			{
-				al_push( comp, nxt );
-			}
-			else
-			{
-				free(nxt);
+				wchar_t *nxt = (wchar_t *)al_get( &tmp, i );
+				
+				wchar_t *desc = wcsrchr( nxt, COMPLETE_SEP );
+				int is_valid = (desc && (wcscmp(desc, 
+												COMPLETE_DIRECTORY_DESC)==0));
+				if( is_valid )
+				{
+					al_push( comp, nxt );
+				}
+				else
+				{
+					free(nxt);
+				}
 			}
 		}
 
@@ -1766,7 +1771,10 @@ static void complete_param_expand( wchar_t *str,
 	else
 		comp_str = str;
 	
-//	fwprintf( stderr, L"expand_string( \"%ls\", [list], EXPAND_SKIP_SUBSHELL | ACCEPT_INCOMPLETE | %ls )\n", comp_str, do_file?L"0":L"EXPAND_SKIP_WILDCARDS" );
+	debug( 2, 
+		   L"expand_string( \"%ls\", comp_out, EXPAND_SKIP_SUBSHELL | ACCEPT_INCOMPLETE | %ls );", 
+		   comp_str, 
+		   do_file?L"0":L"EXPAND_SKIP_WILDCARDS" );
 	
 	expand_string( wcsdup(comp_str), comp_out,  EXPAND_SKIP_SUBSHELL | ACCEPT_INCOMPLETE | (do_file?0:EXPAND_SKIP_WILDCARDS) );
 }
@@ -1963,7 +1971,7 @@ void complete( const wchar_t *cmd,
 	error_max=0;
 
 	/**
-	   If we are completing a variable name or a tilde expantion user
+	   If we are completing a variable name or a tilde expansion user
 	   name, we do that and return. No need for any other competions.
 	*/
 
