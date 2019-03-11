@@ -160,8 +160,11 @@ if set -q MANPATH
         end
         set __fish_tmp_manpath $__fish_tmp_manpath[-1..1]
     end
-    test -r /etc/manpaths ; and __fish_load_manpath_helper_manpaths < /etc/manpaths
-    for manpathfile in /etc/manpaths.d/* ; __fish_load_manpath_helper_manpaths < $manpathfile ; end
+    test -r /etc/manpaths
+    and __fish_load_manpath_helper_manpaths </etc/manpaths
+    for manpathfile in /etc/manpaths.d/*
+        __fish_load_manpath_helper_manpaths <$manpathfile
+    end
     set -xg MANPATH $__fish_tmp_manpath
     set -e __fish_tmp_manpath
     functions -e __fish_load_manpath_helper_manpaths
@@ -265,7 +268,7 @@ if status --is-login
 
     if test "$TERM" = linux
         if string match -qir '\.UTF' -- $LANG
-            if command -s unicode_start >/dev/null
+            if command -sq unicode_start
                 unicode_start
             end
         end

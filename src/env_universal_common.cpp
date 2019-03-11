@@ -2,12 +2,20 @@
 #include "config.h"  // IWYU pragma: keep
 
 #include <arpa/inet.h>  // IWYU pragma: keep
-#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+// We need the sys/file.h for the flock() declaration on Linux but not OS X.
+#include <sys/file.h>  // IWYU pragma: keep
+// We need the ioctl.h header so we can check if SIOCGIFHWADDR is defined by it so we know if we're
+// on a Linux system.
 #include <limits.h>
 #include <netinet/in.h>  // IWYU pragma: keep
+#include <sys/ioctl.h>   // IWYU pragma: keep
+#if !defined(__APPLE__) && !defined(__CYGWIN__)
 #include <pwd.h>
+#endif
+#include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #ifdef __CYGWIN__
@@ -17,16 +25,15 @@
 #include <sys/select.h>  // IWYU pragma: keep
 #endif
 #include <sys/stat.h>
-#include <sys/time.h>  // IWYU pragma: keep
-// We need the sys/file.h for the flock() declaration on Linux but not OS X.
-#include <sys/file.h>  // IWYU pragma: keep
-// We need the ioctl.h header so we can check if SIOCGIFHWADDR is defined by it so we know if we're
-// on a Linux system.
-#include <sys/ioctl.h>  // IWYU pragma: keep
+#include <sys/time.h>   // IWYU pragma: keep
+#include <sys/types.h>  // IWYU pragma: keep
 #include <unistd.h>
 #include <wchar.h>
+
+#include <atomic>
 #include <map>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 #include "common.h"
@@ -46,7 +53,7 @@
 #ifdef __HAIKU__
 #define _BSD_SOURCE
 #include <bsd/ifaddrs.h>
-#endif //Haiku
+#endif  // Haiku
 
 // NAME_MAX is not defined on Solaris and suggests the use of pathconf()
 // There is no obvious sensible pathconf() for shared memory and _XPG_NAME_MAX
@@ -134,8 +141,11 @@ static wcstring get_runtime_path() {
     } else {
         const char *uname = getenv("USER");
         if (uname == NULL) {
-            const struct passwd *pw = getpwuid(getuid());
-            uname = pw->pw_name;
+            struct passwd userinfo;
+            struct passwd *result;
+            char buf[8192];
+            int retval = getpwuid_r(getuid(), &userinfo, buf, sizeof(buf), &result);
+            if (!retval && result) uname = userinfo.pw_name;
         }
 
         // /tmp/fish.user
@@ -221,7 +231,7 @@ static bool append_file_entry(fish_message_type_t type, const wcstring &key_in,
     result->push_back(' ');
 
     // Append variable name like "fish_color_cwd".
-    if (wcsvarname(key_in)) {
+    if (!valid_var_name(key_in)) {
         debug(0, L"Illegal variable name: '%ls'", key_in.c_str());
         success = false;
     }
@@ -257,7 +267,7 @@ static bool append_file_entry(fish_message_type_t type, const wcstring &key_in,
 
 env_universal_t::env_universal_t(const wcstring &path)
     : explicit_vars_path(path), tried_renaming(false), last_read_file(kInvalidFileID) {
-    VOMIT_ON_FAILURE(pthread_mutex_init(&lock, NULL));
+    DIE_ON_FAILURE(pthread_mutex_init(&lock, NULL));
 }
 
 env_universal_t::~env_universal_t() { pthread_mutex_destroy(&lock); }
@@ -389,13 +399,13 @@ void env_universal_t::acquire_variables(var_table_t *vars_to_acquire) {
             // source entry in vars since we are about to get rid of this->vars entirely.
             var_entry_t &src = src_iter->second;
             var_entry_t &dst = (*vars_to_acquire)[key];
-            dst.val.swap(src.val);
+            dst.val = std::move(src.val);
             dst.exportv = src.exportv;
         }
     }
 
     // We have constructed all the callbacks and updated vars_to_acquire. Acquire it!
-    this->vars.swap(*vars_to_acquire);
+    this->vars = std::move(*vars_to_acquire);
 }
 
 void env_universal_t::load_from_fd(int fd, callback_data_list_t *callbacks) {
@@ -498,10 +508,10 @@ bool env_universal_t::move_new_vars_file_into_place(const wcstring &src, const w
 }
 
 bool env_universal_t::load() {
-    scoped_lock locker(lock);
     callback_data_list_t callbacks;
     const wcstring vars_path =
         explicit_vars_path.empty() ? default_vars_path() : explicit_vars_path;
+    scoped_lock locker(lock);
     bool success = load_from_path(vars_path, &callbacks);
     if (!success && !tried_renaming && errno == ENOENT) {
         // We failed to load, because the file was not found. Older fish used the hostname only. Try
@@ -577,7 +587,7 @@ bool env_universal_t::open_and_acquire_lock(const wcstring &path, int *out_fd) {
     //
     // We pass O_RDONLY with O_CREAT; this creates a potentially empty file. We do this so that we
     // have something to lock on.
-    static bool do_locking = true;
+    static std::atomic<bool> do_locking(true);
     bool needs_lock = true;
     int flags = O_RDWR | O_CREAT;
 
@@ -844,7 +854,7 @@ void env_universal_t::parse_message_internal(const wcstring &msgstr, var_table_t
             if (unescape_string(tmp + 1, &val, 0)) {
                 var_entry_t &entry = (*vars)[key];
                 entry.exportv = exportv;
-                entry.val.swap(val);  // acquire the value
+                entry.val = std::move(val);  // acquire the value
             }
         } else {
             debug(1, PARSE_ERR, msg);
@@ -864,8 +874,8 @@ void env_universal_t::parse_message_internal(const wcstring &msgstr, var_table_t
 #ifdef SIOCGIFHWADDR
 
 // Linux
-#include <sys/socket.h>
 #include <net/if.h>
+#include <sys/socket.h>
 static bool get_mac_address(unsigned char macaddr[MAC_ADDRESS_MAX_LEN],
                             const char *interface = "eth0") {
     bool result = false;
@@ -886,9 +896,9 @@ static bool get_mac_address(unsigned char macaddr[MAC_ADDRESS_MAX_LEN],
 #elif defined(HAVE_GETIFADDRS)
 
 // OS X and BSD
-#include <sys/socket.h>
 #include <ifaddrs.h>
 #include <net/if_dl.h>
+#include <sys/socket.h>
 static bool get_mac_address(unsigned char macaddr[MAC_ADDRESS_MAX_LEN],
                             const char *interface = "en0") {
     // BSD, Mac OS X
@@ -1357,28 +1367,26 @@ universal_notifier_t::notifier_strategy_t universal_notifier_t::resolve_default_
 }
 
 universal_notifier_t &universal_notifier_t::default_notifier() {
-    static universal_notifier_t *result =
+    static std::unique_ptr<universal_notifier_t> result =
         new_notifier_for_strategy(universal_notifier_t::resolve_default_strategy());
     return *result;
 }
 
-universal_notifier_t *universal_notifier_t::new_notifier_for_strategy(
+std::unique_ptr<universal_notifier_t> universal_notifier_t::new_notifier_for_strategy(
     universal_notifier_t::notifier_strategy_t strat, const wchar_t *test_path) {
     switch (strat) {
         case strategy_notifyd: {
-            return new universal_notifier_notifyd_t();
+            return make_unique<universal_notifier_notifyd_t>();
         }
         case strategy_shmem_polling: {
-            return new universal_notifier_shmem_poller_t();
+            return make_unique<universal_notifier_shmem_poller_t>();
         }
         case strategy_named_pipe: {
-            return new universal_notifier_named_pipe_t(test_path);
-        }
-        default: {
-            debug(0, "Unsupported universal notifier strategy %d\n", strat);
-            return NULL;
+            return make_unique<universal_notifier_named_pipe_t>(test_path);
         }
     }
+    DIE("should never reach this statement");
+    return NULL;
 }
 
 // Default implementations.

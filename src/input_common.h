@@ -4,6 +4,8 @@
 
 #include <stddef.h>
 
+#include <functional>
+
 #include "common.h"
 
 enum {
@@ -104,6 +106,6 @@ void input_common_next_ch(wint_t ch);
 
 /// Adds a callback to be invoked at the next turn of the "event loop." The callback function will
 /// be invoked and passed arg.
-void input_common_add_callback(void (*callback)(void *), void *arg);
+void input_common_add_callback(std::function<void(void)>);
 
 #endif

@@ -54,6 +54,8 @@
 #include <limits.h>
 #include <locale.h>
 #include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
@@ -63,7 +65,6 @@
 #include "builtin.h"
 #include "common.h"
 #include "io.h"
-#include "proc.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 class parser_t;
@@ -207,7 +208,7 @@ void builtin_printf_state_t::fatal_error(const wchar_t *fmt, ...) {
     streams.err.append(errstr);
     if (!string_suffixes_string(L"\n", errstr)) streams.err.push_back(L'\n');
 
-    this->exit_code = STATUS_BUILTIN_ERROR;
+    this->exit_code = STATUS_CMD_ERROR;
     this->early_exit = true;
 }
 
@@ -238,7 +239,11 @@ void builtin_printf_state_t::append_format_output(const wchar_t *fmt, ...) {
 
 void builtin_printf_state_t::verify_numeric(const wchar_t *s, const wchar_t *end, int errcode) {
     if (errcode != 0) {
-        this->fatal_error(L"%ls: %s", s, strerror(errcode));
+        if (errcode == ERANGE) {
+            this->fatal_error(L"%ls: %ls", s, _(L"Number out of range"));
+        } else {
+            this->fatal_error(L"%ls: %s", s, strerror(errcode));
+        }
     } else if (*end) {
         if (s == end)
             this->fatal_error(_(L"%ls: expected a numeric value"), s);
@@ -435,6 +440,8 @@ void builtin_printf_state_t::print_direc(const wchar_t *start, size_t length, wc
     // Create a copy of the % directive, with an intmax_t-wide width modifier substituted for any
     // existing integer length modifier.
     switch (conversion) {
+        case L'x':
+        case L'X':
         case L'd':
         case L'i':
         case L'u': {
@@ -721,7 +728,7 @@ int builtin_printf(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
 
     if (argc <= 1) {
         state.fatal_error(_(L"printf: not enough arguments"));
-        return STATUS_BUILTIN_ERROR;
+        return STATUS_INVALID_ARGS;
     }
 
     format = argv[1];

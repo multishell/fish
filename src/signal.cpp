@@ -16,6 +16,9 @@
 #include "reader.h"
 #include "wutil.h"  // IWYU pragma: keep
 
+// This is a temporary var while we explore whether signal_block() and friends is needed.
+bool ignore_signal_block = true;
+
 /// Struct describing an entry for the lookup table used to convert between signal names and signal
 /// ids, etc.
 struct lookup_entry {
@@ -140,7 +143,7 @@ static const struct lookup_entry lookup[] = {
 #ifdef SIGUNUSED
     {SIGUNUSED, L"SIGUNUSED", N_(L"Unused signal")},
 #endif
-    {0, 0, 0}};
+    {0, NULL, NULL}};
 
 /// Test if \c name is a string describing the signal named \c canonical.
 static int match_signal_name(const wchar_t *canonical, const wchar_t *name) {
@@ -217,7 +220,7 @@ static void handle_hup(int sig, siginfo_t *info, void *context) {
 }
 
 /// Handle sigterm. The only thing we do is restore the front process ID, then die.
-static void handle_term(int sig, siginfo_t *info, void *context) {
+static void handle_sigterm(int sig, siginfo_t *info, void *context) {
     UNUSED(sig);
     UNUSED(info);
     UNUSED(context);
@@ -239,6 +242,14 @@ static void handle_chld(int sig, siginfo_t *info, void *context) {
     default_handler(sig, info, context);
 }
 
+// We have a sigalarm handler that does nothing. This is used in the signal torture test, to verify
+// that we behave correctly when receiving lots of irrelevant signals.
+static void handle_sigalarm(int sig, siginfo_t *info, void *context) {
+    UNUSED(sig);
+    UNUSED(info);
+    UNUSED(context);
+}
+
 void signal_reset_handlers() {
     int i;
 
@@ -248,92 +259,94 @@ void signal_reset_handlers() {
     act.sa_handler = SIG_DFL;
 
     for (i = 0; lookup[i].desc; i++) {
-        sigaction(lookup[i].signal, &act, 0);
+        if (lookup[i].signal == SIGHUP) {
+            struct sigaction oact;
+            sigaction(SIGHUP, NULL, &oact);
+            if (oact.sa_handler == SIG_IGN) continue;
+        }
+        sigaction(lookup[i].signal, &act, NULL);
     }
 }
 
-/// Sets appropriate signal handlers.
-void signal_set_handlers() {
-    struct sigaction act;
-
+static void set_interactive_handlers() {
+    struct sigaction act, oact;
     sigemptyset(&act.sa_mask);
-    act.sa_flags = SA_SIGINFO;
+
+    // Interactive mode. Ignore interactive signals.  We are a shell, we know what is best for
+    // the user.
+    act.sa_handler = SIG_IGN;
+    sigaction(SIGINT, &act, NULL);
+    sigaction(SIGQUIT, &act, NULL);
+    sigaction(SIGTSTP, &act, NULL);
+    sigaction(SIGTTOU, &act, NULL);
+
+    // We don't ignore SIGTTIN because we might send it to ourself.
     act.sa_sigaction = &default_handler;
+    act.sa_flags = SA_SIGINFO;
+    sigaction(SIGTTIN, &act, NULL);
 
-    // First reset everything to a use default_handler, a function whose sole action is to fire of
-    // an event.
-    sigaction(SIGINT, &act, 0);
-    sigaction(SIGQUIT, &act, 0);
-    sigaction(SIGTSTP, &act, 0);
-    sigaction(SIGTTIN, &act, 0);
-    sigaction(SIGTTOU, &act, 0);
-    sigaction(SIGCHLD, &act, 0);
+    act.sa_sigaction = &handle_int;
+    act.sa_flags = SA_SIGINFO;
+    sigaction(SIGINT, &act, NULL);
 
-    // Ignore sigpipe, which we may get from the universal variable notifier.
-    sigaction(SIGPIPE, &act, 0);
+    // SIGTERM restores the terminal controlling process before dying.
+    act.sa_sigaction = &handle_sigterm;
+    act.sa_flags = SA_SIGINFO;
+    sigaction(SIGTERM, &act, NULL);
 
-    if (shell_is_interactive()) {
-        // Interactive mode. Ignore interactive signals.  We are a shell, we know what is best for
-        // the user.
-        act.sa_handler = SIG_IGN;
-
-        sigaction(SIGINT, &act, 0);
-        sigaction(SIGQUIT, &act, 0);
-        sigaction(SIGTSTP, &act, 0);
-        sigaction(SIGTTIN, &act, 0);
-        sigaction(SIGTTOU, &act, 0);
-
-        act.sa_sigaction = &handle_int;
+    sigaction(SIGHUP, NULL, &oact);
+    if (oact.sa_handler == SIG_DFL) {
+        act.sa_sigaction = &handle_hup;
         act.sa_flags = SA_SIGINFO;
-        if (sigaction(SIGINT, &act, 0)) {
-            wperror(L"sigaction");
-            FATAL_EXIT();
-        }
+        sigaction(SIGHUP, &act, NULL);
+    }
 
-        act.sa_sigaction = &handle_chld;
-        act.sa_flags = SA_SIGINFO;
-        if (sigaction(SIGCHLD, &act, 0)) {
-            wperror(L"sigaction");
-            FATAL_EXIT();
-        }
+    // SIGALARM as part of our signal torture test
+    act.sa_sigaction = &handle_sigalarm;
+    act.sa_flags = SA_SIGINFO;
+    sigaction(SIGALRM, &act, NULL);
 
 #ifdef SIGWINCH
-        act.sa_flags = SA_SIGINFO;
-        act.sa_sigaction = &handle_winch;
-        if (sigaction(SIGWINCH, &act, 0)) {
-            wperror(L"sigaction");
-            FATAL_EXIT();
-        }
+    act.sa_sigaction = &handle_winch;
+    act.sa_flags = SA_SIGINFO;
+    sigaction(SIGWINCH, &act, NULL);
 #endif
+}
 
-        act.sa_flags = SA_SIGINFO;
-        act.sa_sigaction = &handle_hup;
-        if (sigaction(SIGHUP, &act, 0)) {
-            wperror(L"sigaction");
-            FATAL_EXIT();
-        }
+static void set_non_interactive_handlers() {
+    struct sigaction act;
+    sigemptyset(&act.sa_mask);
 
-        // SIGTERM restores the terminal controlling process before dying.
-        act.sa_flags = SA_SIGINFO;
-        act.sa_sigaction = &handle_term;
-        if (sigaction(SIGTERM, &act, 0)) {
-            wperror(L"sigaction");
-            FATAL_EXIT();
-        }
+    // Non-interactive. Ignore interrupt, check exit status of processes to determine result
+    // instead.
+    act.sa_handler = SIG_IGN;
+    sigaction(SIGINT, &act, 0);
+    sigaction(SIGQUIT, &act, 0);
+}
+
+/// Sets up appropriate signal handlers.
+void signal_set_handlers() {
+    struct sigaction act;
+    sigemptyset(&act.sa_mask);
+
+    // Ignore SIGPIPE. We'll detect failed writes and deal with them appropriately. We don't want
+    // this signal interrupting other syscalls or terminating us.
+    act.sa_handler = SIG_IGN;
+    sigaction(SIGPIPE, &act, 0);
+
+    // Whether or not we're interactive we want SIGCHLD to not interrupt restartable syscalls.
+    act.sa_flags = SA_SIGINFO;
+    act.sa_sigaction = &handle_chld;
+    act.sa_flags = SA_SIGINFO | SA_RESTART;
+    if (sigaction(SIGCHLD, &act, 0)) {
+        wperror(L"sigaction");
+        FATAL_EXIT();
+    }
+
+    if (shell_is_interactive()) {
+        set_interactive_handlers();
     } else {
-        // Non-interactive. Ignore interrupt, check exit status of processes to determine result
-        // instead.
-        act.sa_handler = SIG_IGN;
-        sigaction(SIGINT, &act, 0);
-        sigaction(SIGQUIT, &act, 0);
-
-        act.sa_handler = SIG_DFL;
-        act.sa_sigaction = &handle_chld;
-        act.sa_flags = SA_SIGINFO;
-        if (sigaction(SIGCHLD, &act, 0)) {
-            wperror(L"sigaction");
-            exit_without_destructors(1);
-        }
+        set_non_interactive_handlers();
     }
 }
 
@@ -362,24 +375,39 @@ void get_signals_with_handlers(sigset_t *set) {
     for (int i = 0; lookup[i].desc; i++) {
         struct sigaction act = {};
         sigaction(lookup[i].signal, NULL, &act);
+        // If SIGHUP is being ignored (e.g., because were were run via `nohup`) don't reset it.
+        // We don't special case other signals because if they're being ignored that shouldn't
+        // affect processes we spawn. They should get the default behavior for those signals.
+        if (lookup[i].signal == SIGHUP && act.sa_handler == SIG_IGN) continue;
         if (act.sa_handler != SIG_DFL) sigaddset(set, lookup[i].signal);
     }
 }
 
-void signal_block() {
+void signal_block(bool force) {
+    if (!force && ignore_signal_block) return;
+
     ASSERT_IS_MAIN_THREAD();
     sigset_t chldset;
 
     if (!block_count) {
         sigfillset(&chldset);
-        VOMIT_ON_FAILURE(pthread_sigmask(SIG_BLOCK, &chldset, NULL));
+        DIE_ON_FAILURE(pthread_sigmask(SIG_BLOCK, &chldset, NULL));
     }
 
     block_count++;
-    //	debug( 0, L"signal block level increased to %d", block_count );
+    // debug( 0, L"signal block level increased to %d", block_count );
 }
 
-void signal_unblock() {
+/// Ensure we did not inherit any blocked signals. See issue #3964.
+void signal_unblock_all() {
+    sigset_t iset;
+    sigemptyset(&iset);
+    sigprocmask(SIG_SETMASK, &iset, NULL);
+}
+
+void signal_unblock(bool force) {
+    if (!force && ignore_signal_block) return;
+
     ASSERT_IS_MAIN_THREAD();
     sigset_t chldset;
 
@@ -393,9 +421,12 @@ void signal_unblock() {
 
     if (!block_count) {
         sigfillset(&chldset);
-        VOMIT_ON_FAILURE(pthread_sigmask(SIG_UNBLOCK, &chldset, 0));
+        DIE_ON_FAILURE(pthread_sigmask(SIG_UNBLOCK, &chldset, 0));
     }
-    //	debug( 0, L"signal block level decreased to %d", block_count );
+    // debug( 0, L"signal block level decreased to %d", block_count );
 }
 
-bool signal_is_blocked() { return static_cast<bool>(block_count); }
+bool signal_is_blocked() {
+    if (ignore_signal_block) return false;
+    return static_cast<bool>(block_count);
+}

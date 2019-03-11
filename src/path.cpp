@@ -3,7 +3,6 @@
 // issues.
 #include "config.h"  // IWYU pragma: keep
 
-#include <assert.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -12,6 +11,7 @@
 #include <wchar.h>
 
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "common.h"
@@ -51,28 +51,29 @@ static bool path_get_path_core(const wcstring &cmd, wcstring *out_path,
     if (!bin_path_var.missing()) {
         bin_path = bin_path_var;
     } else {
-        if (contains(PREFIX L"/bin", L"/bin", L"/usr/bin")) {
-            bin_path = L"/bin" ARRAY_SEP_STR L"/usr/bin";
-        } else {
-            bin_path = L"/bin" ARRAY_SEP_STR L"/usr/bin" ARRAY_SEP_STR PREFIX L"/bin";
-        }
+        // Note that PREFIX is defined in the `Makefile` and is thus defined when this module is
+        // compiled. This ensures we always default to "/bin", "/usr/bin" and the bin dir defined
+        // for the fish programs. Possibly with a duplicate dir if PREFIX is empty, "/", "/usr" or
+        // "/usr/". If the PREFIX duplicates /bin or /usr/bin that is harmless other than a trivial
+        // amount of time testing a path we've already tested.
+        bin_path = L"/bin" ARRAY_SEP_STR L"/usr/bin" ARRAY_SEP_STR PREFIX L"/bin";
     }
 
-    wcstring nxt_path;
-    wcstokenizer tokenizer(bin_path, ARRAY_SEP_STR);
-    while (tokenizer.next(nxt_path)) {
-        if (nxt_path.empty()) continue;
-        append_path_component(nxt_path, cmd);
-        if (waccess(nxt_path, X_OK) == 0) {
+    std::vector<wcstring> pathsv;
+    tokenize_variable_array(bin_path, pathsv);
+    for (auto next_path : pathsv) {
+        if (next_path.empty()) continue;
+        append_path_component(next_path, cmd);
+        if (waccess(next_path, X_OK) == 0) {
             struct stat buff;
-            if (wstat(nxt_path, &buff) == -1) {
+            if (wstat(next_path, &buff) == -1) {
                 if (errno != EACCES) {
                     wperror(L"stat");
                 }
                 continue;
             }
             if (S_ISREG(buff.st_mode)) {
-                if (out_path) out_path->swap(nxt_path);
+                if (out_path) *out_path = std::move(next_path);
                 return true;
             }
             err = EACCES;
@@ -85,7 +86,7 @@ static bool path_get_path_core(const wcstring &cmd, wcstring *out_path,
                     break;
                 }
                 default: {
-                    debug(1, MISSING_COMMAND_ERR_MSG, nxt_path.c_str());
+                    debug(1, MISSING_COMMAND_ERR_MSG, next_path.c_str());
                     wperror(L"access");
                     break;
                 }
@@ -128,24 +129,22 @@ bool path_get_cdpath(const wcstring &dir, wcstring *out, const wchar_t *wd,
         paths.push_back(path);
     } else {
         // Respect CDPATH.
-        env_var_t path = env_vars.get(L"CDPATH");
-        if (path.missing_or_empty()) path = L".";  // we'll change this to the wd if we have one
+        env_var_t cdpaths = env_vars.get(L"CDPATH");
+        if (cdpaths.missing_or_empty()) cdpaths = L".";
 
-        wcstring nxt_path;
-        wcstokenizer tokenizer(path, ARRAY_SEP_STR);
-        while (tokenizer.next(nxt_path)) {
-            if (nxt_path == L"." && wd != NULL) {
-                // nxt_path is just '.', and we have a working directory, so use the wd instead.
-                // TODO: if nxt_path starts with ./ we need to replace the . with the wd.
-                nxt_path = wd;
+        std::vector<wcstring> cdpathsv;
+        tokenize_variable_array(cdpaths, cdpathsv);
+        for (auto next_path : cdpathsv) {
+            if (next_path.empty()) next_path = L".";
+            if (next_path == L"." && wd != NULL) {
+                // next_path is just '.', and we have a working directory, so use the wd instead.
+                // TODO: if next_path starts with ./ we need to replace the . with the wd.
+                next_path = wd;
             }
-            expand_tilde(nxt_path);
+            expand_tilde(next_path);
+            if (next_path.empty()) continue;
 
-            // debug( 2, L"woot %ls\n", expanded_path.c_str() );
-
-            if (nxt_path.empty()) continue;
-
-            wcstring whole_path = nxt_path;
+            wcstring whole_path = next_path;
             append_path_component(whole_path, dir);
             paths.push_back(whole_path);
         }
@@ -232,8 +231,7 @@ static void maybe_issue_path_warning(const wcstring &which_dir, const wcstring &
     debug(0, custom_error_msg.c_str());
     if (path.empty()) {
         debug(0, _(L"Unable to locate the %ls directory."), which_dir.c_str());
-        debug(0, _(L"Please set the %ls or HOME environment variable "
-                   L"before starting fish."),
+        debug(0, _(L"Please set the %ls or HOME environment variable before starting fish."),
               xdg_var.c_str());
     } else {
         const wchar_t *env_var = using_xdg ? xdg_var.c_str() : L"HOME";

@@ -70,7 +70,7 @@ extra_confdir = @extra_confdir@
 # pcre2
 #
 PCRE2_WIDTH = @WCHAR_T_BITS@
-PCRE2_DIR = pcre2-10.21
+PCRE2_DIR = pcre2-10.22
 PCRE2_LIBDIR = $(PCRE2_DIR)/.libs
 PCRE2_LIB = $(PCRE2_LIBDIR)/libpcre2-$(PCRE2_WIDTH).a
 PCRE2_H = $(PCRE2_DIR)/src/pcre2.h
@@ -181,7 +181,7 @@ PROGRAMS := fish fish_indent fish_key_reader
 # Manual pages to install
 #
 MANUALS := $(addsuffix .1, $(addprefix share/man/man1/, $(PROGRAMS)))
-HELP_MANPAGES := $(wildcard share/man/man1/*.1)
+HELP_MANPAGES = $(wildcard share/man/man1/*.1)
 
 # Determine which man pages we don't want to install
 # On OS X, don't install a man page for open, since we defeat fish's open
@@ -190,15 +190,21 @@ HELP_MANPAGES := $(wildcard share/man/man1/*.1)
 # tarball includes this page, we need to skip it in the Makefile too (see
 # https://github.com/fish-shell/fish-shell/issues/2561).
 ifeq ($(shell uname), Darwin)
-	HELP_MANPAGES := $(filter-out share/man/man1/open.1, $(HELP_MANPAGES))
+	CONDEMNED_PAGES := open.1
+	HELP_MANPAGES = $(filter-out share/man/man1/open.1, $(wildcard share/man/man1/*.1))
 endif
 
 #
-# All translation message catalogs
+# All translation message catalogs, filter files based on LINGUAS.
 #
 TRANSLATIONS_SRC := $(wildcard po/*.po)
-ifdef HAVE_GETTEXT
+ifeq ($(HAVE_GETTEXT), 1)
 	TRANSLATIONS := $(TRANSLATIONS_SRC:.po=.gmo)
+ifdef LINGUAS
+	TRANSLATIONS_ALL := $(TRANSLATIONS)
+	TRANSLATIONS_WANTED = $(patsubst %,po/%.gmo,$(LINGUAS))
+	TRANSLATIONS = $(filter $(TRANSLATIONS_WANTED),$(TRANSLATIONS_ALL))
+endif
 else
 	TRANSLATIONS :=
 endif
@@ -249,7 +255,7 @@ show-%:
 #
 all: show-CXX show-CXXFLAGS $(PROGRAMS) $(user_doc) $(share_man) $(TRANSLATIONS) fish.pc share/__fish_build_paths.fish
 ifneq (,$(findstring install,$(MAKECMDGOALS)))
-# Fish has been built, but if the goal was 'install', we aren't done yet and this output isnt't desirable 
+# Fish has been built, but if the goal was 'install', we aren't done yet and this output isnt't desirable
 	@echo "$(green)fish has now been built.$(sgr0)"
 	@echo "Run $(yellow)$(notdir $(MAKE)) install$(sgr0) to install fish.$(sgr0)"
 endif
@@ -362,7 +368,9 @@ test_low_level: fish_tests $(call filter_up_to,test_low_level,$(active_test_goal
 	env XDG_DATA_HOME=test/data XDG_CONFIG_HOME=test/home ./fish_tests
 .PHONY: test_low_level
 
-test_high_level: test_fishscript test_interactive
+test_high_level: DESTDIR = $(PWD)/test/root/
+test_high_level: prefix = .
+test_high_level: test-prep install-force test_fishscript test_interactive
 .PHONY: test_high_level
 
 test_fishscript: $(call filter_up_to,test_fishscript,$(active_test_goals))
@@ -465,7 +473,7 @@ lexicon_filter: lexicon.txt lexicon_filter.in | show-SED
 	else \
 		WORDBL='\\<'; WORDBR='\\>'; \
 	fi; $(SED) <lexicon.txt >>$@.tmp -n -e "s|^\([a-z][a-z][a-z][a-z]\) \([a-z_-]*\)$$|s,$$WORDBL\2$$WORDBR,@\1{\2},g|p" -e '$$G;s/.*\n/b tidy/p';
-	$v mv $@.tmp $@; test -x $@ || chmod a+x $@; 
+	$v mv $@.tmp $@; test -x $@ || chmod a+x $@;
 
 
 #
@@ -608,7 +616,7 @@ check-legacy-binaries:
 .PHONY: check-legacy-binaries
 
 install: all install-force | check-legacy-binaries
-	@echo 
+	@echo
 	@echo "$(bo)fish is now installed on your system.$(sgr0)"
 	@echo "To run fish, type $(bo)$(green)fish$(sgr0) in your terminal."
 	@echo "$(T_YELLOW)Even if you are already in fish, you should now start a new fish session.$(sgr0)"
@@ -677,42 +685,19 @@ install-force: all install-translations | show-datadir show-sysconfdir show-extr
 	@echo "Installing pkgconfig file"
 	$v $(INSTALL) -m 644 fish.pc $(DESTDIR)$(datadir)/pkgconfig
 	@echo "Installing the $(bo)fish completion library$(sgr0)...";
-	$v for i in $(COMPLETIONS_DIR_FILES:%='%'); do \
-		$(INSTALL) -m 644 $$i $(DESTDIR)$(datadir)/fish/completions/; \
-	done;
+	$v $(INSTALL) -m 644 $(COMPLETIONS_DIR_FILES:%='%') $(DESTDIR)$(datadir)/fish/completions/
 	@echo "Installing $(bo)fish functions$(sgr0)";
-	$v for i in $(FUNCTIONS_DIR_FILES:%='%'); do \
-		$(INSTALL) -m 644 $$i $(DESTDIR)$(datadir)/fish/functions/; \
-	done;
+	$v $(INSTALL) -m 644 $(FUNCTIONS_DIR_FILES:%='%') $(DESTDIR)$(datadir)/fish/functions/
 	@echo "Installing $(bo)man pages$(sgr0)";
 	$v $(INSTALL) -m 644 share/groff/* $(DESTDIR)$(datadir)/fish/groff/
-	$v for i in $(HELP_MANPAGES); do \
-		$(INSTALL) -m 644 $$i $(DESTDIR)$(datadir)/fish/man/man1/; \
-	done;
+	$v test -z "$(wildcard share/man/man1/*.1)" || $(INSTALL) -m 644 $(filter-out $(addprefix share/man/man1/, $(CONDEMNED_PAGES)), $(wildcard share/man/man1/*.1)) $(DESTDIR)$(datadir)/fish/man/man1/
 	@echo "Installing helper tools";
-	$v for i in $(wildcard share/tools/*.py); do\
-		$(INSTALL) -m 755 $$i $(DESTDIR)$(datadir)/fish/tools/; \
-	done;
-	$v for i in share/tools/web_config/*.*; do\
-		$(INSTALL) -m 644 $$i $(DESTDIR)$(datadir)/fish/tools/web_config/; \
-		true; \
-	done;
-	$v for i in share/tools/web_config/js/*.*; do\
-		$(INSTALL) -m 644 $$i $(DESTDIR)$(datadir)/fish/tools/web_config/js/; \
-		true; \
-	done;
-	$v for i in share/tools/web_config/partials/*; do\
-		$(INSTALL) -m 644 $$i $(DESTDIR)$(datadir)/fish/tools/web_config/partials/; \
-		true; \
-	done;
-	$v for i in share/tools/web_config/sample_prompts/*.fish; do\
-		$(INSTALL) -m 644 $$i $(DESTDIR)$(datadir)/fish/tools/web_config/sample_prompts/; \
-		true; \
-	done;
-	$v for i in share/tools/web_config/*.py; do\
-		$(INSTALL) -m 755 $$i $(DESTDIR)$(datadir)/fish/tools/web_config/; \
-		true; \
-	done;
+	$v $(INSTALL) -m 755 share/tools/*.py $(DESTDIR)$(datadir)/fish/tools/
+	$v $(INSTALL) -m 644 share/tools/web_config/*.* $(DESTDIR)$(datadir)/fish/tools/web_config/
+	$v $(INSTALL) -m 644 share/tools/web_config/js/*.* $(DESTDIR)$(datadir)/fish/tools/web_config/js/
+	$v $(INSTALL) -m 644 share/tools/web_config/partials/* $(DESTDIR)$(datadir)/fish/tools/web_config/partials/
+	$v $(INSTALL) -m 644 share/tools/web_config/sample_prompts/*.fish $(DESTDIR)$(datadir)/fish/tools/web_config/sample_prompts/
+	$v $(INSTALL) -m 755 share/tools/web_config/*.py $(DESTDIR)$(datadir)/fish/tools/web_config/
 	@echo "Installing online user documentation";
 	$v $(INSTALL) -m 755 -d $(DESTDIR)$(docdir)
 	$v for i in user_doc/html/* CHANGELOG.md; do \
@@ -744,7 +729,7 @@ uninstall: uninstall-translations | show-prefix show-bindir show-sysconfdir show
 	@echo
 	@echo "In 5 seconds, $(red)all data$(sgr0) (includes functions, completions, tools) in"
 	@echo $$"\t$(bo)$(DESTDIR)$(datadir)/fish$(sgr0) will be deleted!"
-	@echo 
+	@echo
 	@echo $$"If you put things there, $(red)stop now!$(sgr0) $(bo)\\c"
 	@echo $$"$(bo)5$(sgr0) \\c"
 	@sleep 1
@@ -777,7 +762,7 @@ uninstall: uninstall-translations | show-prefix show-bindir show-sysconfdir show
 	@echo "[ $(bo)"$(basename $(MANUALS))$(sgr0) $$"] in \\c"
 	@echo "$(em)$(mandir)/man1$(sgr0)"
 	-$v for i in $(MANUALS); do \
-		rm -rf "$(DESTDIR)$(mandir)/man1/"$$$(basename $i)$$$(wildcard .*); 
+		rm -rf "$(DESTDIR)$(mandir)/man1/"$$$(basename $i)$$$(wildcard .*);
 	done;
 	@echo
 	@echo "$(green)Fish (likely) unintalled$(sgr0)"
@@ -786,7 +771,7 @@ uninstall: uninstall-translations | show-prefix show-bindir show-sysconfdir show
 .PHONY: uninstall
 
 install-translations: $(TRANSLATIONS) | show-HAVE_GETTEXT
-ifdef HAVE_GETTEXT
+ifeq ($(HAVE_GETTEXT), 1)
 	@echo "Installing translations..."
 	$v for i in $(TRANSLATIONS); do \
 		$(INSTALL) -m 755 -d $(DESTDIR)$(localedir)/`basename $$i .gmo`/LC_MESSAGES; \
@@ -806,7 +791,7 @@ uninstall-translations: show-DESTDIR show-localedir
 #
 # How basic files get compiled
 #
-obj/%.o: src/%.cpp | show-CXX show-CXXFLAGS show-CPPFLAGS obj 
+obj/%.o: src/%.cpp | show-CXX show-CXXFLAGS show-CPPFLAGS obj
 	@echo "  CXX      $(em)$@$(sgr0)"
 	$v $(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
@@ -847,7 +832,7 @@ fish_indent: $(FISH_INDENT_OBJS) $(EXTRA_PCRE2)
 	$v $(CXX) $(CXXFLAGS) $(LDFLAGS) $(FISH_INDENT_OBJS) $(LIBS) -o $@
 
 #
-# Build the fish_key_reader program to show input from the terminal. 
+# Build the fish_key_reader program to show input from the terminal.
 #
 fish_key_reader: $(FISH_KEYREAD_OBJS) $(EXTRA_PCRE2)
 	@echo "  CXX LD   $(em)$@$(sgr0)"
@@ -864,7 +849,7 @@ fish_key_reader: $(FISH_KEYREAD_OBJS) $(EXTRA_PCRE2)
 # exactly the files that result in objects, leaving the #include'd files
 # behind.
 #
-depend: | show-MKDIR_P 
+depend: | show-MKDIR_P
 	@echo "  CXX LD   $(em)$@$(sgr0)"
 	$v $(MKDIR_P) /tmp/fish_make_depend/src
 	# This is ran only once in a blue moon - full verbosity so we are reminded what it does.
@@ -989,7 +974,7 @@ obj/builtin_set.o: config.h src/builtin.h src/common.h src/fallback.h
 obj/builtin_set.o: src/signal.h src/env.h src/expand.h src/parse_constants.h
 obj/builtin_set.o: src/io.h src/proc.h src/parse_tree.h src/tokenizer.h
 obj/builtin_set.o: src/wgetopt.h src/wutil.h
-obj/builtin_set_color.o: config.h src/builtin.h src/common.h src/fallback.h
+obj/builtin_set_color.o: config.h src/builtin.h src/common.h src/env.h src/fallback.h
 obj/builtin_set_color.o: src/signal.h src/color.h src/io.h src/output.h
 obj/builtin_set_color.o: src/proc.h src/parse_tree.h src/parse_constants.h
 obj/builtin_set_color.o: src/tokenizer.h src/wgetopt.h src/wutil.h

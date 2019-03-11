@@ -4,11 +4,15 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
 #include <map>
 #include <memory>
 #include <string>
 
 #include "common.h"
+
+extern size_t read_byte_limit;
+extern bool curses_initialized;
 
 // Flags that may be passed as the 'mode' in env_set / env_get_string.
 enum {
@@ -50,6 +54,10 @@ struct config_paths_t {
 
 /// Initialize environment variable data.
 void env_init(const struct config_paths_t *paths = NULL);
+
+/// Various things we need to initialize at run-time that don't really fit any of the other init
+/// routines.
+void misc_init();
 
 int env_set(const wcstring &key, const wchar_t *val, env_mode_flags_t mode);
 
@@ -134,8 +142,8 @@ void env_pop();
 /// Synchronizes all universal variable changes: writes everything out, reads stuff in.
 void env_universal_barrier();
 
-/// Returns an array containing all exported variables in a format suitable for execv.
-const char *const *env_export_arr(bool recalc);
+/// Returns an array containing all exported variables in a format suitable for execv
+const char *const *env_export_arr();
 
 /// Sets up argv as the given null terminated array of strings.
 void env_set_argv(const wchar_t *const *argv);
@@ -144,19 +152,22 @@ void env_set_argv(const wchar_t *const *argv);
 wcstring_list_t env_get_names(int flags);
 
 /// Update the PWD variable directory.
-int env_set_pwd();
+bool env_set_pwd();
 
 /// Returns the PWD with a terminating slash.
 wcstring env_get_pwd_slash();
+
+/// Update the read_byte_limit variable.
+void env_set_read_limit();
 
 class env_vars_snapshot_t {
     std::map<wcstring, wcstring> vars;
     bool is_current() const;
 
-    env_vars_snapshot_t(const env_vars_snapshot_t &);
-    void operator=(const env_vars_snapshot_t &);
-
    public:
+    env_vars_snapshot_t(const env_vars_snapshot_t &) = default;
+    env_vars_snapshot_t &operator=(const env_vars_snapshot_t &) = default;
+
     env_vars_snapshot_t(const wchar_t *const *keys);
     env_vars_snapshot_t();
 

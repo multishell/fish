@@ -4,10 +4,12 @@
 
 // IWYU pragma: no_include <cstddef>
 #include <pthread.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <time.h>
 #include <wctype.h>
+
 #include <deque>
 #include <memory>
 #include <set>
@@ -87,7 +89,7 @@ class history_item_t {
     time_t timestamp() const { return creation_timestamp; }
 
     const path_list_t &get_required_paths() const { return required_paths; }
-    void set_required_paths(path_list_t paths) { required_paths = paths; }
+    void set_required_paths(const path_list_t &paths) { required_paths = paths; }
 
     bool operator==(const history_item_t &other) const {
         return contents == other.contents && creation_timestamp == other.creation_timestamp &&
@@ -178,6 +180,10 @@ class history_t {
     // Deletes duplicates in new_items.
     void compact_new_items();
 
+    // Attempts to rewrite the existing file to a target temporary file
+    // Returns false on error, true on success
+    bool rewrite_to_temporary_file(int existing_fd, int dst_fd) const;
+
     // Saves history by rewriting the file.
     bool save_internal_via_rewrite();
 
@@ -193,7 +199,10 @@ class history_t {
     // Do a private, read-only map of the entirety of a history file with the given name. Returns
     // true if successful. Returns the mapped memory region by reference.
     bool map_file(const wcstring &name, const char **out_map_start, size_t *out_map_len,
-                  file_id_t *file_id);
+                  file_id_t *file_id) const;
+
+    // Like map_file but takes a file descriptor
+    bool map_fd(int fd, const char **out_map_start, size_t *out_map_len) const;
 
     // Whether we're in maximum chaos mode, useful for testing.
     bool chaos_mode;
@@ -341,34 +350,12 @@ void history_destroy();
 // Perform sanity checks.
 void history_sanity_check();
 
-// A helper class for threaded detection of paths.
-struct file_detection_context_t {
-    // Constructor.
-    explicit file_detection_context_t(history_t *hist, history_identifier_t ident = 0);
+// Given a list of paths and a working directory, return the paths that are valid
+// This does disk I/O and may only be called in a background thread
+path_list_t valid_paths(const path_list_t &paths, const wcstring &working_directory);
 
-    // Determine which of potential_paths are valid, and put them in valid_paths.
-    int perform_file_detection();
-
-    // The history associated with this context.
-    history_t *const history;
-
-    // The working directory at the time the command was issued.
-    wcstring working_directory;
-
-    // Paths to test.
-    path_list_t potential_paths;
-
-    // Paths that were found to be valid.
-    path_list_t valid_paths;
-
-    // Identifier of the history item to which we are associated.
-    const history_identifier_t history_item_identifier;
-
-    // Performs file detection. Returns 1 if every path in potential_paths is valid, 0 otherwise. If
-    // test_all is true, tests every path; otherwise stops as soon as it reaches an invalid path.
-    int perform_file_detection(bool test_all);
-
-    // Determine whether the given paths are all valid.
-    bool paths_are_valid(const path_list_t &paths);
-};
+// Given a list of paths and a working directory,
+// return true if all paths in the list are valid
+// Returns true for if paths is empty
+bool all_paths_are_valid(const path_list_t &paths, const wcstring &working_directory);
 #endif

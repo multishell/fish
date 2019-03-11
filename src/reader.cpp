@@ -14,7 +14,6 @@
 #include "config.h"
 
 // IWYU pragma: no_include <type_traits>
-#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -37,8 +36,11 @@
 #include <wctype.h>
 
 #include <algorithm>
-#include <stack>
+#include <atomic>
+#include <csignal>
+#include <functional>
 #include <memory>
+#include <stack>
 
 #include "color.h"
 #include "common.h"
@@ -125,15 +127,17 @@
 #define SEARCH_FORWARD 1
 
 /// Any time the contents of a buffer changes, we update the generation count. This allows for our
-/// background highlighting thread to notice it and skip doing work that it would otherwise have to
-/// do. This variable should really be of some kind of interlocked or atomic type that guarantees
-/// we're not reading stale cache values. With C++11 we should use atomics, but until then volatile
-/// should work as well, at least on x86.
-static volatile unsigned int s_generation_count;
+/// background threads to notice it and skip doing work that they would otherwise have to do.
+static std::atomic<unsigned int> s_generation_count;
 
 /// This pthreads generation count is set when an autosuggestion background thread starts up, so it
 /// can easily check if the work it is doing is no longer useful.
 static pthread_key_t generation_count_key;
+
+/// Helper to get the generation count
+static unsigned int read_generation_count() {
+    return s_generation_count.load(std::memory_order_relaxed);
+}
 
 static void set_command_line_and_position(editable_line_t *el, const wcstring &new_str, size_t pos);
 
@@ -164,6 +168,8 @@ class reader_data_t {
     bool suppress_autosuggestion;
     /// Whether abbreviations are expanded.
     bool expand_abbreviations;
+    /// Silent mode used for password input on the read command
+    bool silent;
     /// The representation of the current screen contents.
     screen_t screen;
     /// The history.
@@ -252,13 +258,14 @@ class reader_data_t {
 
     /// Constructor
     reader_data_t()
-        : allow_autosuggestion(0),
-          suppress_autosuggestion(0),
-          expand_abbreviations(0),
+        : allow_autosuggestion(false),
+          suppress_autosuggestion(false),
+          expand_abbreviations(false),
+          silent(false),
           history(0),
           token_history_pos(0),
           search_pos(0),
-          sel_active(0),
+          sel_active(false),
           sel_begin_pos(0),
           sel_start_pos(0),
           sel_stop_pos(0),
@@ -266,13 +273,13 @@ class reader_data_t {
           complete_func(0),
           highlight_function(0),
           test_func(0),
-          end_loop(0),
-          prev_end_loop(0),
+          end_loop(false),
+          prev_end_loop(false),
           next(0),
           search_mode(0),
-          repaint_needed(0),
-          screen_reset_needed(0),
-          exit_on_interrupt(0) {}
+          repaint_needed(false),
+          screen_reset_needed(false),
+          exit_on_interrupt(false) {}
 };
 
 /// Sets the command line contents, without clearing the pager.
@@ -286,7 +293,7 @@ static reader_data_t *data = 0;
 
 /// This flag is set to true when fish is interactively reading from stdin. It changes how a ^C is
 /// handled by the fish interrupt handler.
-static int is_interactive_read;
+static volatile sig_atomic_t is_interactive_read;
 
 /// Flag for ending non-interactive shell.
 static int end_loop = 0;
@@ -295,7 +302,7 @@ static int end_loop = 0;
 static std::stack<const wchar_t *, std::vector<const wchar_t *> > current_filename;
 
 /// This variable is set to true by the signal handler when ^C is pressed.
-static volatile int interrupted = 0;
+static volatile sig_atomic_t interrupted = 0;
 
 // Prototypes for a bunch of functions defined later on.
 static bool is_backslashed(const wcstring &str, size_t pos);
@@ -318,7 +325,7 @@ static void term_donate() {
 
     while (1) {
         if (tcsetattr(STDIN_FILENO, TCSANOW, &tty_modes_for_external_cmds) == -1) {
-            if (errno == ENOTTY) redirect_tty_output();
+            if (errno == EIO) redirect_tty_output();
             if (errno != EINTR) {
                 debug(1, _(L"Could not set terminal mode for new job"));
                 wperror(L"tcsetattr");
@@ -347,7 +354,7 @@ static void update_buff_pos(editable_line_t *el, size_t buff_pos) {
 static void term_steal() {
     while (1) {
         if (tcsetattr(STDIN_FILENO, TCSANOW, &shell_modes) == -1) {
-            if (errno == ENOTTY) redirect_tty_output();
+            if (errno == EIO) redirect_tty_output();
             if (errno != EINTR) {
                 debug(1, _(L"Could not set terminal mode for shell"));
                 perror("tcsetattr");
@@ -357,7 +364,7 @@ static void term_steal() {
             break;
     }
 
-    common_handle_winch(0);
+    invalidate_termsize();
 }
 
 bool reader_exit_forced() { return exit_forced; }
@@ -408,8 +415,13 @@ static void reader_repaint() {
     // Update the indentation.
     data->indents = parse_util_compute_indents(cmd_line->text);
 
-    // Combine the command and autosuggestion into one string.
-    wcstring full_line = combine_command_and_autosuggestion(cmd_line->text, data->autosuggestion);
+    wcstring full_line;
+    if (data->silent) {
+        full_line = wcstring(cmd_line->text.length(), obfuscation_read_char);
+    } else {
+        // Combine the command and autosuggestion into one string.
+        full_line = combine_command_and_autosuggestion(cmd_line->text, data->autosuggestion);
+    }
 
     size_t len = full_line.size();
     if (len < 1) len = 1;
@@ -625,7 +637,7 @@ bool reader_data_t::expand_abbreviation_as_necessary(size_t cursor_backtrack) {
             // lengths.
             size_t new_buff_pos = el->position + new_cmdline.size() - el->text.size();
 
-            el->text.swap(new_cmdline);
+            el->text = std::move(new_cmdline);
             update_buff_pos(el, new_buff_pos);
             data->command_line_changed(el);
             result = true;
@@ -657,7 +669,8 @@ int reader_reading_interrupted() {
 
 bool reader_thread_job_is_stale() {
     ASSERT_IS_BACKGROUND_THREAD();
-    return (void *)(uintptr_t)s_generation_count != pthread_getspecific(generation_count_key);
+    void *current_count = (void *)(uintptr_t)read_generation_count();
+    return current_count != pthread_getspecific(generation_count_key);
 }
 
 void reader_write_title(const wcstring &cmd, bool reset_cursor_position) {
@@ -689,9 +702,6 @@ void reader_write_title(const wcstring &cmd, bool reset_cursor_position) {
         // Put the cursor back at the beginning of the line (issue #2453).
         fputwc(L'\r', stdout);
     }
-
-    // TODO: This should be removed when issue #3748 is fixed.
-    fflush(stdout);
 }
 
 /// Reexecute the prompt command. The output is inserted into data->prompt_buff.
@@ -748,7 +758,7 @@ static void exec_prompt() {
 }
 
 void reader_init() {
-    VOMIT_ON_FAILURE(pthread_key_create(&generation_count_key, NULL));
+    DIE_ON_FAILURE(pthread_key_create(&generation_count_key, NULL));
 
     // Ensure this var is present even before an interactive command is run so that if it is used
     // in a function like `fish_prompt` or `fish_right_prompt` it is defined at the time the first
@@ -794,13 +804,13 @@ void reader_init() {
 
 void reader_destroy() { pthread_key_delete(generation_count_key); }
 
+/// Restore the term mode if we own the terminal. It's important we do this before
+/// restore_foreground_process_group, otherwise we won't think we own the terminal.
 void restore_term_mode() {
-    // Restore the term mode if we own the terminal. It's important we do this before
-    // restore_foreground_process_group, otherwise we won't think we own the terminal.
-    if (getpid() == tcgetpgrp(STDIN_FILENO)) {
-        if (tcsetattr(STDIN_FILENO, TCSANOW, &terminal_mode_on_startup) == -1 && errno == ENOTTY) {
-            redirect_tty_output();
-        }
+    if (getpid() != tcgetpgrp(STDIN_FILENO)) return;
+
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &terminal_mode_on_startup) == -1 && errno == EIO) {
+        redirect_tty_output();
     }
 }
 
@@ -833,18 +843,13 @@ void reader_repaint_if_needed() {
     }
 }
 
-static void reader_repaint_if_needed_one_arg(void *unused) {
-    UNUSED(unused);
-    reader_repaint_if_needed();
-}
-
 void reader_react_to_color_change() {
     if (!data) return;
 
     if (!data->repaint_needed || !data->screen_reset_needed) {
         data->repaint_needed = true;
         data->screen_reset_needed = true;
-        input_common_add_callback(reader_repaint_if_needed_one_arg, NULL);
+        input_common_add_callback(reader_repaint_if_needed);
     }
 }
 
@@ -1034,8 +1039,8 @@ wcstring completion_apply_to_command_line(const wcstring &val_str, complete_flag
         if (do_escape) {
             // Respect COMPLETE_DONT_ESCAPE_TILDES.
             bool no_tilde = static_cast<bool>(flags & COMPLETE_DONT_ESCAPE_TILDES);
-            wcstring escaped =
-                escape(val, ESCAPE_ALL | ESCAPE_NO_QUOTED | (no_tilde ? ESCAPE_NO_TILDE : 0));
+            wcstring escaped = escape_string(
+                val, ESCAPE_ALL | ESCAPE_NO_QUOTED | (no_tilde ? ESCAPE_NO_TILDE : 0));
             sb.append(escaped);
             move_cursor = escaped.size();
         } else {
@@ -1116,67 +1121,63 @@ static void completion_insert(const wchar_t *val, complete_flags_t flags) {
     reader_set_buffer_maintaining_pager(new_command_line, cursor);
 }
 
-struct autosuggestion_context_t {
+struct autosuggestion_result_t {
+    wcstring suggestion;
     wcstring search_string;
-    wcstring autosuggestion;
-    size_t cursor_pos;
-    history_search_t searcher;
-    file_detection_context_t detector;
-    const wcstring working_directory;
-    const env_vars_snapshot_t vars;
-    const unsigned int generation_count;
+};
 
-    autosuggestion_context_t(history_t *history, const wcstring &term, size_t pos)
-        : search_string(term),
-          cursor_pos(pos),
-          searcher(*history, term, HISTORY_SEARCH_TYPE_PREFIX),
-          detector(history),
-          working_directory(env_get_pwd_slash()),
-          vars(env_vars_snapshot_t::highlighting_keys),
-          generation_count(s_generation_count) {}
-
-    // The function run in the background thread to determine an autosuggestion.
-    int threaded_autosuggest(void) {
+// Returns a function that can be invoked (potentially
+// on a background thread) to determine the autosuggestion
+static std::function<autosuggestion_result_t(void)> get_autosuggestion_performer(
+    const wcstring &search_string, size_t cursor_pos, history_t *history) {
+    const unsigned int generation_count = read_generation_count();
+    const wcstring working_directory(env_get_pwd_slash());
+    env_vars_snapshot_t vars(env_vars_snapshot_t::highlighting_keys);
+    // TODO: suspicious use of 'history' here
+    // This is safe because histories are immortal, but perhaps
+    // this should use shared_ptr
+    return [=]() -> autosuggestion_result_t {
         ASSERT_IS_BACKGROUND_THREAD();
 
+        const autosuggestion_result_t nothing = {};
         // If the main thread has moved on, skip all the work.
-        if (generation_count != s_generation_count) {
-            return 0;
+        if (generation_count != read_generation_count()) {
+            return nothing;
         }
 
-        VOMIT_ON_FAILURE(
+        DIE_ON_FAILURE(
             pthread_setspecific(generation_count_key, (void *)(uintptr_t)generation_count));
 
         // Let's make sure we aren't using the empty string.
         if (search_string.empty()) {
-            return 0;
+            return nothing;
         }
 
+        history_search_t searcher(*history, search_string, HISTORY_SEARCH_TYPE_PREFIX);
         while (!reader_thread_job_is_stale() && searcher.go_backwards()) {
             history_item_t item = searcher.current_item();
 
             // Skip items with newlines because they make terrible autosuggestions.
             if (item.str().find('\n') != wcstring::npos) continue;
 
-            if (autosuggest_validate_from_history(item, detector, working_directory, vars)) {
+            if (autosuggest_validate_from_history(item, working_directory, vars)) {
                 // The command autosuggestion was handled specially, so we're done.
-                this->autosuggestion = searcher.current_string();
-                return 1;
+                return {searcher.current_string(), search_string};
             }
         }
 
         // Maybe cancel here.
-        if (reader_thread_job_is_stale()) return 0;
+        if (reader_thread_job_is_stale()) return nothing;
 
         // Here we do something a little funny. If the line ends with a space, and the cursor is not
         // at the end, don't use completion autosuggestions. It ends up being pretty weird seeing
         // stuff get spammed on the right while you go back to edit a line
         const wchar_t last_char = search_string.at(search_string.size() - 1);
-        const bool cursor_at_end = (this->cursor_pos == search_string.size());
-        if (!cursor_at_end && iswspace(last_char)) return 0;
+        const bool cursor_at_end = (cursor_pos == search_string.size());
+        if (!cursor_at_end && iswspace(last_char)) return nothing;
 
         // On the other hand, if the line ends with a quote, don't go dumping stuff after the quote.
-        if (wcschr(L"'\"", last_char) && cursor_at_end) return 0;
+        if (wcschr(L"'\"", last_char) && cursor_at_end) return nothing;
 
         // Try normal completions.
         std::vector<completion_t> completions;
@@ -1184,18 +1185,14 @@ struct autosuggestion_context_t {
         completions_sort_and_prioritize(&completions);
         if (!completions.empty()) {
             const completion_t &comp = completions.at(0);
-            size_t cursor = this->cursor_pos;
-            this->autosuggestion = completion_apply_to_command_line(
-                comp.completion, comp.flags, this->search_string, &cursor, true /* append only */);
-            return 1;
+            size_t cursor = cursor_pos;
+            wcstring suggestion = completion_apply_to_command_line(
+                comp.completion, comp.flags, search_string, &cursor, true /* append only */);
+            return {std::move(suggestion), search_string};
         }
 
-        return 0;
-    }
-};
-
-static int threaded_autosuggest(autosuggestion_context_t *ctx) {
-    return ctx->threaded_autosuggest();
+        return nothing;
+    };
 }
 
 static bool can_autosuggest(void) {
@@ -1207,15 +1204,16 @@ static bool can_autosuggest(void) {
            el == &data->command_line && el->text.find_first_not_of(whitespace) != wcstring::npos;
 }
 
-static void autosuggest_completed(autosuggestion_context_t *ctx, int result) {
-    if (result && can_autosuggest() && ctx->search_string == data->command_line.text &&
-        string_prefixes_string_case_insensitive(ctx->search_string, ctx->autosuggestion)) {
+// Called after an autosuggestion has been computed on a background thread
+static void autosuggest_completed(autosuggestion_result_t result) {
+    if (!result.suggestion.empty() && can_autosuggest() &&
+        result.search_string == data->command_line.text &&
+        string_prefixes_string_case_insensitive(result.search_string, result.suggestion)) {
         // Autosuggestion is active and the search term has not changed, so we're good to go.
-        data->autosuggestion = ctx->autosuggestion;
+        data->autosuggestion = std::move(result.suggestion);
         sanity_check();
         reader_repaint();
     }
-    delete ctx;
 }
 
 static void update_autosuggestion(void) {
@@ -1225,9 +1223,8 @@ static void update_autosuggestion(void) {
     if (data->allow_autosuggestion && !data->suppress_autosuggestion &&
         !data->command_line.empty() && data->history_search.is_at_end()) {
         const editable_line_t *el = data->active_edit_line();
-        autosuggestion_context_t *ctx =
-            new autosuggestion_context_t(data->history, el->text, el->position);
-        iothread_perform(threaded_autosuggest, autosuggest_completed, ctx);
+        auto performer = get_autosuggestion_performer(el->text, el->position, data->history);
+        iothread_perform(performer, &autosuggest_completed);
     }
 }
 
@@ -1523,7 +1520,12 @@ static bool check_for_orphaned_process(unsigned long loop_count, pid_t shell_pgi
     if (!we_think_we_are_orphaned && loop_count % 128 == 0) {
         // Try reading from the tty; if we get EIO we are orphaned. This is sort of bad because it
         // may block.
+#ifdef HAVE_CTERMID_R
+        char buf[L_ctermid];
+        char *tty = ctermid_r(buf);
+#else
         char *tty = ctermid(NULL);
+#endif
         if (!tty) {
             wperror(L"ctermid");
             exit_without_destructors(1);
@@ -1554,10 +1556,10 @@ static bool check_for_orphaned_process(unsigned long loop_count, pid_t shell_pgi
 
 /// Initialize data for interactive use.
 static void reader_interactive_init() {
+    assert(input_initialized);
     // See if we are running interactively.
     pid_t shell_pgid;
 
-    input_init();
     kill_init();
     shell_pgid = getpgrp();
 
@@ -1594,8 +1596,9 @@ static void reader_interactive_init() {
         for (unsigned long loop_count = 0;; loop_count++) {
             pid_t owner = tcgetpgrp(STDIN_FILENO);
             shell_pgid = getpgrp();
-            if (owner < 0 && errno == ENOTTY) {
+            if (owner == -1 && errno == ENOTTY) {
                 // No TTY, cannot be interactive?
+                redirect_tty_output();
                 debug(1, _(L"No TTY for interactive shell (tcgetpgrp failed)"));
                 wperror(L"setpgid");
                 exit_without_destructors(1);
@@ -1605,9 +1608,10 @@ static void reader_interactive_init() {
             } else {
                 if (check_for_orphaned_process(loop_count, shell_pgid)) {
                     // We're orphaned, so we just die. Another sad statistic.
-                    debug(1, _(L"I appear to be an orphaned process, so I am quitting politely. My "
-                               L"pid is %d."),
-                          (int)getpid());
+                    const wchar_t *fmt =
+                        _(L"I appear to be an orphaned process, so I am quitting politely. "
+                          L"My pid is %d.");
+                    debug(1, fmt, (int)getpid());
                     exit_without_destructors(1);
                 }
 
@@ -1643,11 +1647,11 @@ static void reader_interactive_init() {
         exit_without_destructors(1);
     }
 
-    common_handle_winch(0);
+    invalidate_termsize();
 
     // Set the new modes.
     if (tcsetattr(0, TCSANOW, &shell_modes) == -1) {
-        if (errno == ENOTTY) redirect_tty_output();
+        if (errno == EIO) redirect_tty_output();
         wperror(L"tcsetattr");
     }
 
@@ -2054,6 +2058,8 @@ void reader_set_test_function(parser_test_error_bits_t (*f)(const wchar_t *)) {
 
 void reader_set_exit_on_interrupt(bool i) { data->exit_on_interrupt = i; }
 
+void reader_set_silent_status(bool flag) { data->silent = flag; }
+
 void reader_import_history_if_necessary(void) {
     // Import history from older location (config path) if our current history is empty.
     if (data->history && data->history->is_empty()) {
@@ -2076,50 +2082,6 @@ void reader_import_history_if_necessary(void) {
     }
 }
 
-/// A class as the context pointer for a background (threaded) highlight operation.
-class background_highlight_context_t {
-   public:
-    /// The string to highlight.
-    const wcstring string_to_highlight;
-    /// Color buffer.
-    std::vector<highlight_spec_t> colors;
-    /// The position to use for bracket matching.
-    const size_t match_highlight_pos;
-    /// Function for syntax highlighting.
-    const highlight_function_t highlight_function;
-    /// Environment variables.
-    const env_vars_snapshot_t vars;
-    /// When the request was made.
-    const double when;
-    /// Gen count at the time the request was made.
-    const unsigned int generation_count;
-
-    background_highlight_context_t(const wcstring &pbuff, size_t phighlight_pos,
-                                   highlight_function_t phighlight_func)
-        : string_to_highlight(pbuff),
-          colors(pbuff.size(), 0),
-          match_highlight_pos(phighlight_pos),
-          highlight_function(phighlight_func),
-          vars(env_vars_snapshot_t::highlighting_keys),
-          when(timef()),
-          generation_count(s_generation_count) {}
-
-    int perform_highlight() {
-        if (generation_count != s_generation_count) {
-            // The gen count has changed, so don't do anything.
-            return 0;
-        }
-        VOMIT_ON_FAILURE(
-            pthread_setspecific(generation_count_key, (void *)(uintptr_t)generation_count));
-
-        if (!string_to_highlight.empty()) {
-            highlight_function(string_to_highlight, colors, match_highlight_pos, NULL /* error */,
-                               vars);
-        }
-        return 0;
-    }
-};
-
 /// Called to set the highlight flag for search results.
 static void highlight_search(void) {
     if (!data->search_buff.empty() && !data->history_search.is_at_end()) {
@@ -2135,26 +2097,48 @@ static void highlight_search(void) {
     }
 }
 
-static void highlight_complete(background_highlight_context_t *ctx, int result) {
-    UNUSED(result);  // ignored because of the indirect invocation via iothread_perform()
+struct highlight_result_t {
+    std::vector<highlight_spec_t> colors;
+    wcstring text;
+};
+
+static void highlight_complete(highlight_result_t result) {
     ASSERT_IS_MAIN_THREAD();
-    if (ctx->string_to_highlight == data->command_line.text) {
+    if (result.text == data->command_line.text) {
         // The data hasn't changed, so swap in our colors. The colors may not have changed, so do
         // nothing if they have not.
-        assert(ctx->colors.size() == data->command_line.size());
-        if (data->colors != ctx->colors) {
-            data->colors.swap(ctx->colors);
+        assert(result.colors.size() == data->command_line.size());
+        if (data->colors != result.colors) {
+            data->colors = std::move(result.colors);
             sanity_check();
             highlight_search();
             reader_repaint();
         }
     }
-
-    delete ctx;
 }
 
-static int threaded_highlight(background_highlight_context_t *ctx) {
-    return ctx->perform_highlight();
+// Given text, bracket matching position, and whether IO is allowed,
+// return a function that performs highlighting. The function may be invoked on a background thread.
+static std::function<highlight_result_t(void)> get_highlight_performer(const wcstring &text,
+                                                                       long match_highlight_pos,
+                                                                       bool no_io) {
+    env_vars_snapshot_t vars(env_vars_snapshot_t::highlighting_keys);
+    unsigned int generation_count = read_generation_count();
+    highlight_function_t highlight_func = no_io ? highlight_shell_no_io : data->highlight_function;
+    return [=]() -> highlight_result_t {
+        if (generation_count != read_generation_count()) {
+            // The gen count has changed, so don't do anything.
+            return {};
+        }
+        if (text.empty()) {
+            return {};
+        }
+        DIE_ON_FAILURE(
+            pthread_setspecific(generation_count_key, (void *)(uintptr_t)generation_count));
+        std::vector<highlight_spec_t> colors(text.size(), 0);
+        highlight_func(text, colors, match_highlight_pos, NULL /* error */, vars);
+        return {std::move(colors), text};
+    };
 }
 
 /// Call specified external highlighting function and then do search highlighting. Lastly, clear the
@@ -2173,16 +2157,13 @@ static void reader_super_highlight_me_plenty(int match_highlight_pos_adjust, boo
 
     reader_sanity_check();
 
-    highlight_function_t highlight_func = no_io ? highlight_shell_no_io : data->highlight_function;
-    background_highlight_context_t *ctx =
-        new background_highlight_context_t(el->text, match_highlight_pos, highlight_func);
+    auto highlight_performer = get_highlight_performer(el->text, match_highlight_pos, no_io);
     if (no_io) {
-        // Highlighting without IO, we just do it. Note that highlight_complete deletes ctx.
-        int result = ctx->perform_highlight();
-        highlight_complete(ctx, result);
+        // Highlighting without IO, we just do it.
+        highlight_complete(highlight_performer());
     } else {
         // Highlighting including I/O proceeds in the background.
-        iothread_perform(threaded_highlight, highlight_complete, ctx);
+        iothread_perform(highlight_performer, &highlight_complete);
     }
     highlight_search();
 
@@ -2221,7 +2202,7 @@ static void handle_end_loop() {
         }
 
         bool bg_jobs = false;
-        while (job_t *j = jobs.next()) {
+        while (const job_t *j = jobs.next()) {
             if (!job_is_completed(j)) {
                 bg_jobs = true;
                 break;
@@ -2388,10 +2369,10 @@ const wchar_t *reader_readline(int nchars) {
     reader_repaint();
 
     // Get the current terminal modes. These will be restored when the function returns.
-    tcgetattr(STDIN_FILENO, &old_modes);
+    if (tcgetattr(STDIN_FILENO, &old_modes) == -1 && errno == EIO) redirect_tty_output();
     // Set the new modes.
     if (tcsetattr(0, TCSANOW, &shell_modes) == -1) {
-        if (errno == ENOTTY) redirect_tty_output();
+        if (errno == EIO) redirect_tty_output();
         wperror(L"tcsetattr");
     }
 
@@ -2734,9 +2715,6 @@ const wchar_t *reader_readline(int nchars) {
                 if (el->position < el->size()) {
                     update_buff_pos(el, el->position + 1);
                     remove_backward();
-                    if (el->position > 0 && el->position == el->size()) {
-                        update_buff_pos(el, el->position - 1);
-                    }
                 }
                 break;
             }
@@ -3258,7 +3236,7 @@ const wchar_t *reader_readline(int nchars) {
 
     if (!reader_exit_forced()) {
         if (tcsetattr(0, TCSANOW, &old_modes) == -1) {
-            if (errno == ENOTTY) redirect_tty_output();
+            if (errno == EIO) redirect_tty_output();
             wperror(L"tcsetattr");  // return to previous mode
         }
         set_color(rgb_color_t::reset(), rgb_color_t::reset());
@@ -3342,7 +3320,7 @@ static int read_ni(int fd, const io_chain_t &io) {
         parse_error_list_t errors;
         parse_node_tree_t tree;
         if (!parse_util_detect_errors(str, &errors, false /* do not accept incomplete */, &tree)) {
-            parser.eval_acquiring_tree(str, io, TOP, moved_ref<parse_node_tree_t>(tree));
+            parser.eval(str, io, TOP, std::move(tree));
         } else {
             wcstring sb;
             parser.get_backtrace(str, errors, &sb);
@@ -3364,7 +3342,20 @@ int reader_read(int fd, const io_chain_t &io) {
     // If reader_read is called recursively through the '.' builtin, we need to preserve
     // is_interactive. This, and signal handler setup is handled by
     // proc_push_interactive/proc_pop_interactive.
-    int inter = ((fd == STDIN_FILENO) && isatty(STDIN_FILENO));
+    int inter = 0;
+    // This block is a hack to work around https://sourceware.org/bugzilla/show_bug.cgi?id=20632.
+    // See also, commit 396bf12. Without the need for this workaround we would just write:
+    // int inter = ((fd == STDIN_FILENO) && isatty(STDIN_FILENO));
+    if (fd == STDIN_FILENO) {
+        struct termios t;
+        int a_tty = isatty(STDIN_FILENO);
+        if (a_tty) {
+            inter = 1;
+        } else if (tcgetattr(STDIN_FILENO, &t) == -1 && errno == EIO) {
+            redirect_tty_output();
+            inter = 1;
+        }
+    }
     proc_push_interactive(inter);
 
     res = shell_is_interactive() ? read_i() : read_ni(fd, io);

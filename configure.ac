@@ -37,7 +37,7 @@ AC_SUBST(EXTRA_PCRE2)
 AC_MSG_CHECKING([if autoreconf needs to be run])
 if test configure -ot configure.ac; then
   AC_MSG_RESULT([yes])
-  if which autoreconf >/dev/null; then
+  if command -v autoreconf >/dev/null; then
     # No need to provide any error messages if autoreconf fails, the
     # shell and autconf should take care of that themselves
     AC_MSG_NOTICE([running autoreconf --no-recursive])
@@ -68,7 +68,7 @@ fi
 AC_MSG_CHECKING([if autoheader needs to be run])
 if test ! -f ./config.h.in -o config.h.in -ot configure.ac; then
   AC_MSG_RESULT([yes])
-  if which autoheader >/dev/null; then
+  if command -v autoheader >/dev/null; then
     AC_MSG_NOTICE([running autoheader])
     autoheader || exit 1
   else
@@ -217,11 +217,12 @@ CXXFLAGS="$CXXFLAGS -fno-exceptions"
 
 
 #
-# -Wall is there to keep me on my toes
-# But signed comparison warnings are way too aggressive
+# Set some warning flags
+# Don't warn about missing field initializers, it has too many
+# false positives for code like `struct termios tmodes = {};`
 #
 
-CXXFLAGS="$CXXFLAGS -Wextra"
+CXXFLAGS="$CXXFLAGS -Wextra -Wno-missing-field-initializers"
 
 #
 # This is needed in order to get the really cool backtraces on Linux
@@ -326,6 +327,25 @@ AC_CHECK_FUNCS( dirfd )
 
 AC_CHECK_DECL( [mkostemp], [ AC_CHECK_FUNCS([mkostemp]) ] )
 
+#
+# Although setupterm is linkable thanks to SEARCH_LIBS above, some
+# builds of ncurses include the actual headers in a different package
+#
+AC_CHECK_DECL( [setupterm], , [AC_MSG_ERROR([Could not find a curses implementation, needed to build fish. If this is Linux, try running 'sudo apt-get install libncurses5-dev' or 'sudo yum install ncurses-devel'])], [
+#if HAVE_NCURSES_H
+#include <ncurses.h>
+#elif HAVE_NCURSES_CURSES_H
+#include <ncurses/curses.h>
+#else
+#include <curses.h>
+#endif
+#if HAVE_TERM_H
+#include <term.h>
+#elif HAVE_NCURSES_TERM_H
+#include <ncurses/term.h>
+#endif
+] )
+
 dnl AC_CHECK_FUNCS uses C linkage, but sometimes (Solaris!) the behaviour is
 dnl different with C++.
 AC_MSG_CHECKING([for wcsdup])
@@ -396,6 +416,17 @@ fi
 # Here follows a list of small programs used to test for various
 # features that Autoconf doesn't tell us about
 #
+
+dnl AC_CHECK_FUNCS uses C linkage, but sometimes (Solaris!) the behaviour is
+dnl different with C++.
+AC_MSG_CHECKING([if ctermid_r() available])
+AC_TRY_LINK( [ #include <stdio.h> ],
+             [ char buf[L_ctermid]; char *foo = ctermid_r(buf); ],
+             [ AC_MSG_RESULT(yes)
+               AC_DEFINE(HAVE_CTERMID_R, 1, Define to 1 if you have the `ctermid_r' function.)
+             ],
+             [AC_MSG_RESULT(no)],
+             )
 
 #
 # Check if struct winsize and TIOCGWINSZ exist
@@ -659,7 +690,7 @@ if test "x$included_pcre2" = "xyes"; then
   AC_MSG_NOTICE([using included PCRE2 library])
   # unfortunately these get added to the global configuration
   ac_configure_args="$ac_configure_args --disable-pcre2-8 --enable-pcre2-$WCHAR_T_BITS --disable-shared"
-  AC_CONFIG_SUBDIRS([pcre2-10.21])
+  AC_CONFIG_SUBDIRS([pcre2-10.22])
 
   PCRE2_CXXFLAGS='-I$(PCRE2_DIR)/src'
   PCRE2_LIBS='-L$(PCRE2_LIBDIR) -lpcre2-$(PCRE2_WIDTH)'

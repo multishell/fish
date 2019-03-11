@@ -1,14 +1,14 @@
 // Programmatic representation of fish code.
 #include "config.h"  // IWYU pragma: keep
 
-#include <assert.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <wchar.h>
+
 #include <algorithm>
-#include <cwchar>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "common.h"
@@ -29,11 +29,12 @@ static bool production_is_empty(const production_element_t *production) {
 /// Returns a string description of this parse error.
 wcstring parse_error_t::describe_with_prefix(const wcstring &src, const wcstring &prefix,
                                              bool is_interactive, bool skip_caret) const {
-    wcstring result = text;
-
     if (skip_caret || source_start >= src.size() || source_start + source_length > src.size()) {
-        return result;
+        return L"";
     }
+
+    wcstring result = prefix;
+    result.append(this->text);
 
     // Locate the beginning of this line of source.
     size_t line_start = 0;
@@ -63,25 +64,20 @@ wcstring parse_error_t::describe_with_prefix(const wcstring &src, const wcstring
     // Don't include the caret and line if we're interactive this is the first line, because
     // then it's obvious.
     bool interactive_skip_caret = is_interactive && source_start == 0;
-
     if (interactive_skip_caret) {
         return result;
     }
 
     // Append the line of text.
-    if (!result.empty()) {
-        result.push_back(L'\n');
-    }
-    result.append(prefix);
+    result.push_back(L'\n');
     result.append(src, line_start, line_end - line_start);
 
     // Append the caret line. The input source may include tabs; for that reason we
     // construct a "caret line" that has tabs in corresponding positions.
-    const wcstring line_to_measure = prefix + wcstring(src, line_start, source_start - line_start);
     wcstring caret_space_line;
     caret_space_line.reserve(source_start - line_start);
-    for (size_t i = 0; i < line_to_measure.size(); i++) {
-        wchar_t wc = line_to_measure.at(i);
+    for (size_t i = line_start; i < source_start; i++) {
+        wchar_t wc = src.at(i);
         if (wc == L'\t') {
             caret_space_line.push_back(L'\t');
         } else if (wc == L'\n') {
@@ -123,23 +119,13 @@ void parse_error_offset_source_start(parse_error_list_t *errors, size_t amt) {
 const wchar_t *token_type_description(parse_token_type_t type) {
     const wchar_t *description = enum_to_str(type, token_enum_map);
     if (description) return description;
-
-    // This leaks memory but it should never be run unless we have a bug elsewhere in the code.
-    const wcstring d = format_string(L"unknown_token_type_%ld", static_cast<long>(type));
-    wchar_t *d2 = new wchar_t[d.size() + 1];
-    // cppcheck-suppress memleak
-    return std::wcscpy(d2, d.c_str());
+    return L"unknown_token_type";
 }
 
 const wchar_t *keyword_description(parse_keyword_t type) {
     const wchar_t *keyword = enum_to_str(type, keyword_enum_map);
     if (keyword) return keyword;
-
-    // This leaks memory but it should never be run unless we have a bug elsewhere in the code.
-    const wcstring d = format_string(L"unknown_keyword_%ld", static_cast<long>(type));
-    wchar_t *d2 = new wchar_t[d.size() + 1];
-    // cppcheck-suppress memleak
-    return std::wcscpy(d2, d.c_str());
+    return L"unknown_keyword";
 }
 
 static wcstring token_type_user_presentable_description(
@@ -603,15 +589,11 @@ void parse_ll_t::determine_node_ranges(void) {
 
 void parse_ll_t::acquire_output(parse_node_tree_t *output, parse_error_list_t *errors) {
     if (output != NULL) {
-        output->swap(this->nodes);
+        *output = std::move(this->nodes);
     }
-    this->nodes.clear();
-
     if (errors != NULL) {
-        errors->swap(this->errors);
+        *errors = std::move(this->errors);
     }
-    this->errors.clear();
-    this->symbol_stack.clear();
 }
 
 void parse_ll_t::parse_error(parse_token_t token, parse_error_code_t code, const wchar_t *fmt,
@@ -1069,7 +1051,9 @@ static const parse_token_t kInvalidToken = {
 static const parse_token_t kTerminalToken = {
     parse_token_type_terminate, parse_keyword_none, false, false, SOURCE_OFFSET_INVALID, 0};
 
-static inline bool is_help_argument(const wcstring &txt) { return contains(txt, L"-h", L"--help"); }
+static inline bool is_help_argument(const wcstring &txt) {
+    return txt == L"-h" || txt == L"--help";
+}
 
 /// Return a new parse token, advancing the tokenizer.
 static inline parse_token_t next_parse_token(tokenizer_t *tok, tok_t *token) {
@@ -1330,10 +1314,12 @@ bool parse_node_tree_t::argument_list_is_root(const parse_node_t &node) const {
 enum parse_statement_decoration_t parse_node_tree_t::decoration_for_plain_statement(
     const parse_node_t &node) const {
     assert(node.type == symbol_plain_statement);
+    parse_statement_decoration_t decoration = parse_statement_decoration_none;
     const parse_node_t *decorated_statement = this->get_parent(node, symbol_decorated_statement);
-    parse_node_tag_t tag =
-        decorated_statement ? decorated_statement->tag : parse_statement_decoration_none;
-    return static_cast<parse_statement_decoration_t>(tag);
+    if (decorated_statement) {
+        decoration = static_cast<parse_statement_decoration_t>(decorated_statement->tag);
+    }
+    return decoration;
 }
 
 bool parse_node_tree_t::command_for_plain_statement(const parse_node_t &node, const wcstring &src,

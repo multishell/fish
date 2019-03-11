@@ -24,7 +24,7 @@ expect_prompt
 
 # Verify that asking to exit a second time does so.
 send "exit\r"
-close
+catch {expect default exp_continue} output
 wait
 
 # Verify all child processes have been killed. We don't use `-p $pid` because

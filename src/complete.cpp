@@ -5,18 +5,20 @@
 ///
 #include "config.h"  // IWYU pragma: keep
 
-#include <assert.h>
 #include <pthread.h>
 #include <pwd.h>
 #include <stddef.h>
 #include <wchar.h>
 #include <wctype.h>
+
 #include <algorithm>
+#include <functional>
 #include <list>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 #include "autoload.h"
@@ -346,22 +348,13 @@ class completer_t {
     }
 };
 
-/// Autoloader for completions.
-class completion_autoload_t : public autoload_t {
-   public:
-    completion_autoload_t();
-    virtual void command_removed(const wcstring &cmd);
-};
-
-static completion_autoload_t completion_autoloader;
-
-// Constructor
-completion_autoload_t::completion_autoload_t() : autoload_t(L"fish_complete_path", NULL, 0) {}
-
-/// Callback when an autoloaded completion is removed.
-void completion_autoload_t::command_removed(const wcstring &cmd) {
+// Callback when an autoloaded completion is removed.
+static void autoloaded_completion_removed(const wcstring &cmd) {
     complete_remove_all(cmd, false /* not a path */);
 }
+
+// Autoloader for completions
+static autoload_t completion_autoloader(L"fish_complete_path", autoloaded_completion_removed);
 
 /// Create a new completion entry.
 void append_completion(std::vector<completion_t> *completions, const wcstring &comp,
@@ -479,7 +472,6 @@ void complete_remove(const wcstring &cmd, bool cmd_is_path, const wcstring &opti
 
         bool delete_it = entry.remove_option(option, type);
         if (delete_it) {
-            // Delete this entry.
             completion_set.erase(iter);
         }
     }
@@ -672,8 +664,10 @@ void completer_t::complete_cmd(const wcstring &str_cmd, bool use_function, bool 
     if (use_implicit_cd) {
         // We don't really care if this succeeds or fails. If it succeeds this->completions will be
         // updated with choices for the user.
-        (void)expand_string(str_cmd, &this->completions,
-                            EXPAND_FOR_COMPLETIONS | DIRECTORIES_ONLY | this->expand_flags(), NULL);
+        expand_error_t ignore =
+            expand_string(str_cmd, &this->completions,
+                          EXPAND_FOR_COMPLETIONS | DIRECTORIES_ONLY | this->expand_flags(), NULL);
+        UNUSED(ignore);
     }
 
     if (str_cmd.find(L'/') == wcstring::npos && str_cmd.at(0) != L'~') {
@@ -836,14 +830,6 @@ static void complete_load(const wcstring &name, bool reload) {
     completion_autoloader.load(name, reload);
 }
 
-/// Performed on main thread, from background thread. Return type is ignored.
-static int complete_load_no_reload(wcstring *name) {
-    assert(name != NULL);
-    ASSERT_IS_MAIN_THREAD();
-    complete_load(*name, false);
-    return 0;
-}
-
 /// complete_param: Given a command, find completions for the argument str of command cmd_orig with
 /// previous option popt.
 ///
@@ -869,8 +855,8 @@ bool completer_t::complete_param(const wcstring &scmd_orig, const wcstring &spop
         complete_load(cmd, true);
     } else if (this->type() == COMPLETE_AUTOSUGGEST &&
                !completion_autoloader.has_tried_loading(cmd)) {
-        // Load this command (on the main thread).
-        iothread_perform_on_main(complete_load_no_reload, &cmd);
+        // Load this command (on the main thread)
+        iothread_perform_on_main([&]() { complete_load(cmd, false); });
     }
 
     // Make a list of lists of all options that we care about.
@@ -1135,7 +1121,7 @@ bool completer_t::try_complete_variable(const wcstring &str) {
 
     for (size_t in_pos = 0; in_pos < len; in_pos++) {
         wchar_t c = str.at(in_pos);
-        if (!wcsvarchr(c)) {
+        if (!valid_var_name_char(c)) {
             // This character cannot be in a variable, reset the dollar.
             variable_start = -1;
         }
@@ -1186,7 +1172,7 @@ bool completer_t::try_complete_variable(const wcstring &str) {
 
 /// Try to complete the specified string as a username. This is used by ~USER type expansion.
 ///
-/// \return 0 if unable to complete, 1 otherwise
+/// \return false if unable to complete, true otherwise
 bool completer_t::try_complete_user(const wcstring &str) {
 #ifndef HAVE_GETPWENT
     // The getpwent() function does not exist on Android. A Linux user on Android isn't
@@ -1198,48 +1184,43 @@ bool completer_t::try_complete_user(const wcstring &str) {
     const wchar_t *cmd = str.c_str();
     const wchar_t *first_char = cmd;
 
-    if (*first_char != L'~' || wcschr(first_char, L'/')) {
-        return false;
-    }
+    if (*first_char != L'~' || wcschr(first_char, L'/')) return false;
 
     const wchar_t *user_name = first_char + 1;
     const wchar_t *name_end = wcschr(user_name, L'~');
-    if (name_end) {
-        return false;
-    }
+    if (name_end) return false;
 
     double start_time = timef();
     bool result = false;
-    struct passwd *pw;
     size_t name_len = wcslen(user_name);
 
+    // We don't bother with the thread-safe `getpwent_r()` variant because it isn't needed. This is
+    // only run in a completion context and thus will only be called from a single thread and there
+    // is no place else in fish where we call `getpwent()`.
+    struct passwd *pw;
     setpwent();
-    while ((pw = getpwent()) != 0) {
-        double current_time = timef();
-        if (current_time - start_time > 0.2) {
-            return 1;
-        }
-
-        if (!pw->pw_name) {
-            continue;
-        }
-
+    // cppcheck-suppress getpwentCalled
+    while ((pw = getpwent()) != NULL) {
         const wcstring pw_name_str = str2wcstring(pw->pw_name);
         const wchar_t *pw_name = pw_name_str.c_str();
         if (wcsncmp(user_name, pw_name, name_len) == 0) {
             wcstring desc = format_string(COMPLETE_USER_DESC, pw_name);
             append_completion(&this->completions, &pw_name[name_len], desc, COMPLETE_NO_SPACE);
-
             result = true;
+            break;
         } else if (wcsncasecmp(user_name, pw_name, name_len) == 0) {
             wcstring name = format_string(L"~%ls", pw_name);
             wcstring desc = format_string(COMPLETE_USER_DESC, pw_name);
-
             append_completion(&this->completions, name, desc,
                               COMPLETE_REPLACES_TOKEN | COMPLETE_DONT_ESCAPE | COMPLETE_NO_SPACE);
             result = true;
+            break;
         }
+
+        // If we've spent too much time (more than 200 ms) doing this give up.
+        if (timef() - start_time > 0.2) break;
     }
+
     endpwent();
     return result;
 #endif
@@ -1285,9 +1266,10 @@ void complete(const wcstring &cmd_with_subcmds, std::vector<completion_t> *out_c
 
     if (!done) {
         parse_node_tree_t tree;
-        parse_tree_from_string(cmd, parse_flag_continue_after_error |
-                                        parse_flag_accept_incomplete_tokens |
-                                        parse_flag_include_comments,
+        parse_tree_from_string(cmd,
+                               parse_flag_continue_after_error |
+                                   parse_flag_accept_incomplete_tokens |
+                                   parse_flag_include_comments,
                                &tree, NULL);
 
         // Find the plain statement to operate on. The cursor may be past it (#1261), so backtrack
@@ -1450,7 +1432,7 @@ void complete(const wcstring &cmd_with_subcmds, std::vector<completion_t> *out_c
                             // transient commandline for builtin_commandline. But not for
                             // COMPLETION_REQUEST_AUTOSUGGESTION, which may occur on background
                             // threads.
-                            builtin_commandline_scoped_transient_t *transient_cmd = NULL;
+                            std::unique_ptr<builtin_commandline_scoped_transient_t> transient_cmd;
                             if (i == 0) {
                                 assert(wrap_chain.at(i) == current_command_unescape);
                             } else if (!(flags & COMPLETION_REQUEST_AUTOSUGGESTION)) {
@@ -1458,15 +1440,14 @@ void complete(const wcstring &cmd_with_subcmds, std::vector<completion_t> *out_c
                                 wcstring faux_cmdline = cmd;
                                 faux_cmdline.replace(cmd_node->source_start,
                                                      cmd_node->source_length, wrap_chain.at(i));
-                                transient_cmd =
-                                    new builtin_commandline_scoped_transient_t(faux_cmdline);
+                                transient_cmd = make_unique<builtin_commandline_scoped_transient_t>(
+                                    faux_cmdline);
                             }
                             if (!completer.complete_param(wrap_chain.at(i),
                                                           previous_argument_unescape,
                                                           current_argument_unescape, !had_ddash)) {
                                 do_file = false;
                             }
-                            delete transient_cmd;  // may be null
                         }
                     }
 
@@ -1581,8 +1562,7 @@ static wrapper_map_t &wrap_map() {
     return *wrapper_map;
 }
 
-/// Add a new target that is wrapped by command. Example: __fish_sgrep (command) wraps grep
-/// (target).
+/// Add a new target that wraps a command. Example: __fish_XYZ (function) wraps XYZ (target).
 bool complete_add_wrapper(const wcstring &command, const wcstring &new_target) {
     if (command.empty() || new_target.empty()) {
         return false;
@@ -1633,7 +1613,7 @@ wcstring_list_t complete_get_wrap_chain(const wcstring &command) {
     wcstring target;
     while (!to_visit.empty()) {
         // Grab the next command to visit, put it in target.
-        target.swap(to_visit.back());
+        target = std::move(to_visit.back());
         to_visit.pop_back();
 
         // Try inserting into visited. If it was already present, we skip it; this is how we avoid

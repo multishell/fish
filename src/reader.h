@@ -5,6 +5,7 @@
 #define FISH_READER_H
 
 #include <stddef.h>
+
 #include <string>
 #include <vector>
 
@@ -187,6 +188,8 @@ void reader_set_expand_abbreviations(bool flag);
 
 /// Sets whether the reader should exit on ^C.
 void reader_set_exit_on_interrupt(bool flag);
+
+void reader_set_silent_status(bool f);
 
 /// Returns true if the shell is exiting, 0 otherwise.
 bool shell_is_exiting();

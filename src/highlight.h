@@ -2,8 +2,9 @@
 #ifndef FISH_HIGHLIGHT_H
 #define FISH_HIGHLIGHT_H
 
-#include <assert.h>
+#include <stddef.h>
 #include <stdint.h>
+
 #include <vector>
 
 #include "color.h"
@@ -63,7 +64,6 @@ inline highlight_spec_t highlight_make_background(highlight_spec_t val) {
 }
 
 class history_item_t;
-struct file_detection_context_t;
 
 /// Perform syntax highlighting for the shell commands in buff. The result is stored in the color
 /// array as a color_code from the HIGHLIGHT_ enum for each character in buff.
@@ -108,7 +108,6 @@ rgb_color_t highlight_get_color(highlight_spec_t highlight, bool is_background);
 /// specially recognizing the command. Returns true if we validated the command. If so, returns by
 /// reference whether the suggestion is valid or not.
 bool autosuggest_validate_from_history(const history_item_t &item,
-                                       file_detection_context_t &detector,
                                        const wcstring &working_directory,
                                        const env_vars_snapshot_t &vars);
 

@@ -17,7 +17,7 @@
 
 \section introduction Introduction
 
-This is the documentation for `fish`, the friendly interactive shell. `fish` is a user friendly commandline shell intended mostly for interactive use. A shell is a program used to execute other programs. For the latest information on `fish`, please visit the <a href="http://fishshell.com/">`fish` homepage</a>.
+This is the documentation for `fish`, the friendly interactive shell. `fish` is a user friendly commandline shell intended mostly for interactive use. A shell is a program used to execute other programs. For the latest information on `fish`, please visit the <a href="https://fishshell.com/">`fish` homepage</a>.
 
 
 \section syntax Syntax overview
@@ -667,11 +667,22 @@ Example:
 If the current directory contains the files 'foo' and 'bar', the command `echo a(ls){1,2,3} ` will output 'abar1 abar2 abar3 afoo1 afoo2 afoo3'.
 
 
+\section identifiers Shell variable and function names
+
+The names given to shell objects such as variables and function names are known as "identifiers". Each type of identifier has rules that define the valid sequence of characters which compose the identifier.
+
+A variable name cannot be empty. It can contain only letters, digits, and underscores. It may begin and end with any of those characters.
+
+A function name cannot be empty. It may not begin with a hyphen ("-") and may not contain a slash ("/"). All other characters, including a space, are valid.
+
+A bind mode name (e.g., `bind -m abc ...`) is restricted to the rules for valid variable names.
+
+
 \section variables Shell variables
 
 Shell variables are named pieces of data, which can be created, deleted and their values changed and used by the user.  Variables may optionally be "exported", so that a copy of the variable is available to any subprocesses the shell creates. An exported variable is referred to as an "environment variable".
 
-To set a variable value, use the <a href="commands.html#set">`set` command</a>.
+To set a variable value, use the <a href="commands.html#set">`set` command</a>. A variable name can not be empty and can contain only letters, digits, and underscores. It may begin and end with any of those characters.
 
 Example:
 
@@ -849,11 +860,9 @@ The user can change the settings of `fish` by changing the values of certain var
 
 - `FISH_VERSION`, the version of the currently running fish
 
-- `COLUMNS`, the current width of the terminal
-
-- `LINES`, the current height of the terminal
-
 - `SHLVL`, the level of nesting of shells
+
+- `COLUMNS` and `LINES`, the current size of the terminal in height and width. These values are only used by fish if the operating system does not report the size of the terminal. Both variables must be set in that case otherwise a default of 80x24 will be used. They are updated when the window size changes.
 
 The names of these variables are mostly derived from the csh family of shells and differ from the ones used by Bourne style shells such as bash.
 
@@ -867,17 +876,21 @@ Fish stores the exit status of the last process in the last job to exit in the `
 
 If `fish` encounters a problem while executing a command, the status variable may also be set to a specific value:
 
-- 1 is the generally the exit status from fish builtin commands if they were supplied with invalid arguments
+- 0 is generally the exit status of fish commands if they successfully performed the requested operation.
 
-- 123 means that the command was not executed because the command name contained invalid characters
+- 1 is generally the exit status of fish commands if they failed to perform the requested operation.
 
-- 124 means that the command was not executed because none of the wildcards in the command produced any matches
+- 121 is generally the exit status of fish commands if they were supplied with invalid arguments.
 
-- 125 means that while an executable with the specified name was located, the operating system could not actually execute the command
+- 123 means that the command was not executed because the command name contained invalid characters.
 
-- 126 means that while a file with the specified name was located, it was not executable
+- 124 means that the command was not executed because none of the wildcards in the command produced any matches.
 
-- 127 means that no function, builtin or command with the given name could be located
+- 125 means that while an executable with the specified name was located, the operating system could not actually execute the command.
+
+- 126 means that while a file with the specified name was located, it was not executable.
+
+- 127 means that no function, builtin or command with the given name could be located.
 
 If a process exits through a signal, the exit status will be 128 plus the number of the signal.
 
@@ -919,6 +932,8 @@ The following variables are available to change the highlighting colors in fish:
 - `fish_color_user`, the color used to print the current username in some of fish default prompts
 
 - `fish_color_host`, the color used to print the current host system in some of fish default prompts
+
+- `fish_color_cancel`, the color for the '^C' indicator on a canceled command
 
 Additionally, the following variables are available to change the highlighting in the completion pager:
 
@@ -979,7 +994,7 @@ Some bindings are shared between emacs- and vi-mode because they aren't text edi
 
 - @key{Alt,&larr;,Left} and @key{Alt,&rarr;,Right} move the cursor one word left or right, or moves forward/backward in the directory history if the command line is empty. If the cursor is already at the end of the line, and an autosuggestion is available, @key{Alt,&rarr;,Right} (or @key{Alt,F}) accepts the first word in the suggestion.
 
-- @cursor_key{&uarr;,Up} and @cursor_key{&darr;,Down} search the command history for the previous/next command containing the string that was specified on the commandline before the search was started. If the commandline was empty when the search started, all commands match. See the <a href='#history'>history</a> section for more information on history searching.
+- @cursor_key{&uarr;,Up} and @cursor_key{&darr;,Down} (or @key{Control,P} and @key{Control,N} for emacs aficionados) search the command history for the previous/next command containing the string that was specified on the commandline before the search was started. If the commandline was empty when the search started, all commands match. See the <a href='#history'>history</a> section for more information on history searching.
 
 - @key{Alt,&uarr;,Up} and @key{Alt,&darr;,Down} search the command history for the previous/next token containing the token under the cursor before the search was started. If the commandline was not on a token when the search started, all tokens match. See the <a href='#history'>history</a> section for more information on history searching.
 
@@ -1102,6 +1117,8 @@ Command mode is also known as normal mode.
 
 `fish` uses an Emacs style kill ring for copy and paste functionality. Use @key{Control,K} to cut from the current cursor position to the end of the line. The string that is cut (a.k.a. killed) is inserted into a linked list of kills, called the kill ring. To paste the latest value from the kill ring use @key{Control,Y}. After pasting, use @key{Alt,Y} to rotate to the previous kill.
 
+Copy and paste from outside are also supported, both via the @key{Control,X} / @key{Control,V} bindings and via the terminal's paste function, for which fish enables "Bracketed Paste Mode". When pasting inside single quotes, pasted single quotes and backslashes are automatically escaped so that the result can be used as a single token simply by closing the quote after.
+
 \subsection history-search Searchable history
 
 After a command has been entered, it is inserted at the end of a history list. Any duplicate history items are automatically removed. By pressing the up and down keys, the user can search forwards and backwards in the history. If the current command line is not empty when starting a history search, only the commands containing the string entered into the command line are shown.
@@ -1160,12 +1177,15 @@ Configuration files are evaluated in the following order:
   - `/usr/share/fish/vendor_conf.d` (set at compile time; by default, `$__fish_datadir/conf.d`)
 
   If there are multiple files with the same name in these directories, only the first will be executed.
+  They are executed in order of their filename, sorted (like globs) in a natural order (i.e. "01" sorts before "2").
 
 - User initialization, usually in `~/.config/fish/config.fish` (controlled by the `XDG_CONFIG_HOME` environment variable).
 
 These paths are controlled by parameters set at build, install, or run time, and may vary from the defaults listed above.
 
 This wide search may be confusing. If you are unsure where to put your own customisations, use `~/.config/fish/config.fish`.
+
+Note that ~/.config/fish/config.fish is sourced _after_ the snippets. This is so users can copy snippets and override some of their behavior.
 
 These files are all executed on the startup of every shell. If you want to run a command only on starting an interactive shell, use the exit status of the command `status --is-interactive` to determine if the shell is interactive. If you want to run a command only when using a login shell, use `status --is-login` instead. This will speed up the starting of non-interactive or non-login shells.
 

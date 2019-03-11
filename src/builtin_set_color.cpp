@@ -1,6 +1,9 @@
 // Functions used for implementing the set_color builtin.
 #include "config.h"
 
+#include <stddef.h>
+#include <stdlib.h>
+
 #if HAVE_NCURSES_H
 #include <ncurses.h>
 #elif HAVE_NCURSES_CURSES_H
@@ -13,9 +16,7 @@
 #elif HAVE_NCURSES_TERM_H
 #include <ncurses/term.h>
 #endif
-#include <assert.h>
-#include <stdlib.h>
-#include <unistd.h>
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -23,9 +24,9 @@
 #include "builtin.h"
 #include "color.h"
 #include "common.h"
+#include "env.h"
 #include "io.h"
 #include "output.h"
-#include "proc.h"
 #include "wgetopt.h"
 #include "wutil.h"  // IWYU pragma: keep
 
@@ -50,6 +51,9 @@ static int set_color_builtin_outputter(char c) {
 
 /// set_color builtin.
 int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+    // By the time this is called we should have initialized the curses subsystem.
+    assert(curses_initialized);
+
     wgetopter_t w;
     // Variables used for parsing the argument list.
     const struct woption long_options[] = {{L"background", required_argument, 0, 'b'},
@@ -64,7 +68,6 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
                                            {0, 0, 0, 0}};
 
     const wchar_t *short_options = L"b:hvoidrcu";
-
     int argc = builtin_count_args(argv);
 
     // Some code passes variables to set_color that don't exist, like $fish_user_whatever. As a
@@ -75,7 +78,6 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
 
     const wchar_t *bgcolor = NULL;
     bool bold = false, underline = false, italics = false, dim = false, reverse = false;
-    int errret;
 
     // Parse options to obtain the requested operation and the modifiers.
     w.woptind = 0;
@@ -96,7 +98,7 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
             }
             case 'h': {
                 builtin_print_help(parser, streams, argv[0], streams.out);
-                return STATUS_BUILTIN_OK;
+                return STATUS_CMD_OK;
             }
             case 'o': {
                 bold = true;
@@ -120,10 +122,10 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
             }
             case 'c': {
                 print_colors(streams);
-                return STATUS_BUILTIN_OK;
+                return STATUS_CMD_OK;
             }
             case '?': {
-                return STATUS_BUILTIN_ERROR;
+                return STATUS_INVALID_ARGS;
             }
             default: {
                 DIE("unexpected opt");
@@ -138,14 +140,15 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         rgb_color_t fg = rgb_color_t(argv[w.woptind]);
         if (fg.is_none()) {
             streams.err.append_format(_(L"%ls: Unknown color '%ls'\n"), argv[0], argv[w.woptind]);
-            return STATUS_BUILTIN_ERROR;
+            return STATUS_INVALID_ARGS;
         }
         fgcolors.push_back(fg);
     }
 
-    if (fgcolors.empty() && bgcolor == NULL && !bold && !underline && !italics && !dim && !reverse) {
+    if (fgcolors.empty() && bgcolor == NULL && !bold && !underline && !italics && !dim &&
+        !reverse) {
         streams.err.append_format(_(L"%ls: Expected an argument\n"), argv[0]);
-        return STATUS_BUILTIN_ERROR;
+        return STATUS_INVALID_ARGS;
     }
 
     // #1323: We may have multiple foreground colors. Choose the best one. If we had no foreground
@@ -156,19 +159,13 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     const rgb_color_t bg = rgb_color_t(bgcolor ? bgcolor : L"");
     if (bgcolor && bg.is_none()) {
         streams.err.append_format(_(L"%ls: Unknown color '%ls'\n"), argv[0], bgcolor);
-        return STATUS_BUILTIN_ERROR;
-    }
-
-    // Make sure that the term exists.
-    if (cur_term == NULL && setupterm(0, STDOUT_FILENO, &errret) == ERR) {
-        streams.err.append_format(_(L"%ls: Could not set up terminal\n"), argv[0]);
-        return STATUS_BUILTIN_ERROR;
+        return STATUS_INVALID_ARGS;
     }
 
     // Test if we have at least basic support for setting fonts, colors and related bits - otherwise
     // just give up...
     if (cur_term == NULL || !exit_attribute_mode) {
-        return STATUS_BUILTIN_ERROR;
+        return STATUS_CMD_ERROR;
     }
 
     // Save old output function so we can restore it.
@@ -230,5 +227,5 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     streams.out.append(str2wcstring(builtin_set_color_output));
     builtin_set_color_output.clear();
 
-    return STATUS_BUILTIN_OK;
+    return STATUS_CMD_OK;
 }

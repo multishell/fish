@@ -15,7 +15,7 @@ send "sleep 132\r"
 exec -- kill -HUP $pid
 
 # Verify the spawned fish shell has exited.
-close
+catch {expect default exp_continue} output
 wait
 
 # Verify all child processes have been killed. We don't use `-p $pid` because

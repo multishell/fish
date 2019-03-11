@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #include <getopt.h>
 #include <limits.h>
 #include <locale.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +30,7 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #include <sys/stat.h>
 #include <unistd.h>
 #include <wchar.h>
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -42,12 +44,12 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #include "fish_version.h"
 #include "function.h"
 #include "history.h"
-#include "input.h"
 #include "io.h"
 #include "parser.h"
 #include "path.h"
 #include "proc.h"
 #include "reader.h"
+#include "signal.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 // PATH_MAX may not exist.
@@ -315,32 +317,6 @@ static int fish_parse_opt(int argc, char **argv, std::vector<std::string> *cmds)
     return optind;
 }
 
-/// Various things we need to initialize at run-time that don't really fit any of the other init
-/// routines.
-static void misc_init() {
-#ifdef OS_IS_CYGWIN
-    // MS Windows tty devices do not currently have either a read or write timestamp. Those
-    // respective fields of `struct stat` are always the current time. Which means we can't
-    // use them. So we assume no external program has written to the terminal behind our
-    // back. This makes multiline promptusable. See issue #2859 and
-    // https://github.com/Microsoft/BashOnWindows/issues/545
-    has_working_tty_timestamps = false;
-#else
-    // This covers preview builds of Windows Subsystem for Linux (WSL).
-    FILE *procsyskosrel;
-    if ((procsyskosrel = wfopen(L"/proc/sys/kernel/osrelease", "r"))) {
-        wcstring osrelease;
-        fgetws2(&osrelease, procsyskosrel);
-        if (osrelease.find(L"3.4.0-Microsoft") != wcstring::npos) {
-            has_working_tty_timestamps = false;
-        }
-    }
-    if (procsyskosrel) {
-        fclose(procsyskosrel);
-    }
-#endif  // OS_IS_MS_WINDOWS
-}
-
 int main(int argc, char **argv) {
     int res = 1;
     int my_optind = 0;
@@ -348,7 +324,7 @@ int main(int argc, char **argv) {
     program_name = L"fish";
     set_main_thread();
     setup_fork_guards();
-
+    signal_unblock_all();
     setlocale(LC_ALL, "");
     fish_setlocale();
 
@@ -376,24 +352,28 @@ int main(int argc, char **argv) {
     }
 
     const struct config_paths_t paths = determine_config_directory_paths(argv[0]);
-
+    env_init(&paths);
     proc_init();
     event_init();
     builtin_init();
     function_init();
-    env_init(&paths);
+    misc_init();
     reader_init();
     history_init();
-    // For set_color to support term256 in config.fish (issue #1022).
-    update_fish_color_support();
-    misc_init();
 
     parser_t &parser = parser_t::principal_parser();
 
     const io_chain_t empty_ios;
     if (read_init(paths)) {
+        // TODO: Remove this once we're confident that not blocking/unblocking every signal around
+        // some critical sections is no longer necessary.
+        env_var_t fish_no_signal_block = env_get_string(L"FISH_NO_SIGNAL_BLOCK");
+        if (!fish_no_signal_block.missing_or_empty() && !from_string<bool>(fish_no_signal_block)) {
+            ignore_signal_block = false;
+        }
+
         // Stomp the exit status of any initialization commands (issue #635).
-        proc_set_last_status(STATUS_BUILTIN_OK);
+        proc_set_last_status(STATUS_CMD_OK);
 
         // Run the commands specified as arguments, if any.
         if (!cmds.empty()) {
@@ -437,16 +417,16 @@ int main(int argc, char **argv) {
                 res = reader_read(fd, empty_ios);
 
                 if (res) {
-                    debug(1, _(L"Error while reading file %ls\n"), reader_current_filename()
-                                                                       ? reader_current_filename()
-                                                                       : _(L"Standard input"));
+                    debug(1, _(L"Error while reading file %ls\n"),
+                          reader_current_filename() ? reader_current_filename()
+                                                    : _(L"Standard input"));
                 }
                 reader_pop_current_filename();
             }
         }
     }
 
-    int exit_status = res ? STATUS_UNKNOWN_COMMAND : proc_get_last_status();
+    int exit_status = res ? STATUS_CMD_UNKNOWN : proc_get_last_status();
 
     proc_fire_event(L"PROCESS_EXIT", EVENT_EXIT, getpid(), exit_status);
 

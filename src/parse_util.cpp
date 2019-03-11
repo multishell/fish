@@ -4,13 +4,13 @@
 // that are somehow related to parsing the code.
 #include "config.h"  // IWYU pragma: keep
 
-#include <assert.h>
 #include <stdarg.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <wchar.h>
+
 #include <memory>
 #include <string>
+#include <type_traits>
 
 #include "builtin.h"
 #include "common.h"
@@ -299,9 +299,7 @@ static void job_or_process_extent(const wchar_t *buff, size_t cursor_pos, const 
     if (a) *a = begin;
     if (b) *b = end;
     buffcpy = wcsndup(begin, end - begin);
-    if (!buffcpy) {
-        DIE_MEM();
-    }
+    assert(buffcpy != NULL);
 
     tokenizer_t tok(buffcpy, TOK_ACCEPT_UNFINISHED);
     tok_t token;
@@ -346,8 +344,6 @@ void parse_util_token_extent(const wchar_t *buff, size_t cursor_pos, const wchar
     const wchar_t *a = NULL, *b = NULL, *pa = NULL, *pb = NULL;
 
     CHECK(buff, );
-
-    assert(cursor_pos >= 0);
 
     const wchar_t *cmdsubst_begin, *cmdsubst_end;
     parse_util_cmdsubst_extent(buff, cursor_pos, &cmdsubst_begin, &cmdsubst_end);
@@ -660,8 +656,9 @@ std::vector<int> parse_util_compute_indents(const wcstring &src) {
     // foo ; cas', we get an invalid parse tree (since 'cas' is not valid) but we indent it as if it
     // were a case item list.
     parse_node_tree_t tree;
-    parse_tree_from_string(src, parse_flag_continue_after_error | parse_flag_include_comments |
-                                    parse_flag_accept_incomplete_tokens,
+    parse_tree_from_string(src,
+                           parse_flag_continue_after_error | parse_flag_include_comments |
+                               parse_flag_accept_incomplete_tokens,
                            &tree, NULL /* errors */);
 
     // Start indenting at the first node. If we have a parse error, we'll have to start indenting
@@ -751,8 +748,10 @@ static bool append_syntax_error(parse_error_list_t *errors, size_t source_locati
 }
 
 /// Returns 1 if the specified command is a builtin that may not be used in a pipeline.
+static const wcstring_list_t forbidden_pipe_commands({L"exec", L"case", L"break", L"return",
+                                                      L"continue"});
 static int parser_is_pipe_forbidden(const wcstring &word) {
-    return contains(word, L"exec", L"case", L"break", L"return", L"continue");
+    return contains(forbidden_pipe_commands, word);
 }
 
 bool parse_util_argument_is_help(const wchar_t *s, int min_match) {
@@ -840,12 +839,12 @@ void parse_util_expand_variable_error(const wcstring &token, size_t global_token
             // report a bracket error. Otherwise just complain about the ${.
             bool looks_like_variable = false;
             size_t closing_bracket =
-                token.find(char_after_dollar == L'{' ? L'}' : BRACKET_END, dollar_pos + 2);
+                token.find(char_after_dollar == L'{' ? L'}' : wchar_t(BRACKET_END), dollar_pos + 2);
             wcstring var_name;
             if (closing_bracket != wcstring::npos) {
                 size_t var_start = dollar_pos + 2, var_end = closing_bracket;
                 var_name = wcstring(token, var_start, var_end - var_start);
-                looks_like_variable = wcsvarname(var_name) == NULL;
+                looks_like_variable = valid_var_name(var_name);
             }
             if (looks_like_variable) {
                 append_syntax_error(
@@ -1027,7 +1026,7 @@ parser_test_error_bits_t parse_util_detect_errors_in_argument(const parse_node_t
 
         wchar_t next_char = idx + 1 < unesc_size ? unesc.at(idx + 1) : L'\0';
         if (next_char != VARIABLE_EXPAND && next_char != VARIABLE_EXPAND_SINGLE &&
-            !wcsvarchr(next_char)) {
+            !valid_var_name_char(next_char)) {
             err = 1;
             if (out_errors) {
                 // We have something like $$$^....  Back up until we reach the first $.
@@ -1293,11 +1292,11 @@ parser_test_error_bits_t parse_util_detect_errors(const wcstring &buff_src,
     if (has_unclosed_block || has_unclosed_quote) res |= PARSER_TEST_INCOMPLETE;
 
     if (out_errors != NULL) {
-        out_errors->swap(parse_errors);
+        *out_errors = std::move(parse_errors);
     }
 
     if (out_tree != NULL) {
-        out_tree->swap(node_tree);
+        *out_tree = std::move(node_tree);
     }
 
     return res;

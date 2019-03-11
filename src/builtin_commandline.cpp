@@ -1,12 +1,10 @@
 // Functions used for implementing the commandline builtin.
 #include "config.h"  // IWYU pragma: keep
 
-#include <assert.h>
 #include <errno.h>
-#include <pthread.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <wchar.h>
-#include <cstring>
 
 #include "builtin.h"
 #include "common.h"
@@ -50,46 +48,37 @@ static const wchar_t *get_buffer() { return current_buffer; }
 /// Returns the position of the cursor.
 static size_t get_cursor_pos() { return current_cursor_pos; }
 
-static pthread_mutex_t transient_commandline_lock = PTHREAD_MUTEX_INITIALIZER;
-static wcstring_list_t *get_transient_stack() {
+static owning_lock<wcstring_list_t> &get_transient_stack() {
     ASSERT_IS_MAIN_THREAD();
-    ASSERT_IS_LOCKED(transient_commandline_lock);
-    // A pointer is a little more efficient than an object as a static because we can elide the
-    // thread-safe initialization.
-    static wcstring_list_t *result = NULL;
-    if (!result) {
-        result = new wcstring_list_t();
-    }
-    return result;
+    static owning_lock<wcstring_list_t> s_transient_stack;
+    return s_transient_stack;
 }
 
 static bool get_top_transient(wcstring *out_result) {
-    ASSERT_IS_MAIN_THREAD();
-    bool result = false;
-    scoped_lock locker(transient_commandline_lock);
-    const wcstring_list_t *stack = get_transient_stack();
-    if (!stack->empty()) {
-        out_result->assign(stack->back());
-        result = true;
+    auto locked = get_transient_stack().acquire();
+    wcstring_list_t &stack = locked.value;
+    if (stack.empty()) {
+        return false;
     }
-    return result;
+    out_result->assign(stack.back());
+    return true;
 }
 
 builtin_commandline_scoped_transient_t::builtin_commandline_scoped_transient_t(
     const wcstring &cmd) {
     ASSERT_IS_MAIN_THREAD();
-    scoped_lock locker(transient_commandline_lock);
-    wcstring_list_t *stack = get_transient_stack();
-    stack->push_back(cmd);
-    this->token = stack->size();
+    auto locked = get_transient_stack().acquire();
+    wcstring_list_t &stack = locked.value;
+    stack.push_back(cmd);
+    this->token = stack.size();
 }
 
 builtin_commandline_scoped_transient_t::~builtin_commandline_scoped_transient_t() {
     ASSERT_IS_MAIN_THREAD();
-    scoped_lock locker(transient_commandline_lock);
-    wcstring_list_t *stack = get_transient_stack();
-    assert(this->token == stack->size());
-    stack->pop_back();
+    auto locked = get_transient_stack().acquire();
+    wcstring_list_t &stack = locked.value;
+    assert(this->token == stack.size());
+    stack.pop_back();
 }
 
 /// Replace/append/insert the selection with/at/after the specified string.
@@ -212,13 +201,13 @@ int builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_t **argv)
         if (is_interactive_session) {
             // Prompt change requested while we don't have a prompt, most probably while reading the
             // init files. Just ignore it.
-            return 1;
+            return STATUS_CMD_ERROR;
         }
 
         streams.err.append(argv[0]);
         streams.err.append(L": Can not set commandline in non-interactive mode\n");
         builtin_print_help(parser, streams, argv[0], streams.err);
-        return 1;
+        return STATUS_CMD_ERROR;
     }
 
     w.woptind = 0;
@@ -255,7 +244,7 @@ int builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_t **argv)
                                           long_options[opt_index].name);
                 builtin_print_help(parser, streams, argv[0], streams.err);
 
-                return 1;
+                return STATUS_CMD_ERROR;
             }
             case L'a': {
                 append_mode = APPEND_MODE;
@@ -324,11 +313,11 @@ int builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_t **argv)
             }
             case 'h': {
                 builtin_print_help(parser, streams, argv[0], streams.out);
-                return 0;
+                return STATUS_CMD_OK;
             }
             case L'?': {
                 builtin_unknown_option(parser, streams, argv[0], argv[w.woptind - 1]);
-                return 1;
+                return STATUS_INVALID_ARGS;
             }
             default: {
                 DIE("unexpected opt");
@@ -344,16 +333,14 @@ int builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_t **argv)
         if (buffer_part || cut_at_cursor || append_mode || tokenize || cursor_mode || line_mode ||
             search_mode || paging_mode) {
             streams.err.append_format(BUILTIN_ERR_COMBO, argv[0]);
-
             builtin_print_help(parser, streams, argv[0], streams.err);
-            return 1;
+            return STATUS_INVALID_ARGS;
         }
 
         if (argc == w.woptind) {
             streams.err.append_format(BUILTIN_ERR_MISSING, argv[0]);
-
             builtin_print_help(parser, streams, argv[0], streams.err);
-            return 1;
+            return STATUS_INVALID_ARGS;
         }
 
         for (i = w.woptind; i < argc; i++) {
@@ -363,14 +350,14 @@ int builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_t **argv)
                 // the queue of unused keypresses.
                 input_queue_ch(c);
             } else {
-                streams.err.append_format(_(L"%ls: Unknown input function '%ls'\n"), argv[0],
+                streams.err.append_format(_(L"%ls: Unknown input function '%ls'"), argv[0],
                                           argv[i]);
                 builtin_print_help(parser, streams, argv[0], streams.err);
-                return 1;
+                return STATUS_INVALID_ARGS;
             }
         }
 
-        return 0;
+        return STATUS_CMD_OK;
     }
 
     if (selection_mode) {
@@ -379,40 +366,37 @@ int builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_t **argv)
         if (reader_get_selection(&start, &len)) {
             streams.out.append(buffer + start, len);
         }
-        return 0;
+        return STATUS_CMD_OK;
     }
 
     // Check for invalid switch combinations.
     if ((search_mode || line_mode || cursor_mode || paging_mode) && (argc - w.woptind > 1)) {
-        streams.err.append_format(argv[0], L": Too many arguments\n", NULL);
+        streams.err.append_format(L"%ls: Too many arguments", argv[0]);
         builtin_print_help(parser, streams, argv[0], streams.err);
-        return 1;
+        return STATUS_INVALID_ARGS;
     }
 
     if ((buffer_part || tokenize || cut_at_cursor) &&
         (cursor_mode || line_mode || search_mode || paging_mode)) {
         streams.err.append_format(BUILTIN_ERR_COMBO, argv[0]);
-
         builtin_print_help(parser, streams, argv[0], streams.err);
-        return 1;
+        return STATUS_INVALID_ARGS;
     }
 
     if ((tokenize || cut_at_cursor) && (argc - w.woptind)) {
         streams.err.append_format(
             BUILTIN_ERR_COMBO2, argv[0],
             L"--cut-at-cursor and --tokenize can not be used when setting the commandline");
-
         builtin_print_help(parser, streams, argv[0], streams.err);
-        return 1;
+        return STATUS_INVALID_ARGS;
     }
 
     if (append_mode && !(argc - w.woptind)) {
         streams.err.append_format(
             BUILTIN_ERR_COMBO2, argv[0],
             L"insertion mode switches can not be used when not in insertion mode");
-
         builtin_print_help(parser, streams, argv[0], streams.err);
-        return 1;
+        return STATUS_INVALID_ARGS;
     }
 
     // Set default modes.
@@ -438,14 +422,14 @@ int builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_t **argv)
         } else {
             streams.out.append_format(L"%lu\n", (unsigned long)reader_get_cursor_pos());
         }
-        return 0;
+        return STATUS_CMD_OK;
     }
 
     if (line_mode) {
         size_t pos = reader_get_cursor_pos();
         const wchar_t *buff = reader_get_buffer();
         streams.out.append_format(L"%lu\n", (unsigned long)parse_util_lineno(buff, pos));
-        return 0;
+        return STATUS_CMD_OK;
     }
 
     if (search_mode) {
@@ -494,5 +478,5 @@ int builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_t **argv)
         replace_part(begin, end, sb.c_str(), append_mode);
     }
 
-    return 0;
+    return STATUS_CMD_OK;
 }

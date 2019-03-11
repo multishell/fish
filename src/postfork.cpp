@@ -69,8 +69,9 @@ static void debug_safe_int(int level, const char *format, int val) {
 bool set_child_group(job_t *j, process_t *p, int print_errors) {
     bool retval = true;
 
-    if (job_get_flag(j, JOB_CONTROL)) {
-        if (!j->pgid) {
+    if (j->get_flag(JOB_CONTROL)) {
+        // New jobs have the pgid set to -2
+        if (j->pgid == -2) {
             j->pgid = p->pid;
         }
 
@@ -101,11 +102,17 @@ bool set_child_group(job_t *j, process_t *p, int print_errors) {
             }
         }
     } else {
-        j->pgid = getpid();
+        j->pgid = getpgrp();
     }
 
-    if (job_get_flag(j, JOB_TERMINAL) && job_get_flag(j, JOB_FOREGROUND)) {  //!OCLINT(early exit)
-        int result = tcsetpgrp(STDIN_FILENO, j->pgid);  // to avoid "collapsible if statements" warn
+    if (j->get_flag(JOB_TERMINAL) && j->get_flag(JOB_FOREGROUND)) {  //!OCLINT(early exit)
+        int result = -1;
+        errno = EINTR;
+        while (result == -1 && errno == EINTR) {
+            signal_block(true);
+            result = tcsetpgrp(STDIN_FILENO, j->pgid);
+            signal_unblock(true);
+        }
         if (result == -1) {
             if (errno == ENOTTY) redirect_tty_output();
             if (print_errors) {
@@ -311,15 +318,17 @@ bool fork_actions_make_spawn_properties(posix_spawnattr_t *attr,
         return false;
     }
 
-    bool should_set_parent_group_id = false;
-    int desired_parent_group_id = 0;
-    if (job_get_flag(j, JOB_CONTROL)) {
-        should_set_parent_group_id = true;
+    bool should_set_process_group_id = false;
+    int desired_process_group_id = 0;
+    if (j->get_flag(JOB_CONTROL)) {
+        should_set_process_group_id = true;
 
-        // PCA: I'm quite fuzzy on process groups, but I believe that the default value of 0 means
-        // that the process becomes its own group leader, which is what set_child_group did in this
-        // case. So we want this to be 0 if j->pgid is 0.
-        desired_parent_group_id = j->pgid;
+        // set_child_group puts each job into its own process group
+        // do the same here if there is no PGID yet (i.e. PGID == -2)
+        desired_process_group_id = j->pgid;
+        if (desired_process_group_id == -2) {
+            desired_process_group_id = 0;
+        }
     }
 
     // Set the handling for job control signals back to the default.
@@ -332,13 +341,13 @@ bool fork_actions_make_spawn_properties(posix_spawnattr_t *attr,
     short flags = 0;
     if (reset_signal_handlers) flags |= POSIX_SPAWN_SETSIGDEF;
     if (reset_sigmask) flags |= POSIX_SPAWN_SETSIGMASK;
-    if (should_set_parent_group_id) flags |= POSIX_SPAWN_SETPGROUP;
+    if (should_set_process_group_id) flags |= POSIX_SPAWN_SETPGROUP;
 
     int err = 0;
     if (!err) err = posix_spawnattr_setflags(attr, flags);
 
-    if (!err && should_set_parent_group_id)
-        err = posix_spawnattr_setpgroup(attr, desired_parent_group_id);
+    if (!err && should_set_process_group_id)
+        err = posix_spawnattr_setpgroup(attr, desired_process_group_id);
 
     // Everybody gets default handlers.
     if (!err && reset_signal_handlers) {

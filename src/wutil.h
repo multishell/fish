@@ -64,8 +64,8 @@ int wchdir(const wcstring &dir);
 wchar_t *wrealpath(const wcstring &pathname, wchar_t *resolved_path);
 
 /// Wide character version of readdir().
-bool wreaddir(DIR *dir, std::wstring &out_name);
-bool wreaddir_resolving(DIR *dir, const std::wstring &dir_path, std::wstring &out_name,
+bool wreaddir(DIR *dir, wcstring &out_name);
+bool wreaddir_resolving(DIR *dir, const std::wstring &dir_path, wcstring &out_name,
                         bool *out_is_dir);
 
 /// Like wreaddir, but skip items that are known to not be directories. If this requires a stat
@@ -102,18 +102,14 @@ int wrename(const wcstring &oldName, const wcstring &newName);
 // We need this because there are too many implementations that don't return the proper answer for
 // some code points. See issue #3050.
 #ifndef FISH_NO_ISW_WRAPPERS
-#define iswalnum fish_iswalnum
 #define iswalpha fish_iswalpha
+#define iswalnum fish_iswalnum
 #define iswgraph fish_iswgraph
 #endif
-int fish_iswalnum(wint_t wc);
 int fish_iswalpha(wint_t wc);
+int fish_iswalnum(wint_t wc);
 int fish_iswgraph(wint_t wc);
 
-const wchar_t *wcsvarname(const wchar_t *str);
-const wchar_t *wcsvarname(const wcstring &str);
-bool wcsfuncname(const wcstring &str);
-bool wcsvarchr(wchar_t chr);
 int fish_wcswidth(const wchar_t *str);
 int fish_wcswidth(const wcstring &str);
 

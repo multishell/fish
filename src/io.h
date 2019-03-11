@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdlib.h>
+
 #include <vector>
 // Note that we have to include something to get any _LIBCPP_VERSION defined so we can detect libc++
 // So it's key that vector go above. If we didn't need vector for other reasons, we might include
@@ -133,7 +134,7 @@ class io_buffer_t : public io_pipe_t {
     /// \param fd the fd that will be mapped in the child process, typically STDOUT_FILENO
     /// \param conflicts A set of IO redirections. The function ensures that any pipe it makes does
     /// not conflict with an fd redirection in this list.
-    static io_buffer_t *create(int fd, const io_chain_t &conflicts);
+    static shared_ptr<io_buffer_t> create(int fd, const io_chain_t &conflicts);
 };
 
 class io_chain_t : public std::vector<shared_ptr<io_data_t> > {

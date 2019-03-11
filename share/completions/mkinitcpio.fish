@@ -1,17 +1,16 @@
 # Archlinux's mkinitcpio (https://projects.archlinux.org/mkinitcpio.git/)
 
 function __fish_mkinitcpio_complete_hooks
-	mkinitcpio --listhooks | tail -n +2 | sed -e "s/^[¹²³].*//" -e "s/\t\+/\n/g" | sed -e "s/^\([^[:space:]]\+\)[¹²³]\$/\1\t(deprecated)/g"
+    mkinitcpio -L | string match -r '^[a-z].*$' | string split \t | string match -r '.+' | string replace -ra '[¹²³]' '\tdeprecated'
 end
-	
+
 complete -c mkinitcpio -s A -l addhooks -d 'Add the additional hooks to the image' -a "(__fish_mkinitcpio_complete_hooks)" -f
 complete -c mkinitcpio -s c -l config -d 'Use config file to generate the ramdisk'
 complete -c mkinitcpio -s d -l generatedir -d 'Set directory as the location where the initramfs is built'
 complete -c mkinitcpio -s g -l generate -d 'Generate a CPIO image as filename'
 complete -c mkinitcpio -s H -l hookhelp -d 'Output help for a hook' -a "(__fish_mkinitcpio_complete_hooks)" -f
 complete -c mkinitcpio -s h -l help -d 'Output a short overview of available command-line switches' -f
-# Since we hardcode the path, we can also hardcode the number of slashes - saves us having to fork a sed
-complete -c mkinitcpio -s k -l kernel -d 'Use kernelversion, instead of the current running kernel' -a "(printf "%s\n" /usr/lib/modules/* | grep -v "extramodules" | cut -d"/" -f5)"
+complete -c mkinitcpio -s k -l kernel -d 'Use kernelversion, instead of the current running kernel' -a "(string match -v '*extramodules*' -- /usr/lib/modules/* | string replace -r '.*/' '')" -f
 complete -c mkinitcpio -s L -l listhooks -d 'List all available hooks' -f
 complete -c mkinitcpio -s M -l automods -d 'Display modules found via autodetection' -f
 complete -c mkinitcpio -s n -l nocolor -d 'Disable color output' -f

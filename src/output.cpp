@@ -18,6 +18,7 @@
 #endif
 #include <limits.h>
 #include <wchar.h>
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -95,6 +96,7 @@ static bool write_color_escape(char *todo, unsigned char idx, bool is_fg) {
 }
 
 static bool write_foreground_color(unsigned char idx) {
+    if (!cur_term) return false;
     if (set_a_foreground && set_a_foreground[0]) {
         return write_color_escape(set_a_foreground, idx, true);
     } else if (set_foreground && set_foreground[0]) {
@@ -104,6 +106,7 @@ static bool write_foreground_color(unsigned char idx) {
 }
 
 static bool write_background_color(unsigned char idx) {
+    if (!cur_term) return false;
     if (set_a_background && set_a_background[0]) {
         return write_color_escape(set_a_background, idx, false);
     } else if (set_background && set_background[0]) {
@@ -114,6 +117,7 @@ static bool write_background_color(unsigned char idx) {
 
 // Exported for builtin_set_color's usage only.
 bool write_color(rgb_color_t color, bool is_fg) {
+    if (!cur_term) return false;
     bool supports_term24bit =
         static_cast<bool>(output_get_color_support() & color_support_term24bit);
     if (!supports_term24bit || !color.is_rgb()) {
@@ -167,6 +171,7 @@ void set_color(rgb_color_t c, rgb_color_t c2) {
     debug(3, "set_color %ls : %ls\n", tmp.c_str(), tmp2.c_str());
 #endif
     ASSERT_IS_MAIN_THREAD();
+    if (!cur_term) return;
 
     const rgb_color_t normal = rgb_color_t::normal();
     static rgb_color_t last_color = rgb_color_t::normal();
@@ -230,7 +235,7 @@ void set_color(rgb_color_t c, rgb_color_t c2) {
         was_reverse = false;
     }
 
-    if (was_dim && !is_dim ) {
+    if (was_dim && !is_dim) {
         // Only way to exit dim mode is a reset of all attributes.
         writembs(exit_attribute_mode);
         last_color = normal;
@@ -242,7 +247,7 @@ void set_color(rgb_color_t c, rgb_color_t c2) {
         was_reverse = false;
     }
 
-    if (was_reverse && !is_reverse ) {
+    if (was_reverse && !is_reverse) {
         // Only way to exit reverse mode is a reset of all attributes.
         writembs(exit_attribute_mode);
         last_color = normal;
@@ -537,8 +542,8 @@ rgb_color_t parse_color(const wcstring &val, bool is_background) {
 
 #if 0
     wcstring desc = result.description();
-    wprintf(L"Parsed %ls from %ls (%s)\n", desc.c_str(), val.c_str(),
-           is_background ? "background" : "foreground");
+    fwprintf(stdout, L"Parsed %ls from %ls (%s)\n", desc.c_str(), val.c_str(),
+             is_background ? "background" : "foreground");
 #endif
 
     return result;
@@ -550,8 +555,9 @@ void writembs_check(char *mbs, const char *mbs_name, const char *file, long line
         tputs(mbs, 1, &writeb);
     } else {
         env_var_t term = env_get_string(L"TERM");
-        debug(0, _(L"Tried to use terminfo string %s on line %ld of %s, which is undefined in "
-                   L"terminal of type \"%ls\". Please report this error to %s"),
-              mbs_name, line, file, term.c_str(), PACKAGE_BUGREPORT);
+        const wchar_t *fmt =
+            _(L"Tried to use terminfo string %s on line %ld of %s, which is "
+              L"undefined in terminal of type \"%ls\". Please report this error to %s");
+        debug(0, fmt, mbs_name, line, file, term.c_str(), PACKAGE_BUGREPORT);
     }
 }

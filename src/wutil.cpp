@@ -2,7 +2,6 @@
 #define FISH_NO_ISW_WRAPPERS
 #include "config.h"
 
-#include <assert.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -17,8 +16,8 @@
 #include <unistd.h>
 #include <wchar.h>
 #include <wctype.h>
+
 #include <map>
-#include <memory>
 #include <string>
 
 #include "common.h"
@@ -38,19 +37,19 @@ const file_id_t kInvalidFileID = {(dev_t)-1LL, (ino_t)-1LL, (uint64_t)-1LL, -1, 
 #endif
 #endif
 
-/// Lock to protect wgettext.
-static pthread_mutex_t wgettext_lock;
-
 /// Map used as cache by wgettext.
-typedef std::map<wcstring, wcstring> wgettext_map_t;
-static wgettext_map_t wgettext_map;
+static owning_lock<std::map<wcstring, wcstring>> wgettext_map;
 
-bool wreaddir_resolving(DIR *dir, const std::wstring &dir_path, std::wstring &out_name,
-                        bool *out_is_dir) {
-    struct dirent *d = readdir(dir);
-    if (!d) return false;
+bool wreaddir_resolving(DIR *dir, const wcstring &dir_path, wcstring &out_name, bool *out_is_dir) {
+    struct dirent d;
+    struct dirent *result = NULL;
+    int retval = readdir_r(dir, &d, &result);
+    if (retval || !result) {
+        out_name = L"";
+        return false;
+    }
 
-    out_name = str2wcstring(d->d_name);
+    out_name = str2wcstring(d.d_name);
     if (!out_is_dir) return true;
 
     // The caller cares if this is a directory, so check.
@@ -58,11 +57,11 @@ bool wreaddir_resolving(DIR *dir, const std::wstring &dir_path, std::wstring &ou
     // We may be able to skip stat, if the readdir can tell us the file type directly.
     bool check_with_stat = true;
 #ifdef HAVE_STRUCT_DIRENT_D_TYPE
-    if (d->d_type == DT_DIR) {
+    if (d.d_type == DT_DIR) {
         // Known directory.
         is_dir = true;
         check_with_stat = false;
-    } else if (d->d_type == DT_LNK || d->d_type == DT_UNKNOWN) {
+    } else if (d.d_type == DT_LNK || d.d_type == DT_UNKNOWN) {
         // We want to treat symlinks to directories as directories. Use stat to resolve it.
         check_with_stat = true;
     } else {
@@ -75,7 +74,7 @@ bool wreaddir_resolving(DIR *dir, const std::wstring &dir_path, std::wstring &ou
         // We couldn't determine the file type from the dirent; check by stat'ing it.
         cstring fullpath = wcs2string(dir_path);
         fullpath.push_back('/');
-        fullpath.append(d->d_name);
+        fullpath.append(d.d_name);
         struct stat buf;
         if (stat(fullpath.c_str(), &buf) != 0) {
             is_dir = false;
@@ -87,39 +86,43 @@ bool wreaddir_resolving(DIR *dir, const std::wstring &dir_path, std::wstring &ou
     return true;
 }
 
-bool wreaddir(DIR *dir, std::wstring &out_name) {
-    struct dirent *d = readdir(dir);
-    if (!d) return false;
+bool wreaddir(DIR *dir, wcstring &out_name) {
+    struct dirent d;
+    struct dirent *result = NULL;
+    int retval = readdir_r(dir, &d, &result);
 
-    out_name = str2wcstring(d->d_name);
+    if (retval || !result) {
+        out_name = L"";
+        return false;
+    }
+    out_name = str2wcstring(d.d_name);
     return true;
 }
 
 bool wreaddir_for_dirs(DIR *dir, wcstring *out_name) {
+    struct dirent d;
     struct dirent *result = NULL;
-    while (result == NULL) {
-        struct dirent *d = readdir(dir);
-        if (!d) break;
+    while (!result) {
+        int retval = readdir_r(dir, &d, &result);
+        if (retval || !result) break;
 
 #if HAVE_STRUCT_DIRENT_D_TYPE
-        switch (d->d_type) {
+        switch (d.d_type) {
             case DT_DIR:
             case DT_LNK:
             case DT_UNKNOWN: {
-                // These may be directories.
-                result = d;
-                break;
+                break;  // these may be directories
             }
             default: {
-                // Nothing else can.
-                break;
+                break;  // nothing else can
             }
         }
 #else
         // We can't determine if it's a directory or not, so just return it.
-        result = d;
+        break;
 #endif
     }
+
     if (result && out_name) {
         *out_name = str2wcstring(result->d_name);
     }
@@ -357,7 +360,7 @@ wchar_t *wrealpath(const wcstring &pathname, wchar_t *resolved_path) {
             if (pathsep_idx == cstring::npos) {
                 // No pathsep means a single path component relative to pwd.
                 narrow_res = realpath(".", NULL);
-                if (!narrow_res) DIE("unexpected realpath(\".\") failure");
+                assert(narrow_res != NULL);
                 pathsep_idx = 0;
             } else {
                 // Only call realpath() on the portion up to the last component.
@@ -405,7 +408,6 @@ wcstring wbasename(const wcstring &path) {
 
 // Really init wgettext.
 static void wgettext_really_init() {
-    pthread_mutex_init(&wgettext_lock, NULL);
     fish_bindtextdomain(PACKAGE_NAME, LOCALEDIR);
     fish_textdomain(PACKAGE_NAME);
 }
@@ -423,8 +425,8 @@ const wcstring &wgettext(const wchar_t *in) {
     wcstring key = in;
 
     wgettext_init_if_necessary();
-    scoped_lock locker(wgettext_lock);
-    wcstring &val = wgettext_map[key];
+    auto wmap = wgettext_map.acquire();
+    wcstring &val = wmap.value[key];
     if (val.empty()) {
         cstring mbs_in = wcs2string(key);
         char *out = fish_gettext(mbs_in.c_str());
@@ -464,6 +466,7 @@ int fish_iswalnum(wint_t wc) {
     return iswalnum(wc);
 }
 
+#if 0
 /// We need this because there are too many implementations that don't return the proper answer for
 /// some code points. See issue #3050.
 int fish_iswalpha(wint_t wc) {
@@ -471,6 +474,7 @@ int fish_iswalpha(wint_t wc) {
     if (fish_is_pua(wc)) return 0;
     return iswalpha(wc);
 }
+#endif
 
 /// We need this because there are too many implementations that don't return the proper answer for
 /// some code points. See issue #3050.
@@ -479,40 +483,6 @@ int fish_iswgraph(wint_t wc) {
     if (fish_is_pua(wc)) return 1;
     return iswgraph(wc);
 }
-
-/// Test if the given string is a valid variable name.
-///
-/// \return null if this is a valid name, and a pointer to the first invalid character otherwise.
-const wchar_t *wcsvarname(const wchar_t *str) {
-    if (str[0] == L'\0') return str;
-    while (*str) {
-        if ((!fish_iswalnum(*str)) && (*str != L'_')) {
-            return str;
-        }
-        str++;
-    }
-    return NULL;
-}
-
-/// Test if the given string is a valid variable name.
-///
-/// \return null if this is a valid name, and a pointer to the first invalid character otherwise.
-const wchar_t *wcsvarname(const wcstring &str) { return wcsvarname(str.c_str()); }
-
-/// Test if the string is a valid function name.
-///
-/// \return true if it is valid else false.
-bool wcsfuncname(const wcstring &str) {
-    if (str.size() == 0) return false;
-    if (str.at(0) == L'-') return false;
-    if (str.find_first_of(L'/') != wcstring::npos) return false;
-    return true;
-}
-
-/// Test if the given string is valid in a variable name.
-///
-/// \return true if this is a valid name, false otherwise.
-bool wcsvarchr(wchar_t chr) { return fish_iswalnum(chr) || chr == L'_'; }
 
 /// Convenience variants on fish_wcwswidth().
 ///
@@ -688,7 +658,7 @@ file_id_t file_id_t::file_id_from_stat(const struct stat *buf) {
 file_id_t file_id_for_fd(int fd) {
     file_id_t result = kInvalidFileID;
     struct stat buf = {};
-    if (0 == fstat(fd, &buf)) {
+    if (fd >= 0 && 0 == fstat(fd, &buf)) {
         result = file_id_t::file_id_from_stat(&buf);
     }
     return result;
