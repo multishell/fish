@@ -1,13 +1,9 @@
-#
 # Main file for fish command completions. This file contains various
 # common helper functions for the command completions. All actual
 # completions are located in the completions subdirectory.
 #
-
-#
 # Set default field separators
 #
-
 set -g IFS \n\ \t
 
 #
@@ -17,10 +13,11 @@ function __fish_default_command_not_found_handler
 	echo "fish: Unknown command '$argv'" >&2
 end
 
+set -g version $FISH_VERSION
+
 if status --is-interactive
-	# The user has seemingly explicitly launched an old fish with
-	# too-new scripts installed. 
-	if not contains "string" (builtin -n)
+        # The user has seemingly explicitly launched an old fish with too-new scripts installed.
+	if not contains  -- "string" (builtin -n)
 		set -g __is_launched_without_string 1
 		# XXX nostring - fix old fish binaries with no `string' builtin.
 		# When executed on fish 2.2.0, the `else' block after this would
@@ -28,7 +25,7 @@ if status --is-interactive
 		# These "XXX nostring" hacks were added for 2.3.1
 		set_color --bold
 		echo "You appear to be trying to launch an old fish binary with newer scripts "
-		echo "installed into" (set_color --underline)"$__fish_datadir" 
+		echo "installed into" (set_color --underline)"$__fish_datadir"
 		set_color normal
 		echo -e "\nThis is an unsupported configuration.\n"
 		set_color yellow
@@ -37,7 +34,10 @@ if status --is-interactive
 		# Remove this code when we've made it safer to upgrade fish.
 	else
 		# Enable truecolor/24-bit support for select terminals
-		if not set -q NVIM_LISTEN_ADDRESS # (Neovim will swallow the 24bit sequences, rendering text white)
+		# Ignore Neovim (in 0.1.4 at least), Screen and emacs' ansi-term as they swallow the sequences, rendering the text white.
+		if not set -q NVIM_LISTEN_ADDRESS
+			and not set -q STY
+			and not string match -q -- 'eterm*' $TERM
 			and begin
 				set -q KONSOLE_PROFILE_NAME # KDE's konsole
 				or string match -q -- "*:*" $ITERM_SESSION_ID # Supporting versions of iTerm2 will include a colon here
@@ -93,7 +93,7 @@ if not set -q fish_function_path
 	set fish_function_path $configdir/fish/functions $__fish_sysconfdir/functions $__extra_functionsdir $__fish_datadir/functions
 end
 
-if not contains $__fish_datadir/functions $fish_function_path
+if not contains -- $__fish_datadir/functions $fish_function_path
 	set fish_function_path $fish_function_path $__fish_datadir/functions
 end
 
@@ -101,7 +101,7 @@ if not set -q fish_complete_path
 	set fish_complete_path $configdir/fish/completions $__fish_sysconfdir/completions $__extra_completionsdir $__fish_datadir/completions $userdatadir/fish/generated_completions
 end
 
-if not contains $__fish_datadir/completions $fish_complete_path
+if not contains -- $__fish_datadir/completions $fish_complete_path
 	set fish_complete_path $fish_complete_path $__fish_datadir/completions
 end
 
@@ -114,7 +114,7 @@ end
 #
 
 if test -d /usr/xpg4/bin
-	if not contains /usr/xpg4/bin $PATH
+	if not contains -- /usr/xpg4/bin $PATH
 		set PATH /usr/xpg4/bin $PATH
 	end
 end
@@ -124,17 +124,17 @@ set -g __fish_tmp_path $PATH
 function __fish_load_path_helper_paths
 	# We want to rearrange the path to reflect this order. Delete that path component if it exists and then prepend it.
 	# Since we are prepending but want to preserve the order of the input file, we reverse the array, append, and then reverse it again
-	set __fish_tmp_path $__fish_tmp_path[-1..1] 
+	set __fish_tmp_path $__fish_tmp_path[-1..1]
 	while read -l new_path_comp
 		if test -d $new_path_comp
-			set -l where (contains -i $new_path_comp $__fish_tmp_path)
+			set -l where (contains -i -- $new_path_comp $__fish_tmp_path)
 			and set -e __fish_tmp_path[$where]
 			set __fish_tmp_path $new_path_comp $__fish_tmp_path
 		end
 	end
 	set __fish_tmp_path $__fish_tmp_path[-1..1]
 end
-test -r /etc/paths ; and __fish_load_path_helper_paths < /etc/paths 
+test -r /etc/paths ; and __fish_load_path_helper_paths < /etc/paths
 for pathfile in /etc/paths.d/* ; __fish_load_path_helper_paths < $pathfile ; end
 set -xg PATH $__fish_tmp_path
 set -e __fish_tmp_path
@@ -147,13 +147,13 @@ function __fish_reconstruct_path -d "Update PATH when fish_user_paths changes" -
 	set -l local_path $PATH
 	set -l x
 	for x in $__fish_added_user_paths
-		set -l idx (contains --index $x $local_path)
+		set -l idx (contains --index -- $x $local_path)
 		and set -e local_path[$idx]
 	end
 
 	set -e __fish_added_user_paths
 	for x in $fish_user_paths[-1..1]
-		if set -l idx (contains --index $x $local_path)
+		if set -l idx (contains --index -- $x $local_path)
 			set -e local_path[$idx]
 		else
 			set -g __fish_added_user_paths $__fish_added_user_paths $x
@@ -195,6 +195,11 @@ function . --description 'Evaluate contents of file (deprecated, see "source")' 
 	end
 end
 
+# Set the locale if it isn't explicitly set. Allowing the lack of locale env vars to imply the
+# C/POSIX locale causes too many problems. Do this before reading the snippets because they might be
+# in UTF-8 (with non-ASCII characters).
+__fish_set_locale
+
 # As last part of initialization, source the conf directories
 # Implement precedence (User > Admin > Extra (e.g. vendors) > Fish) by basically doing "basename"
 set -l sourcelist
@@ -224,15 +229,6 @@ end
 #
 
 if status --is-login
-
-	# Check for i18n information in
-	# /etc/sysconfig/i18n
-
-	if test -f /etc/sysconfig/i18n
-		string match -r '^[a-zA-Z]*=.*' < /etc/sysconfig/i18n | while read -l line
-			set -gx (string split '=' -m 1 -- $line | string replace -ra '"([^"]+)"' '$1' | string replace -ra "'([^']+)'" '$1')
-		end
-	end
 
 	#
 	# Put linux consoles in unicode mode.

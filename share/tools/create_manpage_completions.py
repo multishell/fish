@@ -115,7 +115,7 @@ def lossy_unicode(s):
     except UnicodeEncodeError:
         pass
     return s.decode('latin-1', 'ignore')
-    
+
 
 def output_complete_command(cmdname, args, description, output_list):
     comps = ['complete -c', cmdname]
@@ -129,8 +129,10 @@ def built_command(options, description):
 #    print "Options are: ", options
     man_optionlist = re.split(" |,|\"|=|[|]", options)
     fish_options = []
-    for option in man_optionlist:
-        option = option.strip()
+    for optionstr in man_optionlist:
+        option = re.sub(r"(\[.*\])", "", optionstr)
+        option = option.strip(" \t\n[]()")
+
 
         # Skip some problematic cases
         if option in ['-', '--']: continue
@@ -155,37 +157,37 @@ def built_command(options, description):
     if not fish_options: return
 
     # Here's what we'll use to truncate if necessary
-    max_description_width = 63
+    max_description_width = 78
     if IS_PY3:
-        truncation_suffix = '… [See Man Page]'
+        truncation_suffix = '…'
     else:
         ELLIPSIS_CODE_POINT = 0x2026
-        truncation_suffix = unichr(ELLIPSIS_CODE_POINT) + unicode(' [See Man Page]')
-    
+        truncation_suffix = unichr(ELLIPSIS_CODE_POINT)
+
     # Try to include as many whole sentences as will fit
     # Clean up some probably bogus escapes in the process
     clean_desc = description.replace("\\'", "'").replace("\\.", ".")
     sentences = clean_desc.split('.')
-    
+
     # Clean up "sentences" that are just whitespace
     # But don't let it be empty
     sentences = [x for x in sentences if x.strip()]
     if not sentences: sentences = ['']
 
     udot = lossy_unicode('.')
-    uspace = lossy_unicode(' ') 
-    
-    truncated_description = lossy_unicode(sentences[0]) + udot 
+    uspace = lossy_unicode(' ')
+
+    truncated_description = lossy_unicode(sentences[0]) + udot
     for line in sentences[1:]:
         if not line: continue
-        proposed_description = lossy_unicode(truncated_description) + uspace + lossy_unicode(line) + udot 
+        proposed_description = lossy_unicode(truncated_description) + uspace + lossy_unicode(line) + udot
         if len(proposed_description) <= max_description_width:
             # It fits
             truncated_description = proposed_description
         else:
             # No fit
             break
-    
+
     # If the first sentence does not fit, truncate if necessary
     if len(truncated_description) > max_description_width:
         prefix_len = max_description_width - len(truncation_suffix)
@@ -221,15 +223,12 @@ def remove_groff_formatting(data):
     data = data.replace("\f","")
     return data
 
-class ManParser:
+class ManParser(object):
     def is_my_type(self, manpage):
         return False
 
     def parse_man_page(self, manpage):
         return False
-
-    def name(self):
-        return "no-name"
 
 class Type1ManParser(ManParser):
     def is_my_type(self, manpage):
@@ -250,7 +249,7 @@ class Type1ManParser(ManParser):
         options_parts_regex = re.compile("\.PP(.*?)\.RE", re.DOTALL)
         options_matched = re.search(options_parts_regex, options_section)
         #   print options_matched
-        add_diagnostic('Command is ' + CMDNAME)
+        add_diagnostic("Command is %r" % CMDNAME)
 
         if options_matched == None:
             add_diagnostic('Unable to find options')
@@ -272,7 +271,7 @@ class Type1ManParser(ManParser):
                 optionName = data[0].strip()
 
                 if ( optionName.find("-") == -1):
-                    add_diagnostic(optionName + " doesn't contain - ")
+                    add_diagnostic("%r doesn't contain '-' " % optionName)
                 else:
                     optionName = unquote_double_quotes(optionName)
                     optionName = unquote_single_quotes(optionName)
@@ -287,7 +286,7 @@ class Type1ManParser(ManParser):
             options_matched = re.search(options_parts_regex, options_section)
 
     def fallback(self, options_section):
-        add_diagnostic('Falling Back')
+        add_diagnostic('Trying fallback')
         options_parts_regex = re.compile("\.TP( \d+)?(.*?)\.TP", re.DOTALL)
         options_matched = re.search(options_parts_regex, options_section)
         if options_matched == None:
@@ -301,7 +300,7 @@ class Type1ManParser(ManParser):
             if (len(data)>1 and len(data[1].strip())>0): # and len(data[1])<400):
                 optionName = data[0].strip()
                 if ( optionName.find("-") == -1):
-                    add_diagnostic(optionName + "doesn't contains -")
+                    add_diagnostic("%r doesn't contain '-'" % optionName)
                 else:
                     optionName = unquote_double_quotes(optionName)
                     optionName = unquote_single_quotes(optionName)
@@ -316,7 +315,7 @@ class Type1ManParser(ManParser):
         return True
 
     def fallback2(self, options_section):
-        add_diagnostic('Falling Back2')
+        add_diagnostic('Trying last chance fallback')
         ix_remover_regex = re.compile("\.IX.*")
         trailing_num_regex = re.compile('\\d+$')
         options_parts_regex = re.compile("\.IP (.*?)\.IP", re.DOTALL)
@@ -324,7 +323,7 @@ class Type1ManParser(ManParser):
         options_section = re.sub(ix_remover_regex, "", options_section)
         options_matched = re.search(options_parts_regex, options_section)
         if options_matched == None:
-            add_diagnostic('Still not found2')
+            add_diagnostic('Still (still!) not found')
             return False
         while options_matched != None:
             data = options_matched.group(1)
@@ -336,7 +335,7 @@ class Type1ManParser(ManParser):
                 optionName = re.sub(trailing_num_regex, "", data[0].strip())
 
                 if ('-' not in optionName):
-                    add_diagnostic(optionName + " doesn't contain -")
+                    add_diagnostic("%r doesn't contain '-'" % optionName)
                 else:
                     optionName = optionName.strip()
                     optionName = unquote_double_quotes(optionName)
@@ -350,10 +349,6 @@ class Type1ManParser(ManParser):
             options_section = options_section[options_matched.end()-3:]
             options_matched = re.search(options_parts_regex, options_section)
         return True
-
-    def name(self):
-        return "Type1"
-
 
 class Type2ManParser(ManParser):
     def is_my_type(self, manpage):
@@ -370,12 +365,12 @@ class Type2ManParser(ManParser):
 
         options_section = options_section_matched.group(1)
 
-        options_parts_regex = re.compile("\.[I|T]P( \d+(\.\d)?i?)?(.*?)\.[I|T]P", re.DOTALL)
+        options_parts_regex = re.compile("\.[I|T]P( \d+(\.\d)?i?)?(.*?)\.([I|T]P|UNINDENT)", re.DOTALL)
         options_matched = re.search(options_parts_regex, options_section)
-        add_diagnostic('Command is ' + CMDNAME)
+        add_diagnostic('Command is %r' % CMDNAME)
 
         if options_matched == None:
-            add_diagnostic(self.name() + ': Unable to find options')
+            add_diagnostic("%r: Unable to find options" % self)
             return False
 
         while (options_matched != None):
@@ -389,7 +384,7 @@ class Type2ManParser(ManParser):
             if (len(data)>1 and len(data[1].strip())>0): # and len(data[1])<400):
                 optionName = data[0].strip()
                 if '-' not in optionName:
-                    add_diagnostic(optionName + " doesn't contain -")
+                    add_diagnostic("%r doesn't contain '-'" % optionName)
                 else:
                     optionName = unquote_double_quotes(optionName)
                     optionName = unquote_single_quotes(optionName)
@@ -400,9 +395,6 @@ class Type2ManParser(ManParser):
 
             options_section = options_section[options_matched.end()-3:]
             options_matched = re.search(options_parts_regex, options_section)
-
-    def name(self):
-        return "Type2"
 
 
 class Type3ManParser(ManParser):
@@ -421,7 +413,7 @@ class Type3ManParser(ManParser):
         options_section = options_section_matched.group(1)
         options_parts_regex = re.compile("\.TP(.*?)\.TP", re.DOTALL)
         options_matched = re.search(options_parts_regex, options_section)
-        add_diagnostic('Command is ' + CMDNAME)
+        add_diagnostic("Command is %r" % CMDNAME)
 
         if options_matched == None:
             add_diagnostic('Unable to find options section')
@@ -437,7 +429,7 @@ class Type3ManParser(ManParser):
             if (len(data)>1): # and len(data[1])<400):
                 optionName = data[0].strip()
                 if ( optionName.find("-") == -1):
-                    add_diagnostic(optionName + "doesn't contain -")
+                    add_diagnostic("%r doesn't contain '-'" % optionName)
                 else:
                     optionName = unquote_double_quotes(optionName)
                     optionName = unquote_single_quotes(optionName)
@@ -450,10 +442,6 @@ class Type3ManParser(ManParser):
 
             options_section = options_section[options_matched.end()-3:]
             options_matched = re.search(options_parts_regex, options_section)
-
-
-    def name(self):
-        return "Type3"
 
 
 class Type4ManParser(ManParser):
@@ -472,7 +460,7 @@ class Type4ManParser(ManParser):
         options_section = options_section_matched.group(1)
         options_parts_regex = re.compile("\.TP(.*?)\.TP", re.DOTALL)
         options_matched = re.search(options_parts_regex, options_section)
-        add_diagnostic('Command is ' + CMDNAME)
+        add_diagnostic("Command is %r" % CMDNAME)
 
         if options_matched == None:
             print >> sys.stderr, "Unable to find options section"
@@ -488,7 +476,7 @@ class Type4ManParser(ManParser):
             if (len(data)>1): # and len(data[1])<400):
                 optionName = data[0].strip()
                 if ( optionName.find("-") == -1):
-                    add_diagnostic(optionName + " doesn't contain - ")
+                    add_diagnostic("%r doesn't contain '-' " % optionName)
                 else:
                     optionName = unquote_double_quotes(optionName)
                     optionName = unquote_single_quotes(optionName)
@@ -504,9 +492,6 @@ class Type4ManParser(ManParser):
 
         return True
 
-    def name(self):
-        return "Type4"
-
 class TypeDarwinManParser(ManParser):
     def is_my_type(self, manpage):
         options_section_matched = compile_and_search("\.S[hH] DESCRIPTION", manpage)
@@ -519,7 +504,7 @@ class TypeDarwinManParser(ManParser):
         # Skip leading groff crud
         while re.match('[A-Z][a-z]\s', line):
             line = line[3:]
-            
+
         # If the line ends with a space and then a period or comma, then erase the space
         # This hack handles lines of the form '.Ar projectname .'
         if line.endswith(' ,') or line.endswith(' .'):
@@ -566,10 +551,10 @@ class TypeDarwinManParser(ManParser):
 
             # Get the line and clean it up
             line = lines.pop(0)
-            
+
             # Try to guess how many dashes this argument has
             dash_count = self.count_argument_dashes(line)
-                        
+
             line = self.groff_replace_escapes(line)
             line = self.trim_groff(line)
             line = line.strip()
@@ -601,9 +586,6 @@ class TypeDarwinManParser(ManParser):
                 got_something = True
 
         return got_something
-
-    def name(self):
-        return "Darwin man parser"
 
 
 class TypeDeroffManParser(ManParser):
@@ -657,14 +639,11 @@ class TypeDeroffManParser(ManParser):
 
         return got_something
 
-    def name(self):
-        return "Deroffing man parser"
-
 # Return whether the file at the given path is overwritable
 # Raises IOError if it cannot be opened
 def file_is_overwritable(path):
     result = False
-    file = open(path, 'r')
+    file = codecs.open(path, "r", encoding="utf-8")
     for line in file:
         # Skip leading empty lines
         line = line.strip()
@@ -682,7 +661,7 @@ def file_is_overwritable(path):
 
     file.close()
     return result
-    
+
 # Remove any and all autogenerated completions in the given directory
 def cleanup_autogenerated_completions_in_directory(dir):
     try:
@@ -771,8 +750,7 @@ def parse_manpage_at_path(manpage_path, output_directory):
         add_diagnostic(manpage_path + ": Not supported")
     else:
         for parser in parsersToTry:
-            parser_name = parser.name()
-            add_diagnostic('Trying parser ' + parser_name)
+            add_diagnostic('Trying %s' % parser.__class__.__name__)
             diagnostic_indent += 1
             success = parser.parse_man_page(manpage)
             diagnostic_indent -= 1
@@ -780,7 +758,7 @@ def parse_manpage_at_path(manpage_path, output_directory):
             if not built_command_output:
                 success = False
             if success:
-                PARSER_INFO.setdefault(parser_name, []).append(CMDNAME)
+                PARSER_INFO.setdefault(parser.__class__.__name__, []).append(CMDNAME)
                 break
 
         if success:
@@ -798,7 +776,8 @@ def parse_manpage_at_path(manpage_path, output_directory):
 
             # Output the magic word Autogenerated so we can tell if we can overwrite this
             built_command_output.insert(1, "# Autogenerated from man page " + manpage_path)
-            built_command_output.insert(2, "# using " + parser_name)
+            # built_command_output.insert(2, "# using " + parser.__class__.__name__) # XXX MISATTRIBUTES THE CULPABILE PARSER! Was really using Type2 but reporting TypeDeroffManParser
+
             for line in built_command_output:
                 output_file.write(line)
                 output_file.write('\n')
@@ -807,7 +786,7 @@ def parse_manpage_at_path(manpage_path, output_directory):
             if output_file != sys.stdout:
                 output_file.close()
         else:
-            parser_names =  ', '.join(p.name() for p in parsersToTry)
+            parser_names =  ', '.join(p.__class__.__name__ for p in parsersToTry)
             #add_diagnostic('%s contains no options or is unparsable' % manpage_path, BRIEF_VERBOSE)
             add_diagnostic('%s contains no options or is unparsable (tried parser %s)' % (manpage_path, parser_names), BRIEF_VERBOSE)
 
@@ -916,7 +895,7 @@ if __name__ == "__main__":
         print(err.msg) # will print something like "option -a not recognized"
         usage(script_name)
         sys.exit(2)
-        
+
     # Directories within which we will clean up autogenerated completions
     # This script originally wrote completions into ~/.config/fish/completions
     # Now it writes them into a separate directory
@@ -956,7 +935,7 @@ if __name__ == "__main__":
     if not file_paths:
         print("No paths specified")
         sys.exit(0)
-        
+
     if not WRITE_TO_STDOUT and not output_directory:
         # Default to ~/.local/share/fish/generated_completions/
         # Create it if it doesn't exist

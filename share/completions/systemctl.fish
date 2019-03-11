@@ -23,6 +23,15 @@ function __fish_systemd_properties
 	end
 end
 
+function __fish_systemctl_failed
+    if __fish_contains_opt user
+        # Without arguments, no "--type=" will be passed
+        systemctl --user list-units --state=failed --no-legend --type=$argv ^/dev/null | cut -f 1 -d ' '
+    else
+        systemctl list-units --state=failed --no-legend --type=$argv ^/dev/null | cut -f 1 -d ' '
+    end
+end
+
 complete -f -e -c systemctl
 # All systemctl commands
 complete -f -c systemctl -n "not __fish_seen_subcommand_from $commands" -a "$commands"
@@ -41,6 +50,9 @@ for command in start stop restart try-restart reload-or-restart reload-or-try-re
 		complete -f -c systemctl -n "__fish_seen_subcommand_from $command" -a "(eval __fish_systemctl_$t)"
 	end
 end
+
+# Handle reset-failed specially because it doesn't apply to unit-files (only units that have been tried can have failed) and a second "--state=" argument doesn't override the earlier one.
+complete -f -c systemctl -n "__fish_seen_subcommand_from reset-failed" -a "(__fish_systemctl_failed)"
 
 # Enable/Disable: Only show units with matching state
 for t in services sockets timers service_paths
@@ -93,8 +105,8 @@ complete -f -c systemctl -l runtime -d 'Make changes only temporarily'
 complete -f -r -c systemctl -s n -l lines -d 'Number of journal lines to show' -a "(seq 1 1000)"
 complete -f -c systemctl -s o -l output -d 'Control journal formatting' -xa 'short short-monotonic verbose export json json-pretty json-sse cat'
 complete -f -c systemctl -l plain -d 'list-dependencies flat, not as tree'
-complete -f -c systemctl -s H -l host= -d 'Execute the operation on a remote host' -a "(__fish_print_hostnames)"
-complete -x -c systemctl -s M -l machine= -d 'Execute operation on a VM or container' -a "(__fish_systemd_machines)"
+complete -f -c systemctl -s H -l host -d 'Execute the operation on a remote host' -a "(__fish_print_hostnames)"
+complete -x -c systemctl -s M -l machine -d 'Execute operation on a VM or container' -a "(__fish_systemd_machines)"
 complete -f -c systemctl -s h -l help -d 'Print a short help and exit'
 complete -f -c systemctl -l version -d 'Print a short version and exit'
 complete -f -c systemctl -l no-pager -d 'Do not pipe output into a pager'

@@ -1,3 +1,48 @@
+# fish 2.4b1 (released October 18, 2016)
+
+## Significant changes
+- The clipboard integration has been revamped with explicit bindings. The killring commands no longer copy from, or paste to, the X11 clipboard - use the new copy (`C-x`) and paste (`C-v`) bindings instead. The clipboard is now available on OS X as well as systems using X11 (e.g. Linux). (#3061)
+- `history` uses subcommands (`history delete`) rather than options (`history --delete`) for its actions (#3367). You can no longer specify multiple actions via flags (e.g., `history --delete --save something`).
+- New `history` options have been added, including `--max=n` to limit the number of history entries, `--show-time` option to show timestamps (#3175, #3244), and `--null` to null terminate history entries in the search output.
+- `history search` is now case-insensitive by default (which also affects `history delete`) (#3236).
+- `history delete` now correctly handles multiline commands (#31).
+- Vi-style bindings no longer include all of the default emacs-style bindings; instead, they share some definitions (#3068).
+- If there is no locale set in the environment, various known system configuration files will be checked for a default. If no locale can be found, `en_US-UTF.8` will be used (#277).
+- A number followed by a caret (e.g. `5^`) is no longer treated as a redirection (#1873).
+- The `$version` special variable can be overwritten, so that it can be used for other purposes if required.
+
+## Notable fixes and improvements
+- The `fish_realpath` builtin has been renamed to `realpath` and made compatible with GNU `realpath` when run without arguments (#3400). It is used only for systems without a `realpath` or `grealpath` utility (#3374).
+- Improved color handling on terminals/consoles with 8-16 colors, particularly the use of bright named color (#3176, #3260).
+- `fish_indent` can now read from files given as arguments, rather than just standard input (#3037).
+- Fuzzy tab completions behave in a less surprising manner (#3090, #3211).
+- `jobs` should only print its header line once (#3127).
+- Wildcards in redirections are highlighted appropriately (#2789).
+- Suggestions will be offered more often, like after removing characters (#3069).
+- `history --merge` now correctly interleaves items in chronological order (#2312).
+- Options for `fish_indent` have been aligned with the other binaries - in particular, `-d` now means `--debug`. The `--dump` option has been renamed to `--dump-parse-tree` (#3191).
+- The display of bindings in the Web-based configuration has been greatly improved (#3325), as has the rendering of prompts (#2924).
+- fish should no longer hang using 100% CPU in the C locale (#3214).
+- A bug in FreeBSD 11 & 12, Dragonfly BSD & illumos prevented fish from working correctly on these platforms under UTF-8 locales; fish now avoids the buggy behaviour (#3050).
+- Prompts which show git repository information (via `__fish_git_prompt`) are faster in large repositories (#3294) and slow filesystems (#3083).
+- fish 2.3.0 reintroduced a problem where the greeting was printed even when using `read`; this has been corrected again (#3261).
+- Vi mode changes the cursor depending on the current mode (#3215).
+- Command lines with escaped space characters at the end tab-complete correctly (#2447).
+- Added completions for:
+  - `arcanist` (#3256)
+  - `connmanctl` (#3419)
+  - `figlet` (#3378)
+  - `mdbook` (#3378)
+  -  `ninja` (#3415)
+  -  `p4`, the Perforce client (#3314)
+  -  `pygmentize` (#3378)
+  -  `ranger` (#3378)
+- Improved completions for `aura` (#3297), `abbr` (#3267), `brew` (#3309), `chown` (#3380, #3383),`cygport` (#3392), `git` (#3274, #3226, #3225, #3094, #3087, #3035, #3021, #2982, #3230), `kill & `pkill` (#3200), `screen` (#3271), `wget` (#3470), and `xz` (#3378).
+- Distributors, packagers and developers will notice that the build process produces more succinct output by default; use `make V=1` to get verbose output (#3248).
+- Improved compatibility with minor platforms including musl (#2988), Cygwin (#2993), Android (#3441, #3442), Haiku (#3322) and Solaris .
+
+---
+
 # fish 2.3.1 (released July 3, 2016)
 
 This is a functionality and bugfix release. This release does not contain all the changes to fish since the last release, but fixes a number of issues directly affecting users at present and includes a small number of new features.

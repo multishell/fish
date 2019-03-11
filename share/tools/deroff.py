@@ -3,7 +3,6 @@
 
 """ Deroff.py, ported to Python from the venerable deroff.c """
 
-
 import sys, re, string
 
 IS_PY3 = sys.version_info[0] >= 3
@@ -94,8 +93,8 @@ class Deroffer:
         'en': '-',
         'hy': '-',
         'em': "--",
-        'lq': "\"", # PCA: This used to be left and right smart quotes, but they look dumb
-        'rq': "\"", # So just use ordinary double quotes
+        'lq': '“',
+        'rq': '”',
         'Bq': ",,",
         'oq': '`',
         'cq': '\'',

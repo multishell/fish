@@ -6,7 +6,7 @@
 # art text processor from the 70's. Who's sed? sed's dead, baby, sed's dead.*
 # by Mark Griffiths <mark@thebespokepixel.com>             *but quite portable
 #.
-# Finds /fish../endfish blocks in documentation source files and enhances
+# Finds \fish..\endfish blocks in documentation source files and enhances
 # markup. Requires that the four character word 'classes' declared here are
 # added to Doxyfiles as aliases i.e.:
 #.

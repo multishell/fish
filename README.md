@@ -13,9 +13,9 @@ Detailed user documentation is available by running `help` within fish, and also
 
 ## Building
 
-fish is written in a sane subset of C++98, with a few components from C++TR1. It builds successfully with g++ 4.2 or later, and with clang. It also will build as C++11.
+Fish can be built using a C++11 environment but only requires C++03. It builds successfully with g++ 4.2 or later, and with clang. This allows fish to run on older systems such as OS X Snow Leopard (released in 2009).
 
-fish can be built using autotools or Xcode. autoconf 2.60 or later is required to build from git versions, but is not required for releases.
+Fish can be built using autotools or Xcode. autoconf 2.60 or later is required to build from git versions, but is not required for releases.
 
 fish depends on a curses implementation, such as ncurses. The headers and libraries are required for building.
 
@@ -64,9 +64,11 @@ fish requires a number of utilities to operate, which should be present on any U
 
 Translation support requires the gettext program.
 
+Usage output for builtin functions is generated on-demand from the installed manpages using `nroff` and `ul`.
+
 Some optional features of fish, such as the manual page completion parser and the web configuration tool, require Python.
 
-In order to generate completions from man pages compressed with either lzma or xz, you may need to install an extra Python package. Python versions prior to 2.6 are not supported.  For Python versions 2.6 to 3.2 you need to install the module `backports.lzma`.  How to install it depends on your system and how you installed Python.  Most Linux distributions should include it as a package named `backports-lzma` (or similar).  From version 3.3 onwards, Python already includes the required module.
+In order to generate completions from man pages compressed with either lzma or xz, you may need to install an extra Python package. Python versions prior to 2.6 are not supported.  To process lzma-compresed manpages, backports.lzma is needed for Python 3.2 or older. From version 3.3 onwards, Python already includes the required module.
 
 ## Packages for Linux
 
@@ -82,13 +84,15 @@ chsh will prompt you for your password, and change your default shell. Substitut
 
 Use the following command if you didn't already add your fish path to /etc/shells.
 
-        echo /usr/local/bin/fish | sudo tee -a /etc/shells
+    echo /usr/local/bin/fish | sudo tee -a /etc/shells
 
 To switch your default shell back, you can run:
 
 	chsh -s /bin/bash
 
 Substitute /bin/bash with /bin/tcsh or /bin/zsh as appropriate.
+
+You may need to logout/login for the change (chsh) to take effect.
 
 ## Contributing Changes to the Code
 

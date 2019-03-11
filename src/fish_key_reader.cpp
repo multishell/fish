@@ -16,17 +16,20 @@
 #include <string.h>
 #include <unistd.h>
 #include <wchar.h>
-#include <wctype.h>
+#include <memory>
+#include <string>
+#include <vector>
 
 #include "common.h"
 #include "env.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "input.h"
 #include "input_common.h"
+#include "print_help.h"
 #include "proc.h"
 #include "reader.h"
 #include "signal.h"
-#include "wutil.h" // IWYU pragma: keep
+#include "wutil.h"  // IWYU pragma: keep
 
 struct config_paths_t determine_config_directory_paths(const char *argv0);
 
@@ -51,7 +54,7 @@ static bool should_exit(wchar_t wc) {
 }
 
 /// Return the name if the recent sequence of characters matches a known terminfo sequence.
-static char *const sequence_name(wchar_t wc) {
+static char *sequence_name(wchar_t wc) {
     unsigned char c = wc < 0x80 ? wc : 0;
     static char recent_chars[8] = {0};
 
@@ -120,10 +123,18 @@ static char *char_to_symbol(wchar_t wc, bool bind_friendly) {
         }
     } else if (wc == ' ') {
         // The "space" character.
-        snprintf(buf, sizeof(buf), "\\x%X  (aka \"space\")", wc);
+        if (bind_friendly) {
+            snprintf(buf, sizeof(buf), "\\x%X", wc);
+        } else {
+            snprintf(buf, sizeof(buf), "\\x%X  (aka \"space\")", wc);
+        }
     } else if (wc == 0x7F) {
         // The "del" character.
-        snprintf(buf, sizeof(buf), "\\x%X  (aka \"del\")", wc);
+        if (bind_friendly) {
+            snprintf(buf, sizeof(buf), "\\x%X", wc);
+        } else {
+            snprintf(buf, sizeof(buf), "\\x%X  (aka \"del\")", wc);
+        }
     } else if (wc < 0x80) {
         // ASCII characters that are not control characters.
         if (bind_friendly && must_escape(wc)) {
@@ -146,7 +157,7 @@ static void add_char_to_bind_command(wchar_t wc, std::vector<wchar_t> &bind_char
 static void output_bind_command(std::vector<wchar_t> &bind_chars) {
     if (bind_chars.size()) {
         fputs("bind ", stdout);
-        for (int i = 0; i < bind_chars.size(); i++) {
+        for (size_t i = 0; i < bind_chars.size(); i++) {
             fputs(char_to_symbol(bind_chars[i], true), stdout);
         }
         fputs(" 'do something'\n", stdout);
@@ -155,7 +166,7 @@ static void output_bind_command(std::vector<wchar_t> &bind_chars) {
 }
 
 static void output_info_about_char(wchar_t wc) {
-    printf("hex: %4X  char: %s\n", wc, char_to_symbol(wc, false));
+    fprintf(stderr, "hex: %4X  char: %s\n", wc, char_to_symbol(wc, false));
 }
 
 static bool output_matching_key_name(wchar_t wc) {
@@ -173,11 +184,11 @@ static double output_elapsed_time(double prev_tstamp, bool first_char_seen) {
     double now = timef();
     long long int delta_tstamp_us = 1000000 * (now - prev_tstamp);
 
-    if (delta_tstamp_us >= 200000 && first_char_seen) putchar('\n');
+    if (delta_tstamp_us >= 200000 && first_char_seen) putc('\n', stderr);
     if (delta_tstamp_us >= 1000000) {
-        printf("              ");
+        fprintf(stderr, "              ");
     } else {
-        printf("(%3lld.%03lld ms)  ", delta_tstamp_us / 1000, delta_tstamp_us % 1000);
+        fprintf(stderr, "(%3lld.%03lld ms)  ", delta_tstamp_us / 1000, delta_tstamp_us % 1000);
     }
     return now;
 }
@@ -188,10 +199,10 @@ static void process_input(bool continuous_mode) {
     double prev_tstamp = 0.0;
     std::vector<wchar_t> bind_chars;
 
-    printf("Press a key\n\n");
+    fprintf(stderr, "Press a key\n\n");
     while (keep_running) {
         wchar_t wc = input_common_readch(true);
-        if (wc == WEOF) {
+        if (wc == R_TIMEOUT || wc == R_EOF) {
             output_bind_command(bind_chars);
             if (first_char_seen && !continuous_mode) {
                 return;
@@ -208,7 +219,7 @@ static void process_input(bool continuous_mode) {
         }
 
         if (should_exit(wc)) {
-            printf("\nExiting at your request.\n");
+            fprintf(stderr, "\nExiting at your request.\n");
             break;
         }
 
@@ -262,7 +273,7 @@ static void install_our_signal_handlers() {
 
 /// Setup our environment (e.g., tty modes), process key strokes, then reset the environment.
 static void setup_and_process_keys(bool continuous_mode) {
-    is_interactive_session = 1;    // by definition this program is interactive
+    is_interactive_session = 1;  // by definition this program is interactive
     set_main_thread();
     setup_fork_guards();
     env_init();
@@ -273,10 +284,10 @@ static void setup_and_process_keys(bool continuous_mode) {
     install_our_signal_handlers();
 
     if (continuous_mode) {
-        printf("\n");
-        printf("To terminate this program type \"exit\" or \"quit\" in this window,\n");
-        printf("or press [ctrl-C] or [ctrl-D] twice in a row.\n");
-        printf("\n");
+        fprintf(stderr, "\n");
+        fprintf(stderr, "To terminate this program type \"exit\" or \"quit\" in this window,\n");
+        fprintf(stderr, "or press [ctrl-C] or [ctrl-D] twice in a row.\n");
+        fprintf(stderr, "\n");
     }
 
     process_input(continuous_mode);
@@ -289,9 +300,11 @@ static void setup_and_process_keys(bool continuous_mode) {
 int main(int argc, char **argv) {
     program_name = L"fish_key_reader";
     bool continuous_mode = false;
-    const char *short_opts = "+cd:";
+    const char *short_opts = "+cd:D:h";
     const struct option long_opts[] = {{"continuous", no_argument, NULL, 'c'},
                                        {"debug-level", required_argument, NULL, 'd'},
+                                       {"debug-stack-frames", required_argument, NULL, 'D'},
+                                       {"help", no_argument, NULL, 'h'},
                                        {NULL, 0, NULL, 0}};
     int opt;
     while ((opt = getopt_long(argc, argv, short_opts, long_opts, NULL)) != -1) {
@@ -304,6 +317,10 @@ int main(int argc, char **argv) {
                 continuous_mode = true;
                 break;
             }
+            case 'h': {
+                print_help("fish_key_reader", 0);
+                exit(0);
+            }
             case 'd': {
                 char *end;
                 long tmp;
@@ -315,6 +332,21 @@ int main(int argc, char **argv) {
                     debug_level = (int)tmp;
                 } else {
                     fwprintf(stderr, _(L"Invalid value '%s' for debug-level flag"), optarg);
+                    exit(1);
+                }
+                break;
+            }
+            case 'D': {
+                char *end;
+                long tmp;
+
+                errno = 0;
+                tmp = strtol(optarg, &end, 10);
+
+                if (tmp > 0 && tmp <= 128 && !*end && !errno) {
+                    debug_stack_frames = (int)tmp;
+                } else {
+                    fwprintf(stderr, _(L"Invalid value '%s' for debug-stack-frames flag"), optarg);
                     exit(1);
                 }
                 break;
@@ -332,8 +364,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (!isatty(STDIN_FILENO) || !isatty(STDOUT_FILENO)) {
-        fprintf(stderr, "Stdin and stdout must be attached to a tty, redirection not allowed.\n");
+    if (!isatty(STDIN_FILENO)) {
+        fprintf(stderr, "Stdin must be attached to a tty.\n");
         return 1;
     }
 
