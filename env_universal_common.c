@@ -200,7 +200,7 @@ static void remove_entry( wchar_t *name )
 static int match( const wchar_t *msg, const wchar_t *cmd )
 {
 	size_t len = wcslen( cmd );
-	if( wcsncasecmp( msg, cmd, len ) != 0 )
+	if( wcsncasecmp_fish( msg, cmd, len ) != 0 )
 		return 0;
 
 	if( msg[len] && msg[len]!= L' ' && msg[len] != L'\t' )
