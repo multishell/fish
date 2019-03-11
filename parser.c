@@ -26,6 +26,7 @@ The fish parser. Contains functions for parsing and evaluating code.
 #include "wutil.h"
 #include "proc.h"
 #include "parser.h"
+#include "parser_keywords.h"
 #include "tokenizer.h"
 #include "exec.h"
 #include "wildcard.h"
@@ -188,6 +189,12 @@ The fish parser. Contains functions for parsing and evaluating code.
 */
 #define FOR_BLOCK N_( L"'for' block" )
 
+/**   
+   Breakpoint block 
+*/
+#define BREAKPOINT_BLOCK N_( L"Block created by breakpoint" ) 
+
+
 
 /**
    If block description
@@ -205,6 +212,11 @@ The fish parser. Contains functions for parsing and evaluating code.
    Function invocation block description
 */
 #define FUNCTION_CALL_BLOCK N_( L"function invocation block" )
+
+/**
+   Function invocation block description
+*/
+#define FUNCTION_CALL_NO_SHADOW_BLOCK N_( L"function invocation block with no variable shadowing" )
 
 
 /**
@@ -303,6 +315,10 @@ const static struct block_lookup_entry block_lookup[]=
 	}
 	,
 	{
+		FUNCTION_CALL_NO_SHADOW, 0, FUNCTION_CALL_NO_SHADOW_BLOCK 
+	}
+	,
+	{
 		SWITCH, L"switch", SWITCH_BLOCK 
 	}
 	,
@@ -331,7 +347,11 @@ const static struct block_lookup_entry block_lookup[]=
 	}
 	,
 	{
-		0,0,0
+		BREAKPOINT, L"breakpoint", BREAKPOINT_BLOCK 
+	}
+	,
+	{
+		0, 0, 0
 	}
 }
 	;
@@ -503,81 +523,16 @@ const wchar_t *parser_get_block_desc( int block )
 }
 
 /**
-   Check if the specified bcommand is one of the builtins that cannot
-   have arguments, any followin argument is interpreted as a new
-   command
-*/
-static int parser_skip_arguments( const wchar_t *cmd )
-{
-	return contains_str( cmd,
-						 L"else",
-						 L"begin",
-						 (void *)0 );
-}
-
-int parser_is_switch( const wchar_t *cmd )
-{
-	if( wcscmp( cmd, L"--" ) == 0 )
-		return ARG_SKIP;
-	else 
-		return cmd[0] == L'-';
-}
-
-
-int parser_is_subcommand( const wchar_t *cmd )
-{
-
-	return parser_skip_arguments( cmd ) ||
-		contains_str( cmd,
-					  L"command",
-					  L"builtin",
-					  L"while",
-					  L"exec",
-					  L"if",
-					  L"and",
-					  L"or",
-					  L"not",
-					  (void *)0 );
-}
-
-int parser_is_block( const wchar_t *word)
-{
-	return contains_str( word,
-						 L"for",
-						 L"while",
-						 L"if",
-						 L"function",
-						 L"switch",
-						 L"begin",
-						 (void *)0 );
-}
-
-int parser_is_reserved( const wchar_t *word)
-{
-	return parser_is_block(word) ||
-		parser_is_subcommand( word ) ||
-		contains_str( word,
-					  L"end",
-					  L"case",
-					  L"else",
-					  L"return",
-					  L"continue",
-					  L"break",
-					  (void *)0 );
-}
-
-/**
    Returns 1 if the specified command is a builtin that may not be used in a pipeline
 */
 static int parser_is_pipe_forbidden( wchar_t *word )
 {
-	return contains_str( word,
-						 L"exec",
-						 L"case",
-						 L"break",
-						 L"return",
-						 L"continue",
-						 (void *)0 );
+	return contains( word,
+					 L"exec",
+					 L"case",
+					 L"break",
+					 L"return",
+					 L"continue" );
 }
 
 /**
@@ -608,7 +563,7 @@ static const wchar_t *parser_find_end( const wchar_t * buff )
 					{
 						count--;
 					}
-					else if( parser_is_block( tok_last(&tok) ) )
+					else if( parser_keywords_is_block( tok_last(&tok) ) )
 					{
 						count++;
 					}
@@ -1053,7 +1008,7 @@ void parser_stack_trace( block_t *b, string_buffer_t *buff)
 				
 				for( i=1; b->param2.function_call_process->argv[i]; i++ )
 				{
-					sb_append2( &tmp, i>1?L" ":L"", b->param2.function_call_process->argv[i], (void *)0 );
+					sb_append( &tmp, i>1?L" ":L"", b->param2.function_call_process->argv[i], (void *)0 );
 				}
 				sb_printf( buff, _(L"\twith parameter list '%ls'\n"), (wchar_t *)tmp.buff );
 				
@@ -1354,16 +1309,8 @@ static void parse_job_argument_list( process_t *p,
 	  workaround and a huge hack, but as near as I can tell, the
 	  alternatives are worse.
 	*/
-	if( p->actual_cmd )
-	{
-		wchar_t *woot = wcsrchr( p->actual_cmd, L'/' );
-		if( !woot )
-			woot = p->actual_cmd;
-		else
-			woot++;
-		proc_is_count = wcscmp( woot, L"count" )==0;
-	}
-
+	proc_is_count = (wcscmp( (wchar_t *)al_get( args, 0 ), L"count" )==0);
+	
 	while( 1 )
 	{
 
@@ -1454,17 +1401,16 @@ static void parse_job_argument_list( process_t *p,
 
 				if( !skip )
 				{
-					if( proc_is_count &&
-						(al_get_count( args) == 1) &&
-						( parser_is_help( tok_last(tok), 0) ) )
+					if( ( proc_is_count ) &&
+					    ( al_get_count( args) == 1) &&
+					    ( parser_is_help( tok_last(tok), 0) ) &&
+					    ( p->type == INTERNAL_BUILTIN ) )
 					{
 						/*
 						  Display help for count
 						*/
-						p->type = INTERNAL_BUILTIN;
-						p->actual_cmd = L"count";
+						p->count_help_magic = 1;
 					}
-
 
 					switch( expand_string( j, wcsdup(tok_last( tok )), args, 0 ) )
 					{
@@ -1474,9 +1420,9 @@ static void parse_job_argument_list( process_t *p,
 							if( error_code == 0 )
 							{
 								error( SYNTAX_ERROR,
-									   tok_get_pos( tok ),
-									   _(L"Could not expand string '%ls'"),
-									   tok_last(tok) );
+								       tok_get_pos( tok ),
+								       _(L"Could not expand string '%ls'"),
+								       tok_last(tok) );
 
 							}
 							break;
@@ -1516,6 +1462,7 @@ static void parse_job_argument_list( process_t *p,
 			case TOK_REDIRECT_IN:
 			case TOK_REDIRECT_APPEND:
 			case TOK_REDIRECT_FD:
+			case TOK_REDIRECT_NOCLOB:
 			{
 				int type = tok_last_type( tok );
 				io_data_t *new_io;
@@ -1608,6 +1555,12 @@ static void parse_job_argument_list( process_t *p,
 							case TOK_REDIRECT_OUT:
 								new_io->io_mode = IO_FILE;
 								new_io->param2.flags = O_CREAT | O_WRONLY | O_TRUNC;
+								new_io->param1.filename = target;
+								break;
+
+							case TOK_REDIRECT_NOCLOB:
+								new_io->io_mode = IO_FILE;
+								new_io->param2.flags = O_CREAT | O_EXCL | O_WRONLY;
 								new_io->param1.filename = target;
 								break;
 
@@ -1817,14 +1770,13 @@ static int parse_job( process_t *p,
 		
 		mark = tok_get_pos( tok );
 
-		if( contains_str( nxt,
-						  L"command",
-						  L"builtin",
-						  L"not",
-						  L"and",
-						  L"or",
-						  L"exec",
-						  (void *)0 ) )
+		if( contains( nxt,
+					  L"command",
+					  L"builtin",
+					  L"not",
+					  L"and",
+					  L"or",
+					  L"exec" ) )
 		{			
 			int sw;
 			int is_exec = (wcscmp( L"exec", nxt )==0);
@@ -1839,7 +1791,7 @@ static int parse_job( process_t *p,
 			}
 
 			tok_next( tok );
-			sw = parser_is_switch( tok_last( tok ) );
+			sw = parser_keywords_is_switch( tok_last( tok ) );
 			
 			if( sw == ARG_SWITCH )
 			{
@@ -2002,7 +1954,7 @@ static int parse_job( process_t *p,
 				builtin_exists( (wchar_t *)al_get( args, 0 ) ) )
 			{
 				p->type = INTERNAL_BUILTIN;
-				is_new_block |= parser_is_block( (wchar_t *)al_get( args, 0 ) );
+				is_new_block |= parser_keywords_is_block( (wchar_t *)al_get( args, 0 ) );
 			}
 		}
 		
@@ -2018,7 +1970,10 @@ static int parse_job( process_t *p,
 			}
 			else
 			{
+				int err;
+			   
 				p->actual_cmd = path_get_path( j, (wchar_t *)al_get( args, 0 ) );
+				err = errno;
 				
 				/*
 				  Check if the specified command exists
@@ -2110,11 +2065,17 @@ static int parse_job( process_t *p,
 								   cmd,
 								   cmd );
 						}
+						else if( err!=ENOENT )
+						{
+							debug( 0,
+								   _(L"The file '%ls' is not executable by this user"),
+								   cmd?cmd:L"UNKNOWN" );
+						}
 						else
 						{			
 							debug( 0,
 								   _(L"Unknown command '%ls'"),
-								   cmd );
+								   cmd?cmd:L"UNKNOWN" );
 						}
 						
 						tmp = current_tokenizer_pos;
@@ -2125,7 +2086,7 @@ static int parse_job( process_t *p,
 						current_tokenizer_pos=tmp;
 
 						job_set_flag( j, JOB_SKIP, 1 );
-						proc_set_last_status( STATUS_UNKNOWN_COMMAND );
+						proc_set_last_status( err==ENOENT?STATUS_UNKNOWN_COMMAND:STATUS_NOT_EXECUTABLE );
 					}
 				}
 			}
@@ -2156,79 +2117,83 @@ static int parse_job( process_t *p,
 				   BLOCK_END_ERR_MSG );
 			
 		}
-
-		if( !make_sub_block )
+		else
 		{
-			int done=0;
 			
-			for( tok_init( &subtok, end, 0 ); 
-				 !done && tok_has_next( &subtok ); 
-				 tok_next( &subtok ) )
+			if( !make_sub_block )
 			{
-				
-				switch( tok_last_type( &subtok ) )
+				int done=0;
+			
+				for( tok_init( &subtok, end, 0 ); 
+					 !done && tok_has_next( &subtok ); 
+					 tok_next( &subtok ) )
 				{
-					case TOK_END:
-						done = 1;
-						break;
+				
+					switch( tok_last_type( &subtok ) )
+					{
+						case TOK_END:
+							done = 1;
+							break;
 						
-					case TOK_REDIRECT_OUT:
-					case TOK_REDIRECT_APPEND:
-					case TOK_REDIRECT_IN:
-					case TOK_REDIRECT_FD:
-					case TOK_PIPE:
-					{
-						done = 1;
-						make_sub_block = 1;
-						break;
-					}
+						case TOK_REDIRECT_OUT:
+						case TOK_REDIRECT_NOCLOB:
+						case TOK_REDIRECT_APPEND:
+						case TOK_REDIRECT_IN:
+						case TOK_REDIRECT_FD:
+						case TOK_PIPE:
+						{
+							done = 1;
+							make_sub_block = 1;
+							break;
+						}
 					
-					case TOK_STRING:
-					{
-						break;
-					}
+						case TOK_STRING:
+						{
+							break;
+						}
 					
-					default:
-					{
-						done = 1;
-						error( SYNTAX_ERROR,
-							   current_tokenizer_pos,
-							   BLOCK_END_ERR_MSG );
+						default:
+						{
+							done = 1;
+							error( SYNTAX_ERROR,
+								   current_tokenizer_pos,
+								   BLOCK_END_ERR_MSG );
+						}
 					}
 				}
-			}
 			
-			tok_destroy( &subtok );
+				tok_destroy( &subtok );
+			}
+		
+			if( make_sub_block )
+			{
+			
+				int end_pos = end-tok_string( tok );
+				wchar_t *sub_block= halloc_wcsndup( j,
+													tok_string( tok ) + current_tokenizer_pos,
+													end_pos - current_tokenizer_pos);
+			
+				p->type = INTERNAL_BLOCK;
+				al_set( args, 0, sub_block );
+			
+				tok_set_pos( tok,
+							 end_pos );
+
+				while( prev_block != current_block )
+				{
+					parser_pop_block();
+				}
+
+			}
+			else tok_next( tok );
 		}
 		
-		if( make_sub_block )
-		{
-			
-			int end_pos = end-tok_string( tok );
-			wchar_t *sub_block= halloc_wcsndup( j,
-												tok_string( tok ) + current_tokenizer_pos,
-												end_pos - current_tokenizer_pos);
-			
-			p->type = INTERNAL_BLOCK;
-			al_set( args, 0, sub_block );
-			
-			tok_set_pos( tok,
-						 end_pos );
-
-			while( prev_block != current_block )
-			{
-				parser_pop_block();
-			}
-
-		}
-		else tok_next( tok );
-
 	}
 	else tok_next( tok );
 
 	if( !error_code )
 	{
-		if( p->type == INTERNAL_BUILTIN && parser_skip_arguments( (wchar_t *)al_get(args, 0) ) )
+		if( p->type == INTERNAL_BUILTIN && parser_keywords_skip_arguments( (wchar_t *)al_get(args, 0) ) )
 		{			
 			if( !p->argv )
 				halloc_register( j, p->argv = list_to_char_arr( args ) );
@@ -2995,9 +2960,8 @@ int parser_test( const  wchar_t * buff,
 						  command is needed, such as after 'and' or
 						  'while'
 						*/
-						if( contains_str( cmd,
-										  L"end",
-										  (void *)0 ) )
+						if( contains( cmd,
+									  L"end" ) )
 						{
 							err=1;
 							if( out )
@@ -3038,7 +3002,7 @@ int parser_test( const  wchar_t * buff,
 					/*
 					  Handle block commands
 					*/
-					if( parser_is_block( cmd ) )
+					if( parser_keywords_is_block( cmd ) )
 					{
 						if( count >= BLOCK_MAX_COUNT )
 						{
@@ -3059,21 +3023,20 @@ int parser_test( const  wchar_t * buff,
 					}
 
 					/*
-					  If parser_is_subcommand is true, the command
+					  If parser_keywords_is_subcommand is true, the command
 					  accepts a second command as it's first
 					  argument. If parser_skip_arguments is true, the
 					  second argument is optional.
 					*/
-					if( parser_is_subcommand( cmd ) && !parser_skip_arguments(cmd ) )
+					if( parser_keywords_is_subcommand( cmd ) && !parser_keywords_skip_arguments(cmd ) )
 					{
 						needs_cmd = 1;
 						had_cmd = 0;
 					}
 					
-					if( contains_str( cmd,
-									  L"or",
-									  L"and",
-									  (void *)0 ) )
+					if( contains( cmd,
+								  L"or",
+								  L"and" ) )
 					{
 						/*
 						  'or' and 'and' can not be used inside pipelines
@@ -3205,7 +3168,7 @@ int parser_test( const  wchar_t * buff,
 					/*
 					  Test that break and continue are only used within loop blocks
 					*/
-					if( contains_str( cmd, L"break", L"continue", (void *)0 ) )
+					if( contains( cmd, L"break", L"continue" ) )
 					{
 						int found_loop=0;
 						int i;
@@ -3377,6 +3340,7 @@ int parser_test( const  wchar_t * buff,
 			case TOK_REDIRECT_IN:
 			case TOK_REDIRECT_APPEND:
 			case TOK_REDIRECT_FD:
+			case TOK_REDIRECT_NOCLOB:
 			{
 				if( !had_cmd )
 				{

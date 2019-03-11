@@ -53,18 +53,22 @@ sysconfdir = @sysconfdir@
 docdir = @docdir@
 localedir = @localedir@
 prefix = @prefix@
-optbindirs = @optbindirs@
-
+optbindirs = @optbindirs@ 
 
 #
 # Various flags
 #
 
-MACROS=-DLOCALEDIR=\"$(localedir)\" -DPREFIX=L\"$(prefix)\" -DDATADIR=L\"$(datadir)\" -DSYSCONFDIR=L\"$(sysconfdir)\" 
-CFLAGS=@CFLAGS@ $(MACROS) 
-CPPFLAGS=@CPPFLAGS@ 
-LDFLAGS= @LIBS@ @LDFLAGS@ 
-
+MACROS = -DLOCALEDIR=\"$(localedir)\" -DPREFIX=L\"$(prefix)\" -DDATADIR=L\"$(datadir)\" -DSYSCONFDIR=L\"$(sysconfdir)\" 
+CFLAGS = @CFLAGS@ $(MACROS) 
+CPPFLAGS = @CPPFLAGS@ 
+LDFLAGS = @LIBS@ @LDFLAGS@ 
+LDFLAGS_FISH = ${LDFLAGS} @LIBS_FISH@ @LDFLAGS_FISH@
+LDFLAGS_FISH_INDENT = ${LDFLAGS} @LIBS_FISH_INDENT@
+LDFLAGS_FISH_PAGER = ${LDFLAGS} @LIBS_FISH_PAGER@
+LDFLAGS_FISHD = ${LDFLAGS} @LIBS_FISHD@
+LDFLAGS_MIMEDB = ${LDFLAGS} @LIBS_MIMEDB@
+LDFLAGS_SET_COLOR = ${LDFLAGS} @LIBS_SET_COLOR@
 
 #
 # Set to 1 if we have gettext
@@ -82,15 +86,18 @@ COMMON_FILES := util.c halloc.c halloc_util.c fallback.c
 
 
 #
-# All objects that the system needs to build fish, except main.o
+# All objects that the system needs to build fish, except fish.o
 #
 
 FISH_OBJS := function.o builtin.o complete.o env.o exec.o expand.o		\
 	highlight.o history.o kill.o parser.o proc.o reader.o sanity.o		\
 	tokenizer.o wildcard.o wgetopt.o wutil.o input.o output.o intern.o	\
 	env_universal.o env_universal_common.o input_common.o event.o		\
-	signal.o io.o parse_util.o common.o screen.o path.o
+	signal.o io.o parse_util.o common.o screen.o path.o					\
+	parser_keywords.o
 
+FISH_INDENT_OBJS := fish_indent.o print_help.o common.o	\
+parser_keywords.o wutil.o tokenizer.o
 
 #
 # Additional files used by builtin.o
@@ -104,7 +111,7 @@ BUILTIN_FILES := builtin_set.c builtin_commandline.c	\
 # All objects that the system needs to build fish_pager
 #
 
-FISH_PAGER_OBJS := fish_pager.o output.o wutil.o tokenizer.o		\
+FISH_PAGER_OBJS := fish_pager.o output.o wutil.o 		\
 	input_common.o env_universal.o env_universal_common.o common.o	\
 	print_help.o
 
@@ -181,12 +188,12 @@ DOC_SRC_DIR_FILES := $(HDR_FILES_SRC) $(HELP_SRC)
 
 MAIN_DIR_FILES_UNSORTED := Doxyfile Doxyfile.user Doxyfile.help.in		\
     Makefile.in configure configure.ac config.h.in install-sh			\
-    set_color.c count.c key_reader.c $(MIME_OBJS:.o=.h)					\
+    set_color.c key_reader.c $(MIME_OBJS:.o=.h)					\
     $(MIME_OBJS:.o=.c) $(FISH_OBJS:.o=.h) $(BUILTIN_FILES)				\
     $(COMMON_FILES) $(COMMON_FILES:.c=.h) $(FISH_OBJS:.o=.c)			\
     fish.spec.in INSTALL README user_doc.head.html xsel-0.9.6.tar		\
-    ChangeLog config.sub config.guess fish_tests.c main.c fish_pager.c	\
-    fishd.c seq.in
+    ChangeLog config.sub config.guess fish_tests.c fish.c fish_pager.c	\
+    fishd.c seq.in make_vcs_completions.fish $(FISH_INDENT_OBJS:.o=.c)
 
 #
 # The sorting is not meaningful in itself, but it has the side effect
@@ -201,14 +208,14 @@ MAIN_DIR_FILES := $(sort $(MAIN_DIR_FILES_UNSORTED))
 # Files in ./etc/
 #
 
-ETC_DIR_FILES :=etc/config.fish.in etc/fish_inputrc	
+ETC_DIR_FILES :=etc/config.fish.in	
 
 
 #
 # Files in ./share/
 #
 
-SHARE_DIR_FILES :=share/config.fish.in share/config_interactive.fish.in
+SHARE_DIR_FILES :=share/config.fish.in
 
 
 #
@@ -237,7 +244,7 @@ FUNCTIONS_DIR_FILES := $(wildcard share/functions/*.fish)
 # Programs to install
 #
 
-SIMPLE_PROGRAMS := fish set_color mimedb count fish_pager fishd
+SIMPLE_PROGRAMS := fish set_color mimedb fish_pager fishd fish_indent
 PROGRAMS := $(SIMPLE_PROGRAMS) @XSEL@ @SEQ_FALLBACK@ 
 
 
@@ -261,7 +268,7 @@ TRANSLATIONS := $(TRANSLATIONS_SRC:.po=.gmo)
 # Make everything needed for installing fish
 #
 
-all: $(PROGRAMS) user_doc share/man etc/config.fish share/config.fish share/config_interactive.fish $(TRANSLATIONS)
+all: $(PROGRAMS) user_doc share/man etc/config.fish share/config.fish $(TRANSLATIONS)
 	@echo fish has now been built. 
 	@echo Use \'$(MAKE) install\' to install fish.
 .PHONY: all
@@ -293,9 +300,11 @@ debug:
 # User documentation, describing the features of the fish shell.
 #
 
+# Depend on the sources (*.hdr.in) and manually make the 
+# intermediate *.hdr and doc.h files if needed
 
-user_doc: $(HDR_FILES) Doxyfile.user user_doc.head.html
-	$(MAKE) doc.h # Depend on the sources (*.hdr) and manually make the intermediate doc.h file if needed
+user_doc: $(HDR_FILES_SRC) Doxyfile.user user_doc.head.html $(HELP_SRC)
+	$(MAKE) doc.h $(HDR_FILES)
 	doxygen Doxyfile.user
 	touch user_doc
 
@@ -337,7 +346,7 @@ xsel-0.9.6:
 	tar -xf xsel-0.9.6.tar
 
 xsel-0.9.6/xsel: xsel-0.9.6
-	cd xsel-0.9.6; ./configure; make
+	cd xsel-0.9.6; ./configure && make || echo "Failed to build xsel - either add the required dependencies or use './configure --without-xsel' to disable it."
 
 
 #
@@ -395,7 +404,7 @@ doc.h: $(HDR_FILES)
 	cat $*.txt >>$@; 
 	echo "*/" >>$@
 
-%: %.in Makefile
+%: %.in 
 	sed <$@.in >$@ \
 		-e "s,@sysconfdir\@,$(sysconfdir),g" \
 		-e "s,@datadir\@,$(datadir),g" \
@@ -411,7 +420,7 @@ doc.h: $(HDR_FILES)
 #
 
 %.gmo:
-	if test $(HAVE_GETTEXT) = 1; then \
+	if test "$(HAVE_GETTEXT)" = 1; then \
 		msgfmt -o $*.gmo $*.po; \
 	fi
 
@@ -541,10 +550,6 @@ install-sh:
 	if test -x $@; then true; else chmod 755 $@; fi
 .PHONY: install-sh
 
-make_mercurial_completions.fish:
-	if test -x $@; then true; else chmod 755 $@; fi
-.PHONY: make_mercurial_completions.fish
-
 
 #
 # Try to install after checking for incompatible installed versions.
@@ -571,7 +576,6 @@ install-force: all install-translations
 	$(INSTALL) -m 755 -d $(DESTDIR)$(datadir)/fish/man
 	$(INSTALL) -m 644 etc/config.fish                  $(DESTDIR)$(sysconfdir)/fish/
 	$(INSTALL) -m 644 share/config.fish                $(DESTDIR)$(datadir)/fish/
-	$(INSTALL) -m 644 share/config_interactive.fish    $(DESTDIR)$(datadir)/fish/
 	for i in $(COMPLETIONS_DIR_FILES); do \
 		$(INSTALL) -m 644 $$i $(DESTDIR)$(datadir)/fish/completions/; \
 	done;
@@ -581,7 +585,6 @@ install-force: all install-translations
 	for i in share/man/*.1; do \
 		$(INSTALL) -m 644 $$i $(DESTDIR)$(datadir)/fish/man/; \
 	done;
-	$(INSTALL) -m 644 etc/fish_inputrc $(DESTDIR)$(sysconfdir)/fish/fish_inputrc;
 	$(INSTALL) -m 755 -d $(DESTDIR)$(docdir)
 	for i in user_doc/html/* ChangeLog; do \
 		if test -f $$i; then \
@@ -613,7 +616,6 @@ uninstall: uninstall-translations
 	done;
 	-rm -f $(DESTDIR)$(bindir)/xsel
 	-rm -f $(DESTDIR)$(sysconfdir)/fish/config.fish
-	-rm -f $(DESTDIR)$(sysconfdir)/fish/fish_inputrc
 	-rmdir $(DESTDIR)$(sysconfdir)/fish
 	-if test -d $(DESTDIR)$(datadir)/fish; then \
 		rm -r $(DESTDIR)$(datadir)/fish; \
@@ -638,6 +640,7 @@ uninstall-legacy: uninstall
 	-rm -f $(DESTDIR)$(sysconfdir)/fish.d/fish_interactive.fish
 	-rm -f $(DESTDIR)$(sysconfdir)/fish.d/fish_complete.fish
 	-rm -f $(DESTDIR)$(sysconfdir)/fish.d/fish_function.fish
+	-rm -f $(DESTDIR)$(sysconfdir)/fish/fish_inputrc
 	-if test -d $(DESTDIR)$(sysconfdir)/fish.d/completions; then \
 		for i in $(COMPLETIONS_DIR_FILES); do \
 			basename=`basename $$i`; \
@@ -679,8 +682,8 @@ uninstall-translations:
 # Build the fish program.
 #
 
-fish: $(FISH_OBJS) main.o 
-	$(CC) $(FISH_OBJS) main.o $(LDFLAGS) -o $@
+fish: $(FISH_OBJS) fish.o 
+	$(CC) $(FISH_OBJS) fish.o $(LDFLAGS_FISH) -o $@
 
 
 #
@@ -688,7 +691,7 @@ fish: $(FISH_OBJS) main.o
 #
 
 fish_pager: $(FISH_PAGER_OBJS)
-	$(CC) $(FISH_PAGER_OBJS) $(LDFLAGS) -o $@
+	$(CC) $(FISH_PAGER_OBJS) $(LDFLAGS_FISH_PAGER) -o $@
 
 
 #
@@ -696,7 +699,7 @@ fish_pager: $(FISH_PAGER_OBJS)
 #
 
 fishd: $(FISHD_OBJS) 
-	$(CC) $(FISHD_OBJS) $(LDFLAGS) -o $@
+	$(CC) $(FISHD_OBJS) $(LDFLAGS_FISHD) -o $@
 
 
 #
@@ -704,7 +707,7 @@ fishd: $(FISHD_OBJS)
 #
 
 fish_tests: $(FISH_TESTS_OBJS)
-	$(CC) $(FISH_TESTS_OBJS) $(LDFLAGS) -o $@
+	$(CC) $(FISH_TESTS_OBJS) $(LDFLAGS_FISH) -o $@
 
 
 #
@@ -714,17 +717,7 @@ fish_tests: $(FISH_TESTS_OBJS)
 #
 
 mimedb: $(MIME_OBJS)
-	$(CC) $(MIME_OBJS) $(LDFLAGS) -o $@
-
-
-#
-# Build the count program.
-#
-# count does not need any libraries, so we don't use LDFLAGS here.
-#
-
-count: count.o
-	$(CC) count.o -o $@
+	$(CC) $(MIME_OBJS) $(LDFLAGS_MIMEDB) -o $@
 
 
 #
@@ -732,7 +725,7 @@ count: count.o
 #
 
 set_color: set_color.o print_help.o common.o
-	$(CC) set_color.o print_help.o common.o wutil.o $(LDFLAGS) -o $@
+	$(CC) set_color.o print_help.o common.o wutil.o $(LDFLAGS_SET_COLOR) -o $@
 
 
 #
@@ -741,6 +734,14 @@ set_color: set_color.o print_help.o common.o
 
 tokenizer_test: tokenizer.c tokenizer.h wutil.o common.o
 	$(CC) $(CFLAGS) tokenizer.c wutil.o common.o -D TOKENIZER_TEST $(LDFLAGS) -o $@
+
+
+#
+# Build the fish_indent program.
+#
+
+fish_indent: $(FISH_INDENT_OBJS)
+	$(CC) $(FISH_INDENT_OBJS) $(LDFLAGS_FISH_INDENT) -o $@
 
 
 #
@@ -823,21 +824,6 @@ fish.spec: fish.spec.in
 	./config.status
 
 
-#
-# Completion files which are autogenerated using various scripts
-#
-
-share/completions/darcs.fish: make_mercurial_completions.fish
-	./make_mercurial_completions.fish darcs 'complete -c darcs -n "not __fish_use_subcommand" -a "(test -f _darcs/prefs/repos; and cat _darcs/prefs/repos)" --description "Darcs repo"' 'complete -c darcs -a "test predist boringfile binariesfile" -n "contains setpref (commandline -poc)" -d "woot" -x' >$@
-
-share/completions/hg.fish: make_mercurial_completions.fish
-	./make_mercurial_completions.fish hg >$@
-
-share/completions/svn.fish: make_mercurial_completions.fish
-	./make_mercurial_completions.fish svn >$@
-
-share/completions/cvs.fish: make_mercurial_completions.fish
-	./make_mercurial_completions.fish cvs >$@
 
 #
 # Create .rpm file for the current systems architecture and an
@@ -869,7 +855,7 @@ rpm: fish-@PACKAGE_VERSION@.tar.bz2 fish.spec
 
 distclean: clean
 	rm -f fish.spec Doxyfile.help 
-	rm -f etc/config.fish share/config_interactive.fish seq share/config.fish
+	rm -f etc/config.fish seq share/config.fish
 	rm -f config.status config.log config.h Makefile
 .PHONY: distclean
 
@@ -882,8 +868,8 @@ distclean: clean
 clean:
 	rm -f *.o doc.h doc.tmp doc_src/*.doxygen doc_src/*.c doc_src/*.o doc_src/commands.hdr
 	rm -f tests/tmp.err tests/tmp.out tests/tmp.status tests/foo.txt
-	rm -f tokenizer_test fish key_reader set_color mimedb
-	rm -f fishd fish_pager count fish_tests 
+	rm -f $(PROGRAMS) fish_tests tokenizer_test key_reader 
+	rm -f share/config.fish etc/config.fish doc_src/index.hdr doc_src/commands.hdr
 	rm -f fish-@PACKAGE_VERSION@.tar 
 	rm -f fish-@PACKAGE_VERSION@.tar.gz 
 	rm -f fish-@PACKAGE_VERSION@.tar.bz2
@@ -896,35 +882,37 @@ clean:
 
 # DO NOT DELETE THIS LINE -- make depend depends on it.
 
-builtin.o: config.h fallback.h util.h wutil.h builtin.h function.h complete.h
-builtin.o: proc.h io.h parser.h event.h reader.h env.h common.h wgetopt.h
-builtin.o: sanity.h tokenizer.h wildcard.h input_common.h input.h intern.h
-builtin.o: signal.h halloc.h halloc_util.h parse_util.h expand.h path.h
-builtin.o: builtin_set.c builtin_commandline.c builtin_complete.c
-builtin.o: builtin_ulimit.c builtin_jobs.c
+builtin.o: config.h fallback.h util.h wutil.h builtin.h io.h function.h
+builtin.o: complete.h proc.h parser.h event.h reader.h env.h common.h
+builtin.o: wgetopt.h sanity.h tokenizer.h wildcard.h input_common.h input.h
+builtin.o: intern.h signal.h exec.h highlight.h halloc.h halloc_util.h
+builtin.o: parse_util.h parser_keywords.h expand.h path.h builtin_set.c
+builtin.o: builtin_commandline.c builtin_complete.c builtin_ulimit.c
+builtin.o: builtin_jobs.c
 builtin_commandline.o: config.h signal.h fallback.h util.h wutil.h builtin.h
-builtin_commandline.o: common.h wgetopt.h reader.h proc.h io.h parser.h
+builtin_commandline.o: io.h common.h wgetopt.h reader.h proc.h parser.h
 builtin_commandline.o: event.h tokenizer.h input_common.h input.h
 builtin_commandline.o: parse_util.h
 builtin_complete.o: config.h signal.h fallback.h util.h wutil.h builtin.h
-builtin_complete.o: common.h complete.h wgetopt.h parser.h proc.h io.h
+builtin_complete.o: io.h common.h complete.h wgetopt.h parser.h proc.h
 builtin_complete.o: event.h reader.h
-builtin_jobs.o: config.h fallback.h util.h wutil.h builtin.h proc.h io.h
+builtin_jobs.o: config.h fallback.h util.h wutil.h builtin.h io.h proc.h
 builtin_jobs.o: parser.h event.h common.h wgetopt.h
-builtin_set.o: config.h signal.h fallback.h util.h wutil.h builtin.h env.h
-builtin_set.o: expand.h common.h wgetopt.h proc.h io.h parser.h event.h
-builtin_ulimit.o: config.h fallback.h util.h builtin.h common.h wgetopt.h
+builtin_set.o: config.h signal.h fallback.h util.h wutil.h builtin.h io.h
+builtin_set.o: env.h expand.h common.h wgetopt.h proc.h parser.h event.h
+builtin_ulimit.o: config.h fallback.h util.h builtin.h io.h common.h
+builtin_ulimit.o: wgetopt.h
 common.o: config.h fallback.h util.h wutil.h common.h expand.h proc.h io.h
 common.o: wildcard.h parser.h event.h util.c halloc.c halloc.h halloc_util.c
 common.o: fallback.c
 complete.o: config.h signal.h fallback.h util.h tokenizer.h wildcard.h proc.h
 complete.o: io.h parser.h event.h function.h complete.h builtin.h env.h
 complete.o: exec.h expand.h common.h reader.h history.h intern.h parse_util.h
-complete.o: halloc.h halloc_util.h wutil.h path.h
-count.o: config.h
+complete.o: parser_keywords.h halloc.h halloc_util.h wutil.h path.h
 env.o: config.h signal.h fallback.h util.h wutil.h proc.h io.h common.h env.h
 env.o: sanity.h expand.h history.h reader.h parser.h event.h env_universal.h
-env.o: env_universal_common.h input_common.h complete.h
+env.o: env_universal_common.h input_common.h path.h halloc.h halloc_util.h
+env.o: complete.h
 env_universal.o: config.h signal.h fallback.h util.h common.h wutil.h
 env_universal.o: env_universal_common.h env_universal.h
 env_universal_common.o: config.h signal.h fallback.h util.h common.h wutil.h
@@ -938,30 +926,36 @@ expand.o: config.h signal.h fallback.h util.h common.h wutil.h env.h proc.h
 expand.o: io.h parser.h event.h expand.h wildcard.h exec.h tokenizer.h
 expand.o: complete.h parse_util.h halloc.h halloc_util.h
 fallback.o: config.h fallback.h util.h
-fishd.o: config.h signal.h fallback.h util.h common.h wutil.h
-fishd.o: env_universal_common.h halloc.h halloc_util.h path.h
+fish.o: config.h signal.h fallback.h util.h common.h reader.h io.h builtin.h
+fish.o: function.h complete.h wutil.h env.h sanity.h proc.h parser.h event.h
+fish.o: expand.h intern.h exec.h output.h halloc.h halloc_util.h history.h
+fish.o: path.h
+fish_indent.o: config.h fallback.h util.h common.h wutil.h halloc.h
+fish_indent.o: halloc_util.h tokenizer.h print_help.h parser_keywords.h
 fish_pager.o: config.h signal.h fallback.h util.h wutil.h common.h complete.h
 fish_pager.o: output.h input_common.h env_universal.h env_universal_common.h
-fish_pager.o: halloc.h halloc_util.h
+fish_pager.o: halloc.h halloc_util.h print_help.h
 fish_tests.o: config.h signal.h fallback.h util.h common.h proc.h io.h
 fish_tests.o: reader.h builtin.h function.h complete.h wutil.h env.h expand.h
-fish_tests.o: parser.h event.h tokenizer.h output.h exec.h halloc_util.h
+fish_tests.o: parser.h event.h tokenizer.h output.h exec.h path.h halloc.h
+fish_tests.o: halloc_util.h
+fishd.o: config.h signal.h fallback.h util.h common.h wutil.h
+fishd.o: env_universal_common.h halloc.h halloc_util.h path.h print_help.h
 function.o: config.h signal.h wutil.h fallback.h util.h function.h proc.h
 function.o: io.h parser.h event.h common.h intern.h reader.h parse_util.h
-function.o: env.h expand.h halloc.h halloc_util.h
+function.o: parser_keywords.h env.h expand.h halloc.h halloc_util.h
 halloc.o: config.h fallback.h util.h common.h halloc.h
 halloc_util.o: config.h fallback.h util.h common.h halloc.h
 highlight.o: config.h signal.h fallback.h util.h wutil.h highlight.h
-highlight.o: tokenizer.h proc.h io.h parser.h event.h parse_util.h builtin.h
-highlight.o: function.h env.h expand.h sanity.h common.h complete.h output.h
-highlight.o: halloc.h halloc_util.h wildcard.h path.h
-history2.o: config.h fallback.h util.h wutil.h history.h common.h halloc.h
-history2.o: halloc_util.h intern.h path.h
+highlight.o: tokenizer.h proc.h io.h parser.h event.h parse_util.h
+highlight.o: parser_keywords.h builtin.h function.h env.h expand.h sanity.h
+highlight.o: common.h complete.h output.h halloc.h halloc_util.h wildcard.h
+highlight.o: path.h
 history.o: config.h fallback.h util.h wutil.h history.h common.h halloc.h
 history.o: halloc_util.h intern.h path.h signal.h
-input.o: config.h signal.h fallback.h util.h wutil.h reader.h proc.h io.h
+input.o: config.h signal.h fallback.h util.h wutil.h reader.h io.h proc.h
 input.o: common.h sanity.h input_common.h input.h parser.h event.h env.h
-input.o: expand.h output.h intern.h
+input.o: expand.h output.h intern.h halloc.h halloc_util.h
 input_common.o: config.h fallback.h util.h common.h wutil.h input_common.h
 input_common.o: env_universal.h env_universal_common.h
 intern.o: config.h fallback.h util.h wutil.h common.h intern.h
@@ -969,48 +963,44 @@ io.o: config.h fallback.h util.h wutil.h exec.h proc.h io.h common.h halloc.h
 key_reader.o: config.h fallback.h input_common.h
 kill.o: config.h signal.h fallback.h util.h wutil.h kill.h proc.h io.h
 kill.o: sanity.h common.h env.h exec.h halloc.h path.h
-main.o: config.h signal.h fallback.h util.h common.h reader.h builtin.h
-main.o: function.h complete.h wutil.h env.h sanity.h proc.h io.h parser.h
-main.o: event.h expand.h intern.h exec.h output.h halloc.h halloc_util.h
-main.o: history.h path.h
-mimedb.o: config.h xdgmime.h fallback.h util.h
+mimedb.o: config.h xdgmime.h fallback.h util.h print_help.h
 output.o: config.h signal.h fallback.h util.h wutil.h expand.h common.h
 output.o: output.h halloc_util.h highlight.h
-parser.o: config.h signal.h fallback.h util.h common.h wutil.h proc.h io.h
-parser.o: parser.h event.h tokenizer.h exec.h wildcard.h function.h builtin.h
-parser.o: env.h expand.h reader.h sanity.h env_universal.h
-parser.o: env_universal_common.h intern.h parse_util.h halloc.h halloc_util.h
-parser.o: path.h
 parse_util.o: config.h fallback.h util.h wutil.h common.h tokenizer.h
 parse_util.o: parse_util.h expand.h intern.h exec.h proc.h io.h env.h
 parse_util.o: signal.h wildcard.h halloc_util.h
+parser.o: config.h signal.h fallback.h util.h common.h wutil.h proc.h io.h
+parser.o: parser.h event.h parser_keywords.h tokenizer.h exec.h wildcard.h
+parser.o: function.h builtin.h env.h expand.h reader.h sanity.h
+parser.o: env_universal.h env_universal_common.h intern.h parse_util.h
+parser.o: halloc.h halloc_util.h path.h
+parser_keywords.o: config.h fallback.h common.h util.h parser_keywords.h
 path.o: config.h fallback.h util.h common.h env.h wutil.h halloc.h
 path.o: halloc_util.h path.h expand.h
+print_help.o: print_help.h
 proc.o: config.h signal.h fallback.h util.h wutil.h proc.h io.h common.h
 proc.o: reader.h sanity.h env.h parser.h event.h halloc.h halloc_util.h
 proc.o: output.h
 reader.o: config.h signal.h fallback.h util.h wutil.h highlight.h reader.h
-reader.o: proc.h io.h parser.h event.h complete.h history.h common.h sanity.h
+reader.o: io.h proc.h parser.h event.h complete.h history.h common.h sanity.h
 reader.o: env.h exec.h expand.h tokenizer.h kill.h input_common.h input.h
-reader.o: function.h output.h screen.h parse_util.h
+reader.o: function.h output.h screen.h halloc.h halloc_util.h parse_util.h
 sanity.o: config.h signal.h fallback.h util.h common.h sanity.h proc.h io.h
 sanity.o: history.h reader.h kill.h wutil.h
 screen.o: config.h fallback.h common.h util.h wutil.h output.h highlight.h
 screen.o: screen.h env.h
 set_color.o: config.h fallback.h print_help.h
 signal.o: config.h signal.h common.h util.h fallback.h wutil.h event.h
-signal.o: reader.h proc.h io.h
-test.o: stringtab.h
+signal.o: reader.h io.h proc.h
 tokenizer.o: config.h fallback.h util.h wutil.h tokenizer.h common.h
-tokenizer.o: wildcard.h
 util.o: config.h fallback.h util.h common.h wutil.h
 wgetopt.o: config.h wgetopt.h wutil.h fallback.h
 wildcard.o: config.h fallback.h util.h wutil.h complete.h common.h wildcard.h
-wildcard.o: reader.h expand.h
+wildcard.o: reader.h io.h expand.h exec.h proc.h halloc_util.h
 wutil.o: config.h fallback.h util.h common.h wutil.h halloc.h halloc_util.h
-xdgmimealias.o: xdgmimealias.h xdgmime.h xdgmimeint.h
 xdgmime.o: xdgmime.h xdgmimeint.h xdgmimeglob.h xdgmimemagic.h xdgmimealias.h
 xdgmime.o: xdgmimeparent.h
+xdgmimealias.o: xdgmimealias.h xdgmime.h xdgmimeint.h
 xdgmimeglob.o: xdgmimeglob.h xdgmime.h xdgmimeint.h
 xdgmimeint.o: xdgmimeint.h xdgmime.h
 xdgmimemagic.o: xdgmimemagic.h xdgmime.h xdgmimeint.h

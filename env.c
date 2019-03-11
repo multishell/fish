@@ -52,6 +52,9 @@
 #include "env_universal.h"
 #include "input_common.h"
 #include "event.h"
+#include "path.h"
+#include "halloc.h"
+#include "halloc_util.h"
 
 #include "complete.h"
 
@@ -416,11 +419,6 @@ static void setup_path()
 	;
 
 	path = env_get( L"PATH" );
-	if( !path )
-	{
-		env_set( L"PATH", 0, ENV_EXPORT | ENV_GLOBAL );
-		path=0;
-	}	
 		
 	al_init( &l );
 	
@@ -463,10 +461,9 @@ static void setup_path()
 				sb_append( &b, path );
 			}
 			
-			sb_append2( &b,
-						ARRAY_SEP_STR,
-						path_el[j],
-						(void *)0 );
+			sb_append( &b,
+				   ARRAY_SEP_STR,
+				   path_el[j] );
 			
 			env_set( L"PATH", (wchar_t *)b.buff, ENV_GLOBAL | ENV_EXPORT );
 			
@@ -710,6 +707,19 @@ int env_set( const wchar_t *key,
 	
 	CHECK( key, ENV_INVALID );
 		
+	if( val && contains( key, L"PWD", L"HOME" ) )
+	{
+		void *context = halloc( 0, 0 );
+		const wchar_t *val_canonical = path_make_canonical( context, val );
+		if( wcscmp( val_canonical, val ) )
+		{
+			int res = env_set( key, val_canonical, var_mode );
+			halloc_free( context );
+			return res;
+		}
+		halloc_free( context );
+	}
+
 	if( (var_mode & ENV_USER ) && 
 		hash_get( &env_read_only, key ) )
 	{

@@ -2,6 +2,12 @@
 
 	Functions for handling event triggers
 
+	Because most of these functions can be called by signal
+	handler, it is important to make it well defined when these
+	functions produce output or perform memory allocations, since
+	such functions may not be safely called by signal handlers.
+
+	
 */
 #ifndef FISH_EVENT_H
 #define FISH_EVENT_H
@@ -27,6 +33,7 @@ enum
 	EVENT_VARIABLE, /**< An event triggered by a variable update */
 	EVENT_EXIT, /**< An event triggered by a job or process exit */
 	EVENT_JOB_ID, /**< An event triggered by a job exit */
+	EVENT_GENERIC, /**< A generic event */
 }
 	;
 
@@ -67,7 +74,11 @@ typedef struct
 		   Job id for EVENT_JOB_ID type events
 		*/
 		int job_id;
-		
+		/**
+		   The parameter describing this generic event
+		*/
+		const wchar_t *param;
+	
 	} param1;
 
 	/**
@@ -86,16 +97,23 @@ typedef struct
 
 /**
    Add an event handler 
+
+   May not be called by a signal handler, since it may allocate new memory.
 */
 void event_add_handler( event_t *event );
 
 /**
    Remove all events matching the specified criterion. 
+
+   May not be called by a signal handler, since it may free allocated memory.
 */
 void event_remove( event_t *event );
 
 /**
    Return all events which match the specified event class 
+
+   This function is safe to call from a signal handler _ONLY_ if the
+   out parameter is null.
 
    \param criterion Is the class of events to return. If the criterion has a non-null function_name, only events which trigger the specified function will return.
    \param out the list to add events to. May be 0, in which case no events will be added, but the result count will still be valid
@@ -111,7 +129,14 @@ int event_get( event_t *criterion, array_list_t *out );
    called. If event is a null-pointer, all pending events are
    dispatched.
 
-   \param event the specific event whose handlers should fire
+   This function is safe to call from a signal handler _ONLY_ if the
+   event parameter is for a signal. Signal events not be fired, by the
+   call to event_fire, instead they will be fired the next time
+   event_fire is called with anull argument. This is needed to make
+   sure that no code evaluation is ever performed by a signal handler.
+
+   \param event the specific event whose handlers should fire. If
+   null, then all delayed events will be fired.
 */
 void event_fire( event_t *event );
 
@@ -126,7 +151,7 @@ void event_init();
 void event_destroy();
 
 /**
-   Free all memory used by event
+   Free all memory used by the specified event
 */
 void event_free( event_t *e );
 
@@ -135,5 +160,11 @@ void event_free( event_t *e );
    not be freed.
 */
 const wchar_t *event_get_desc( event_t *e );
+
+/**
+   Fire a generic event with the specified name
+*/
+void event_fire_generic(const wchar_t *name);
+
 
 #endif

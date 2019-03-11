@@ -253,8 +253,8 @@ static int try_sequence( char *seq )
 	wint_t c=0;
 	
 	for( j=0; 
-		 seq[j] != '\0' && seq[j] == (c=input_common_readch( j>0 )); 
-		 j++ )
+	     seq[j] != '\0' && seq[j] == (c=input_common_readch( j>0 )); 
+	     j++ )
 		;
 
 	if( seq[j] == '\0' )
@@ -285,7 +285,7 @@ static wint_t readch()
 	struct mapping m[]=
 		{
 			{				
-				"\e[A", LINE_UP
+				"\x1b[A", LINE_UP
 			}
 			,
 			{
@@ -293,7 +293,7 @@ static wint_t readch()
 			}
 			,
 			{				
-				"\e[B", LINE_DOWN
+				"\x1b[B", LINE_DOWN
 			}
 			,
 			{
@@ -324,8 +324,13 @@ static wint_t readch()
 	;
 	int i;
 	
-	for( i=0; m[i].seq; i++ )
+	for( i=0; m[i].bnd; i++ )
 	{
+		if( !m[i].seq )
+		{
+			continue;
+		}
+		
 		if( try_sequence(m[i].seq ) )
 			return m[i].bnd;
 	}
@@ -408,8 +413,8 @@ static void completion_print_item( const wchar_t *prefix, comp_t *c, int width )
 		int desc_all = c->desc_width?c->desc_width+4:0;
 		
 		comp_width = maxi( mini( c->comp_width,
-								 2*(width-4)/3 ),
-						   width - desc_all );
+					 2*(width-4)/3 ),
+				   width - desc_all );
 		if( c->desc_width )
 			desc_width = width-comp_width-4;
 		else
@@ -438,7 +443,7 @@ static void completion_print_item( const wchar_t *prefix, comp_t *c, int width )
 		}
 		written += print_max( L"(", 1, 0 );
 		set_color( get_color( HIGHLIGHT_PAGER_DESCRIPTION ),
-				   FISH_COLOR_IGNORE );
+			   FISH_COLOR_IGNORE );
 		written += print_max( c->desc, desc_width, 0 );
 		written += print_max( L")", 1, 0 );
 	}
@@ -467,12 +472,12 @@ static void completion_print_item( const wchar_t *prefix, comp_t *c, int width )
 */
 
 static void completion_print( int cols,
-							  int *width,
-							  int row_start,
-							  int row_stop,
-							  wchar_t *prefix,
-							  int is_quoted,
-							  array_list_t *l)
+			      int *width,
+			      int row_start,
+			      int row_stop,
+			      wchar_t *prefix,
+			      int is_quoted,
+			      array_list_t *l)
 {
 
 	int rows = (al_get_count( l )-1)/cols+1;
@@ -520,9 +525,9 @@ static void completion_print( int cols,
 */
 
 static int completion_try_print( int cols,
-								 wchar_t *prefix,
-								 int is_quoted,
-								 array_list_t *l )
+				 wchar_t *prefix,
+				 int is_quoted,
+				 array_list_t *l )
 {
 	/*
 	  The calculated preferred width of each column
@@ -578,9 +583,9 @@ static int completion_try_print( int cols,
 				min += 2;
 			}
 			min_width[j] = maxi( min_width[j],
-								 min );
+					     min );
 			pref_width[j] = maxi( pref_width[j],
-								  pref );
+					      pref );
 		}
 		min_tot_width += min_width[j];
 		pref_tot_width += pref_width[j];
@@ -614,8 +619,8 @@ static int completion_try_print( int cols,
   pref_tot_width-termsize.ws_col );
 */
 		if( min_tot_width < termsize.ws_col &&
-			( ( (rows < termsize.ws_row) && (next_rows >= termsize.ws_row ) ) ||
-			  ( pref_tot_width-termsize.ws_col< 4 && cols < 3 ) ) )
+		    ( ( (rows < termsize.ws_row) && (next_rows >= termsize.ws_row ) ) ||
+		      ( pref_tot_width-termsize.ws_col< 4 && cols < 3 ) ) )
 		{
 			/*
 			  Terminal almost wide enough, or squeezing makes the
@@ -672,16 +677,25 @@ static int completion_try_print( int cols,
 			int npos, pos = 0;
 			int do_loop = 1;
 
-			is_ca_mode=1;
-			writembs(enter_ca_mode);
+			/*
+			  Enter ca_mode, which means that the terminal
+			  content will be restored to the current
+			  state on exit.
+			*/
+			if( enter_ca_mode && exit_ca_mode )
+			{
+				is_ca_mode=1;
+				writembs(enter_ca_mode);
+			}
+			
 
 			completion_print( cols,
-							  width,
-							  0,
-							  termsize.ws_row-1,
-							  prefix,
-							  is_quoted,
-							  l);
+					  width,
+					  0,
+					  termsize.ws_row-1,
+					  prefix,
+					  is_quoted,
+					  l);
 			/*
 			  List does not fit on screen. Print one screenfull and
 			  leave a scrollable interface
@@ -692,13 +706,16 @@ static int completion_try_print( int cols,
 				sb_init( &msg );
 				
 				set_color( FISH_COLOR_BLACK,
-						   get_color(HIGHLIGHT_PAGER_PROGRESS) );
+					   get_color(HIGHLIGHT_PAGER_PROGRESS) );
 				sb_printf( &msg,
-						   _(L" %d to %d of %d \r"),
-						   pos,
-						   pos+termsize.ws_row-1, 
-						   rows );
+					   _(L" %d to %d of %d"),
+					   pos,
+					   pos+termsize.ws_row-1, 
+					   rows );
 				
+				sb_printf( &msg,
+					   L"   \r" );
+								
 				writestr((wchar_t *)msg.buff);
 				sb_destroy( &msg );
 				set_color( FISH_COLOR_NORMAL, FISH_COLOR_NORMAL );
@@ -715,14 +732,14 @@ static int completion_try_print( int cols,
 							writembs(tparm( cursor_address, 0, 0));
 							writembs(scroll_reverse);
 							completion_print( cols,
-											  width,
-											  pos,
-											  pos+1,
-											  prefix,
-											  is_quoted,
-											  l );
+									  width,
+									  pos,
+									  pos+1,
+									  prefix,
+									  is_quoted,
+									  l );
 							writembs( tparm( cursor_address,
-											 termsize.ws_row-1, 0) );
+									 termsize.ws_row-1, 0) );
 							writembs(clr_eol );
 
 						}
@@ -736,12 +753,12 @@ static int completion_try_print( int cols,
 						{
 							pos++;
 							completion_print( cols,
-											  width,
-											  pos+termsize.ws_row-2,
-											  pos+termsize.ws_row-1,
-											  prefix,
-											  is_quoted,
-											  l );
+									  width,
+									  pos+termsize.ws_row-2,
+									  pos+termsize.ws_row-1,
+									  prefix,
+									  is_quoted,
+									  l );
 						}
 						break;
 					}
@@ -750,17 +767,17 @@ static int completion_try_print( int cols,
 					{
 
 						npos = mini( rows - termsize.ws_row+1,
-									 pos + termsize.ws_row-1 );
+							     pos + termsize.ws_row-1 );
 						if( npos != pos )
 						{
 							pos = npos;
 							completion_print( cols,
-											  width,
-											  pos,
-											  pos+termsize.ws_row-1,
-											  prefix,
-											  is_quoted,
-											  l );
+									  width,
+									  pos,
+									  pos+termsize.ws_row-1,
+									  prefix,
+									  is_quoted,
+									  l );
 						}
 						else
 						{
@@ -774,18 +791,18 @@ static int completion_try_print( int cols,
 					case PAGE_UP:
 					{
 						npos = maxi( 0,
-									 pos - termsize.ws_row+1 );
+							     pos - termsize.ws_row+1 );
 
 						if( npos != pos )
 						{
 							pos = npos;
 							completion_print( cols,
-											  width,
-											  pos,
-											  pos+termsize.ws_row-1,
-											  prefix,
-											  is_quoted,
-											  l );
+									  width,
+									  pos,
+									  pos+termsize.ws_row-1,
+									  prefix,
+									  is_quoted,
+									  l );
 						}
 						else
 						{
@@ -944,7 +961,7 @@ static void mangle_completions( array_list_t *l, const wchar_t *prefix )
 			if( (c == COMPLETE_ITEM_SEP) || (c==COMPLETE_SEP) || !c)
 			{
 				*end = 0;
-				wchar_t * str = escape( start, 1 );
+				wchar_t * str = escape( start, ESCAPE_ALL | ESCAPE_NO_QUOTED );
 				
 				comp->comp_width += my_wcswidth( str );
 				halloc_register( global_context, str );
@@ -1008,8 +1025,8 @@ static void init( int mangle_descriptors, int out )
 	struct sigaction act;
 
 	static struct termios pager_modes;
-
-
+	char *term;
+	
 	if( mangle_descriptors )
 	{
 		
@@ -1076,22 +1093,23 @@ static void init( int mangle_descriptors, int out )
 
 	tcgetattr(0,&pager_modes);        /* get the current terminal modes */
 	memcpy( &saved_modes,
-			&pager_modes,
-			sizeof(saved_modes));     /* save a copy so we can reset the terminal later */
+		&pager_modes,
+		sizeof(saved_modes));     /* save a copy so we can reset the terminal later */
 
 	pager_modes.c_lflag &= ~ICANON;   /* turn off canonical mode */
 	pager_modes.c_lflag &= ~ECHO;     /* turn off echo mode */
-    pager_modes.c_cc[VMIN]=1;
-    pager_modes.c_cc[VTIME]=0;
+	pager_modes.c_cc[VMIN]=1;
+	pager_modes.c_cc[VTIME]=0;
 
 	/*
 	  
 	*/
-    if( tcsetattr(0,TCSANOW,&pager_modes))      /* set the new modes */
-    {
-        wperror(L"tcsetattr");
-        exit(1);
-    }
+	if( tcsetattr(0,TCSANOW,&pager_modes))      /* set the new modes */
+	{
+		wperror(L"tcsetattr");
+		exit(1);
+	}
+        
 
 	if( setupterm( 0, STDOUT_FILENO, 0) == ERR )
 	{
@@ -1099,6 +1117,14 @@ static void init( int mangle_descriptors, int out )
 		exit(1);
 	}
 
+	term = getenv("TERM");
+	if( term )
+	{
+		wchar_t *wterm = str2wcs(term);
+		output_set_term( wterm );
+		free( wterm );
+	}
+	
 }
 
 /**
@@ -1137,7 +1163,7 @@ static void read_array( FILE* file, array_list_t *comp )
 
 		while( 1 )
 		{
-		    c = getc( file );
+			c = getc( file );
 			if( c == EOF ) 
 			{
 				break;
@@ -1162,7 +1188,10 @@ static void read_array( FILE* file, array_list_t *comp )
 			if( wcs ) 
 			{
 				unescaped = unescape( wcs, 0 );
-				al_push( comp, unescaped );
+				if( unescaped )
+				{
+					al_push( comp, unescaped );
+				}				
 				free( wcs );
 			}
 		}
@@ -1265,10 +1294,10 @@ int main( int argc, char **argv )
 			int opt_index = 0;
 		
 			int opt = getopt_long( argc,
-								   argv, 
-								   GETOPT_STRING,
-								   long_options, 
-								   &opt_index );
+					       argv, 
+					       GETOPT_STRING,
+					       long_options, 
+					       &opt_index );
 		
 			if( opt == -1 )
 				break;

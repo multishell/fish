@@ -40,8 +40,23 @@
 */
 #define BYTE_MAX 0xffu
 
+/*
+  Escape special fish syntax characters liek the semicolon
+ */
 #define UNESCAPE_SPECIAL 1
+/*
+  Allow incomplete escape sequences
+ */
 #define UNESCAPE_INCOMPLETE 2
+
+/**
+   Escape all characters, including magic characters like the semicolon
+ */
+#define ESCAPE_ALL 1
+/**
+   Do not try to use 'simplified' quoted escapes, and do not use empty quotes as the empty string
+ */
+#define ESCAPE_NO_QUOTED 2
 
 
 /** 
@@ -140,6 +155,9 @@ extern wchar_t *program_name;
 */
 #define N_(wstr) wstr
 
+#define contains( str,... ) contains_internal( str, __VA_ARGS__, (void *)0 )
+#define wcsdupcat( str,... ) wcsdupcat_internal( str, __VA_ARGS__, (void *)0 )
+
 /*
   Print a stack trace to stderr
 */
@@ -220,17 +238,12 @@ char **wcsv2strv( const wchar_t **in );
 */
 wchar_t **strv2wcsv( const char **in );
 
-/**
-   Returns a newly allocated concatenation of the specified wide
-   character strings
-*/
-wchar_t *wcsdupcat( const wchar_t *a, const wchar_t *b );
 
 /**
    Returns a newly allocated concatenation of the specified wide
    character strings. The last argument must be a null pointer.
 */
-__sentinel wchar_t *wcsdupcat2( const wchar_t *a, ... );
+__sentinel wchar_t *wcsdupcat_internal( const wchar_t *a, ... );
 
 /**
    Test if the given string is a valid variable name
@@ -300,13 +313,14 @@ const wchar_t *wsetlocale( int category, const wchar_t *locale );
 
    \param needle the string to search for in the list 
 
-   \return zero is needle is not found, of if needle is null, non-zero otherwise
+   \return zero if needle is not found, of if needle is null, non-zero otherwise
 */
-__sentinel int contains_str( const wchar_t *needle, ... );
+__sentinel int contains_internal( const wchar_t *needle, ... );
 
 /**
    Call read while blocking the SIGCHLD signal. Should only be called
-   if you _know_ there is data available for reading.
+   if you _know_ there is data available for reading, or the program
+   will hang until there is data.
 */
 int read_blocked(int fd, void *buf, size_t count);
 
@@ -368,17 +382,17 @@ wchar_t *unescape( const wchar_t * in,
 int acquire_lock_file( const char *lockfile, const int timeout, int force );
 
 /** 
-	Returns the width of the terminal window, so that not all
-	functions that use these values continually have to keep track of
-	it.
+    Returns the width of the terminal window, so that not all
+    functions that use these values continually have to keep track of
+    it separately.
 
-   Only works if common_handle_winch is registered to handle winch signals.
+    Only works if common_handle_winch is registered to handle winch signals.
 */
 int common_get_width();
 /**
    Returns the height of the terminal window, so that not all
    functions that use these values continually have to keep track of
-   it.
+   it separatly.
 
    Only works if common_handle_winch is registered to handle winch signals.
 */
@@ -407,11 +421,11 @@ void write_screen( const wchar_t *msg, string_buffer_t *buff );
 */
 void tokenize_variable_array( const wchar_t *val, array_list_t *out );
 
-
 /**
-   Make sure the specified direcotry exists. If no, try to create it.
+   Make sure the specified direcotry exists. If needed, try to create
+   it and any currently not existing parent directories..
 
-   \return 0 if the directory exists, -1 otherwise.
+   \return 0 if, at the time of function return the directory exists, -1 otherwise.
 */
 int create_directory( wchar_t *d );
 
@@ -419,6 +433,12 @@ int create_directory( wchar_t *d );
    Print a short message about how to file a bug report to stderr
 */
 void bugreport();
+
+/**
+   Format the specified size (in bytes, kilobytes, etc.) into the specified stringbuffer.
+*/
+void sb_format_size( string_buffer_t *sb,
+		     long long sz );
 
 #endif
 

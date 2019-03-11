@@ -22,7 +22,6 @@ segments.
 #include "wutil.h"
 #include "tokenizer.h"
 #include "common.h"
-#include "wildcard.h"
 
 
 /**
@@ -70,6 +69,7 @@ static const wchar_t *tok_desc[] =
 	N_( L"Append output to file" ),
 	N_( L"Redirect input to file" ),
 	N_( L"Redirect to file descriptor" ),
+	N_( L"Redirect output to file if file does not exist" ),
 	N_( L"Run job in background" ),
 	N_( L"Comment" )
 }
@@ -474,6 +474,11 @@ static void read_redirect( tokenizer *tok, int fd )
 		tok->buff++;
 		tok->last_type = TOK_REDIRECT_FD;
 	}
+	else if( *tok->buff == L'?' )
+	{
+		tok->buff++;
+		tok->last_type = TOK_REDIRECT_NOCLOB;
+	}
 	else
 	{
 		tok->last_type = TOK_REDIRECT_OUT + mode;
@@ -598,11 +603,14 @@ void tok_next( tokenizer *tok )
 			break;
 
 		case L'>':
-			return read_redirect( tok, 1 );
+                        read_redirect( tok, 1 );
+			return;
 		case L'<':
-			return read_redirect( tok, 0 );
+                        read_redirect( tok, 0 );
+			return;
 		case L'^':
-			return read_redirect( tok, 2 );
+                        read_redirect( tok, 2 );
+			return;
 
 		default:
 		{

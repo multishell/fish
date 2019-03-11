@@ -1,5 +1,13 @@
 
-function __fish_print_help --description "Print help message for the specified fish function or builtin"
+function __fish_print_help --description "Print help message for the specified fish function or builtin" --argument item
+
+	switch $argv[1]
+		case '.'
+		set item source
+
+		case '*'
+		set item $argv[1]
+	end
 
 	# These two expressions take care of underlines (Should be italic)
 	set -l cmd1 s/_\x08'\(.\)'/(set_color --underline)\\1(set_color normal)/g
@@ -15,7 +23,7 @@ function __fish_print_help --description "Print help message for the specified f
 	set -l sed_cmd -e $cmd1 -e $cmd2 -e $cmd3 
 
 	# Render help output, save output into the variable 'help'
-	set -l help (nroff -man $__fish_datadir/man/$argv.1)
+	set -l help (nroff -man $__fish_datadir/man/$item.1)
 	set -l lines (count $help)
 
 	# Print an empty line first

@@ -1,10 +1,6 @@
 /** \file input.c
-a	
-Functions for reading a character of input from stdin, using the
-inputrc information for key bindings.
 
-The inputrc file format was invented for the readline library. The
-implementation in fish is as of yet incomplete.
+    Functions for reading a character of input from stdin.
 
 */
 
@@ -70,34 +66,46 @@ implementation in fish is as of yet incomplete.
 
 #include "output.h"
 #include "intern.h"
-
-static void input_read_inputrc( wchar_t *fn );
+#include "halloc.h"
+#include "halloc_util.h"
 
 /**
-   Array containing characters which have been peeked by the escape
-   sequence matching functions and returned
+   Add a new terminfo mapping
 */
+#define TERMINFO_ADD(key)						\
+	{								\
+		terminfo_mapping_t *m = halloc( terminfo_mappings, sizeof( terminfo_mapping_t ) ); \
+		m->name = halloc_wcsdup( terminfo_mappings, (L ## #key)+4 ); \
+		m->seq = key;						\
+		al_push( terminfo_mappings, m );			\
+	}
 
+
+/**
+   Struct representing a keybinding. Returned by input_get_mappings.
+ */
 typedef struct
 {
 	const wchar_t *seq; /**< Character sequence which generates this event */
-	const wchar_t *seq_desc; /**< Description of the character sequence suitable for printing on-screen */
 	const wchar_t *command; /**< command that should be evaluated by this mapping */
 		
 }
-	mapping;
+	input_mapping_t;
 
 /**
-   Symbolic names for some acces-modifiers used when parsing symbolic sequences
-*/
-#define CTRL_SYMBOL L"Control-"
-/**
-   Symbolic names for some acces-modifiers used when parsing symbolic sequences
-*/
-#define META_SYMBOL L"Meta-"
+   A struct representing the mapping from a terminfo key name to a terminfo character sequence
+ */
+typedef struct
+{
+	const wchar_t *name; /**< Name of key */
+	const char *seq; /**< Character sequence generated on keypress */
+		
+}
+	terminfo_mapping_t;
+
 
 /**
-   Names of all the readline functions supported
+   Names of all the input functions supported
 */
 static const wchar_t *name_arr[] = 
 {
@@ -117,14 +125,11 @@ static const wchar_t *name_arr[] =
 	L"complete",
 	L"beginning-of-history",
 	L"end-of-history",
-	L"delete-line",
 	L"backward-kill-line",
 	L"kill-whole-line",
 	L"kill-word",
 	L"backward-kill-word",
 	L"dump-functions",
-	L"winch",
-	L"exit",
 	L"history-token-search-backward",
 	L"history-token-search-forward",
 	L"self-insert",
@@ -134,12 +139,14 @@ static const wchar_t *name_arr[] =
 	L"execute",
 	L"beginning-of-buffer",
 	L"end-of-buffer",
-	L"repaint"
+	L"repaint",
+	L"up-line",
+	L"down-line"
 }
 	;
 
 /**
-   Description of each supported readline function
+   Description of each supported input function
 */
 /*
 static const wchar_t *desc_arr[] =
@@ -177,8 +184,9 @@ static const wchar_t *desc_arr[] =
 }
 	;
 */
+
 /**
-   Internal code for each supported readline function
+   Internal code for each supported input function
 */
 static const wchar_t code_arr[] = 
 {
@@ -198,14 +206,11 @@ static const wchar_t code_arr[] =
 	R_COMPLETE,
 	R_BEGINNING_OF_HISTORY,
 	R_END_OF_HISTORY,
-	R_DELETE_LINE,
 	R_BACKWARD_KILL_LINE,
 	R_KILL_WHOLE_LINE,
 	R_KILL_WORD,
 	R_BACKWARD_KILL_WORD,
 	R_DUMP_FUNCTIONS,
-	R_WINCH,
-	R_EXIT,
 	R_HISTORY_TOKEN_SEARCH_BACKWARD,
 	R_HISTORY_TOKEN_SEARCH_FORWARD,
 	R_SELF_INSERT,
@@ -215,92 +220,29 @@ static const wchar_t code_arr[] =
 	R_EXECUTE,
 	R_BEGINNING_OF_BUFFER,
 	R_END_OF_BUFFER,
-	R_REPAINT
+	R_REPAINT,
+	R_UP_LINE,
+	R_DOWN_LINE
 }
 	;
 
 
 /**
-   List of all key bindings, as mappings from one sequence to either a character or a command
-*/
-static hash_table_t all_mappings;
-
-/**
    Mappings for the current input mode
 */
-static array_list_t *current_mode_mappings; 
-/**
-   Mappings for the current application
-*/
-static array_list_t *current_application_mappings;
-/**
-   Global mappings
-*/
-static array_list_t *global_mappings;
+static array_list_t mappings = {0,0,0}; 
 
-/**
-   Number of nested conditional statement levels that are not evaluated
-*/
-static int inputrc_skip_block_count=0;
-/**
-   Number of nested conditional statements that have evaluated to true
-*/
-static int inputrc_block_count=0;
+static array_list_t *terminfo_mappings = 0;
 
-/**
-   True if syntax errors were found in the inputrc file
-*/
-static int inputrc_error = 0;
 
 /**
    Set to one when the input subsytem has been initialized. 
 */
 static int is_init = 0;
 
-/**
-   This is the variable telling us how many timew the next command
-   should bne repeated. Only actually used in vi-mode.
-*/
-static int repeat_count = 1;
+static void input_terminfo_init();
+static void input_terminfo_destroy();
 
-/**
-   This is the type of the first command in a vi-mode two-part combo
-   like 'dw' or '3d3l'.
-*/
-static wint_t first_command = 0;
-
-wchar_t input_get_code( const wchar_t *name )
-{
-
-	int i;
-	for( i = 0; i<(sizeof( code_arr )/sizeof(wchar_t)) ; i++ )
-	{
-		if( wcscmp( name, name_arr[i] ) == 0 )
-		{
-			return code_arr[i];
-		}
-	}
-	return -1;		
-}
-
-/**
-   Returns the function name for the given function code.
-*/
-/*
-static const wchar_t *input_get_name( wchar_t c )
-{
-
-	int i;
-	for( i = 0; i<(sizeof( code_arr )/sizeof(wchar_t)) ; i++ )
-	{
-		if( c == code_arr[i] )
-		{
-			return name_arr[i];
-		}
-	}
-	return 0;		
-}
-*/
 /**
    Returns the function description for the given function code.
 */
@@ -319,1064 +261,33 @@ static const wchar_t *input_get_desc( wchar_t c )
 	return 0;		
 }
 */
-void input_set_mode( wchar_t *name )
-{
-	current_mode_mappings = (array_list_t *)hash_get( &all_mappings, name );	
-}
-
-void input_set_application( wchar_t *name )
-{
-	current_application_mappings = (array_list_t *)hash_get( &all_mappings, name );	
-}
-
-/**
-   Get the mapping with the specified name
-*/
-static array_list_t *get_mapping( const wchar_t *mode )
-{
-
-	array_list_t * mappings = (array_list_t *)hash_get( &all_mappings, mode );
-	
-	if( !mappings )
-	{
-		mappings = malloc( sizeof( array_list_t ));
-		al_init( mappings );
-		
-		hash_put( &all_mappings, wcsdup(mode), mappings );
-		
-	}
-	return mappings;
-	
-}
 
 
-void add_mapping( const wchar_t *mode,
-				  const wchar_t *s,
-				  const wchar_t *d, 
-				  const wchar_t *c )
+void input_mapping_add( const wchar_t *sequence,
+			const wchar_t *command )
 {
 	int i;
 
-	array_list_t *mappings;
-		
-	if( s == 0 )
-		return;
+	CHECK( sequence, );
+	CHECK( command, );
 	
-	if( mode == 0 )
-		return;
+	//	debug( 0, L"Add mapping from %ls to %ls", escape(sequence, 1), escape(command, 1 ) );
 	
-	mappings = get_mapping( mode );
-		
-	for( i=0; i<al_get_count( mappings); i++ )
+
+	for( i=0; i<al_get_count( &mappings); i++ )
 	{
-		mapping *m = (mapping *)al_get( mappings, i );
-		if( wcscmp( m->seq, s ) == 0 )
+		input_mapping_t *m = (input_mapping_t *)al_get( &mappings, i );
+		if( wcscmp( m->seq, sequence ) == 0 )
 		{
-			m->seq_desc = intern(d);
-			m->command = intern(c);
+			m->command = intern(command);
 			return;
 		}
 	}
 	
-	mapping *m = malloc( sizeof( mapping ) );
-	m->seq = intern( s );
-	m->seq_desc = intern(d );
-	m->command = intern(c);
-	al_push( mappings, m );	
-}
-
-/**
-   Compare sort order for two keyboard mappings. This function is made
-   to be suitable for use with the qsort method. 
-*/
-/*
-static int mapping_compare( const void *a, const void *b )
-{
-	mapping *c = *(mapping **)a;
-	mapping *d = *(mapping **)b;
-
-//	fwprintf( stderr, L"%ls %ls\n", c->seq_desc, d->seq_desc );
-
-	return wcscmp( c->seq_desc, d->seq_desc );
-	
-}
-*/
-
-
-/**
-   Print a listing of all keybindings and a description of each
-   function. This is used by the dump-functions readline function.
-*/
-static void dump_functions()
-{
-/*	int i;
-  fwprintf( stdout, L"\n" );
-
-  qsort(current_mappings.arr, 
-  al_get_count( &mappings), 
-  sizeof( void*),
-  &mapping_compare );
-	
-  for( i=0; i<al_get_count( &mappings ); i++ )
-  {
-  mapping *m = (mapping *)al_get( &mappings, i );
-
-//			write_sequence( m->seq );
-fwprintf( stdout, 
-L"%ls: %ls\n", 
-m->seq_desc, 
-m->command );
-}
-repaint();*/
-}
-
-
-/**
-   Parse special character from the specified inputrc-style key binding. 
-
-   Control-a is expanded to 1, etc.
-*/
-
-static wchar_t *input_symbolic_sequence( const wchar_t *in )
-{
-	wchar_t *res=0;
-
-	if( !*in || *in == L'\n' )
-		return 0;
-	
-	debug( 4, L"Try to parse symbolic sequence %ls", in );
-
-	if( wcsncmp( in, CTRL_SYMBOL, wcslen(CTRL_SYMBOL) ) == 0 )
-	{
-		int has_meta=0;
-		
-		in += wcslen(CTRL_SYMBOL);
-
-		/*
-		  Control-Meta- Should be rearranged to Meta-Control, this
-		  special-case must be handled manually.
-		*/
-		if( wcsncmp( in, META_SYMBOL, wcslen(META_SYMBOL) ) == 0 )
-		{
-			in += wcslen(META_SYMBOL);
-			has_meta=1;
-		}
-		
-		wchar_t c = towlower( *in );
-		in++;		
-		if( c < L'a' || c > L'z' )
-		{
-			debug( 1, _( L"Invalid Control sequence" ) );
-			return 0;			
-		}
-		if( has_meta )
-		{
-			res = wcsdup( L"\ea" );
-			res[1]=1+c-L'a';
-		}
-		else
-		{
-			res = wcsdup( L"a" );
-			res[0]=1+c-L'a';
-		}		
-		debug( 4, L"Got control sequence %d", res[0] );
-
-	}
-	else if( wcsncmp( in, META_SYMBOL, wcslen(META_SYMBOL) ) == 0 )
-	{
-		in += wcslen(META_SYMBOL);
-		res = wcsdup( L"\e" );		
-		debug( 4, L"Got meta" );
-	}
-	else 
-	{
-		int i;
-		struct 
-		{
-			wchar_t *in;
-			char *out;
-		}
-		map[]=
-		{
-			{
-				L"rubout",
-				key_backspace
-			}
-			,
-			{
-				L"del",
-				key_dc
-			}
-			,
-			{
-				L"esc",
-				"\e"
-			}
-			,
-			{
-				L"lfd",
-				"\r"
-			}
-			,
-			{
-				L"newline",
-				"\n"
-			}
-			,
-			{
-				L"ret",
-				"\n"
-			}
-			,
-			{
-				L"return",
-				"\n"
-			}
-			,
-			{
-				L"spc",
-				" "
-			}
-			,
-			{
-				L"space",
-				" "
-			}
-			,
-			{
-				L"tab",
-				"\t"
-			}
-			,
-			{
-				0,
-				0
-			}
-		}
-		;
-		
-		for( i=0; map[i].in; i++ )
-		{
-			if( wcsncasecmp( in, map[i].in, wcslen(map[i].in) )==0 )
-			{
-				in+= wcslen( map[i].in );
-				res = str2wcs( map[i].out );
-				
-				break;
-			}
-		}
-
-		if( !res )
-		{
-			if( iswalnum( *in ) || iswpunct( *in ) )
-			{
-				res = wcsdup( L"a" );
-				*res = *in++;
-				debug( 4, L"Got character %lc", *res );
-			}	
-		}
-	}
-	if( !res )
-	{
-		debug( 1, _( L"Could not parse sequence '%ls'" ), in );
-		return 0;
-	}
-	if( !*in || *in == L'\n')
-	{
-		debug( 4, L"Finished parsing sequence" );
-		return res;
-	}
-	
-	wchar_t *res2 = input_symbolic_sequence( in );
-	if( !res2 )
-	{
-		free( res );
-		return 0;
-	}
-	wchar_t *res3 = wcsdupcat( res, res2 );
-	free( res);
-	free(res2);
-	
-	return res3;
-}
-
-/**
-   Unescape special character from the specified inputrc-style key sequence. 
-
-   \\C-a is expanded to 1, etc.
-*/
-static wchar_t *input_expand_sequence( const wchar_t *in )
-{
-	const wchar_t *in_orig=in;
-	wchar_t *res = malloc( sizeof( wchar_t)*(4*wcslen(in)+1));
-	wchar_t *out=res;
-	int error = 0;
-	
-	while( *in && !error)
-	{
-		switch( *in )
-		{
-			case L'\\':
-			{
-				in++;
-				switch( *in )
-				{
-					case L'\0':
-						error = 1;
-						break;
-												
-					case L'e':
-						*(out++)=L'\e';
-						break;
-						
-					case L'\\':
-					case L'\"':
-					case L'\'':
-						*(out++)=*in;
-						break;
-
-					case L'b':
-						*(out++)=L'\b';
-						break;
-						
-					case L'd':
-					{
-						wchar_t *str = str2wcs( key_dc );
-						wchar_t *p=str;
-						if( p )
-						{
-							while( *p )
-							{
-								*(out++)=*(p++);
-							}
-							free( str );
-						}
-						break;
-					}
-					
-					case L'f':
-						*(out++)=L'\f';
-						break;
-						
-					case L'n':
-						*(out++)=L'\n';
-						break;
-						
-					case L'r':
-						*(out++)=L'\r';
-						break;
-						
-					case L't':
-						*(out++)=L'\t';
-						break;
-						
-					case L'v':
-						*(out++)=L'\v';
-						break;
-
-						/*
-						  Parse numeric backslash escape
-						*/
-					case L'u':
-					case L'U':
-					case L'x':
-					case L'o':
-					{
-						int i;
-						wchar_t res=0;
-						int chars=2;
-						int base=16;
-					
-						switch( *in++ )
-						{
-							case L'u':
-								base=16;
-								chars=4;
-								break;
-							
-							case L'U':
-								base=16;
-								chars=8;
-								break;
-							
-							case L'x':
-								base=16;
-								chars=2;
-								break;
-							
-							case L'o':
-								base=8;
-								chars=3;
-								break;
-								
-						}
-						
-						for( i=0; i<chars; i++ )
-						{
-							int d = convert_digit( *in++, base);
-							if( d < 0 )
-							{
-								break;
-							}
-							
-							res=(res*base)|d;
-							
-						}
-						in--;
-						
-						debug( 4, 
-							   L"Got numeric key sequence %d", 
-							   res );
-						
-						*(out++) = res;
-						break;
-					}
-
-					/*
-					  Parse control sequence
-					*/
-					case L'C':
-					{
-						int has_escape = 0;
-						
-						in++;
-						/* Make sure next key is a dash*/
-						if( *in != L'-' )
-						{
-							error=1;
-							debug( 1, _( L"Invalid sequence - no dash after control\n" ) );
-							break;
-						}
-						in++;
-
-						if( (*in == L'\\') && (*(in+1)==L'e') )
-						{
-							has_escape = 1;
-							in += 2;
-							
-						}
-						
-						
-						if( (*in >= L'a') && 
-							(*in < L'a'+32) )
-						{
-							if( has_escape )
-								*(out++)=L'\e';							
-							*(out++)=*in-L'a'+1;
-							break;
-						}
-						
-						if( (*in >= L'A') && 
-							(*in < L'A'+32) )
-						{
-							if( has_escape )
-								*(out++)=L'\e';							
-							*(out++)=*in-L'A'+1;
-							break;
-						}
-						debug( 1, _( L"Invalid sequence - Control-nothing?\n" ) );
-						error = 1;
-												
-						break;
-					}
-					
-					/*
-					  Parse meta sequence
-					*/
-					case L'M':
-					{
-						in++;
-						if( *in != L'-' )
-						{
-							error=1;
-							debug( 1, _( L"Invalid sequence - no dash after meta\n" ) );
-							break;
-						}
-						if( !*(in+1) )
-						{
-							debug( 1, _( L"Invalid sequence - Meta-nothing?" ) );
-							error=1;
-							break;
-						}
-						*(out++)=L'\e';
-						
-						break;
-					}
-					
-					default:
-					{
-						*(out++)=*in;
-						break;
-					}
-					
-				}
-				
-				break;
-			}
-			default:
-			{
-				*(out++)=*in;
-				break;
-			}
-		}
-		in++;
-	}
-
-
-	
-	if( error )
-	{
-		free( res);
-		res=0;
-	}
-	else
-	{
-//		fwprintf( stderr, L"%ls translated ok\n", in_orig );
-		*out = L'\0';
-	}
-	
-	if( !error )
-	{
-		if( wcslen( res ) == 0 )
-		{
-			debug( 1, _( L"Invalid sequence - '%ls' expanded to zero characters" ), in_orig );
-			error =1;
-			res = 0;
-		}
-	}	
-
-	return res;
-}
-
-
-void input_parse_inputrc_line( wchar_t *cmd )
-{
-	wchar_t *p=cmd;
-	
-	/* Make all whitespace into space characters */
-	while( *p )
-	{
-		if( *p == L'\t' || *p == L'\r' )
-			*p=L' ';
-		p++;
-	}
-
-	/* Remove spaces at beginning/end */
-	while( *cmd == L' ' )
-		cmd++;
-	
-	p = cmd + wcslen(cmd)-1;
-	while( (p >= cmd) && (*p == L' ') )
-	{
-		*p=L'\0';
-		p--;
-	}
-		
-	/* Skip comments */
-	if( *cmd == L'#' )
-		return;
-
-	/* Skip empty lines */
-	if( *cmd == L'\0' )
-		return;
-	
-	if( wcscmp( L"$endif", cmd) == 0 )
-	{
-		if( inputrc_skip_block_count )
-		{
-			inputrc_skip_block_count--;
-/*
-  if( !inputrc_skip_block_count )
-  fwprintf( stderr, L"Stop skipping\n" );
-  else
-  fwprintf( stderr, L"Decrease skipping\n" );
-*/
-		}
-		else
-		{
-			if( inputrc_block_count )
-			{
-				inputrc_block_count--;
-//				fwprintf( stderr, L"End of active block\n" );
-			}
-			else
-			{
-				inputrc_error = 1;
-				debug( 1, 
-					   _( L"Mismatched $endif in inputrc file" ) );
-			}
-		}					
-		return;
-	}
-
-	if( wcscmp( L"$else", cmd) == 0 )
-	{
-		if( inputrc_skip_block_count )
-		{
-			if( inputrc_skip_block_count == 1 )
-			{
-				inputrc_skip_block_count--;
-				inputrc_block_count++;
-			}
-			
-		}
-		else
-		{
-			inputrc_skip_block_count++;
-			inputrc_block_count--;
-		}
-		
-		return;
-	}
-	
-	if( inputrc_skip_block_count )
-	{
-		if( wcsncmp( L"$if ", cmd, wcslen( L"$if " )) == 0 )
-			inputrc_skip_block_count++;
-//		fwprintf( stderr, L"Skip %ls\n", cmd );
-		
-		return;
-	}
-	
-	if( *cmd == L'\"' )
-	{
-
-		wchar_t *key;
-		wchar_t *val;
-		wchar_t *sequence;
-		wchar_t prev=0;
-		
-
-		cmd++;
-		key=cmd;
-		
-		for( prev=0; ;prev=*cmd,cmd++ )
-		{
-			if( !*cmd )
-			{
-				debug( 1, 
-					   _( L"Mismatched quote" ) );
-				inputrc_error = 1;
-				return;
-			}
-			
-			if(( *cmd == L'\"' ) && prev != L'\\' )
-				break;
-			
-		}
-		*cmd=0;
-		cmd++;
-		if( *cmd != L':' )
-		{
-			debug( 1, 
-				   _( L"Expected a \':\'" ) );
-			inputrc_error = 1;
-			return;
-		}
-		cmd++;
-		while( *cmd == L' ' )
-			cmd++;
-		
-		val = cmd;
-		
-		sequence = input_expand_sequence( key );
-		if( sequence )
-		{
-			add_mapping( L"global", sequence, key, val );
-			free( sequence );
-		}
-		
-		return;	
-	}
-	else if( wcsncmp( L"$include ", cmd, wcslen(L"$include ") ) == 0 )
-	{
-		wchar_t *tmp;
-		
-		cmd += wcslen( L"$include ");
-		while( *cmd == L' ' )
-			cmd++;		
-		tmp=wcsdup(cmd);
-		tmp = expand_tilde(tmp);
-		if( tmp )
-			input_read_inputrc( tmp );			
-		free(tmp);		
-		return;
-	}
-	else if( wcsncmp( L"set", cmd, wcslen( L"set" ) ) == 0 )
-    {
-		wchar_t *set, *key, *value, *end;
-		wchar_t *state;
-		
-		set = wcstok( cmd, L" \t", &state ); 
-		key =   wcstok( 0, L" \t", &state );
-		value = wcstok( 0, L" \t", &state );
-		end =   wcstok( 0, L" \t", &state );
-
-		if( wcscmp( set, L"set" ) != 0 )
-		{
-			debug( 1, _( L"I don\'t know what '%ls' means" ), set );	
-		}
-		else if( end )
-		{
-			debug( 1, _( L"Expected end of line, got '%ls'" ), end );
-			
-		}
-		else if( (!key) || (!value) )
-		{
-			debug( 1, _( L"Syntax: set KEY VALUE" ) );
-		}
-		else 
-		{
-			if( wcscmp( key, L"editing-mode" ) == 0 )
-			{
-				current_mode_mappings = get_mapping( value );
-			}
-		}
-		
-		return;
-    }
-	else if( wcsncmp( L"$if ", cmd, wcslen( L"$if " )) == 0 )
-	{
-		wchar_t *term_line = wcsdupcat( L"term=", env_get( L"TERM" ) );
-		wchar_t *term_line2 = wcsdup( term_line );
-		wchar_t *mode_line = L"mode=emacs";
-		wchar_t *app_line = L"fish";
-		
-		wchar_t *term_line2_end = wcschr( term_line2, L'-' );
-		if( term_line2_end )
-			*term_line2_end=0;
-		
-		
-		cmd += wcslen( L"$if ");
-		while( *cmd == L' ' )
-			cmd++;		
-		
-		if( (wcscmp( cmd, app_line )==0) || 
-			(wcscmp( cmd, term_line )==0) || 
-			(wcscmp( cmd, mode_line )==0) )
-		{
-//			fwprintf( stderr, L"Conditional %ls is true\n", cmd );
-			inputrc_block_count++;
-		}
-		else
-		{
-//			fwprintf( stderr, L"Conditional %ls is false\n", cmd );
-			inputrc_skip_block_count++;
-		}
-		free( term_line );
-		free( term_line2 );
-		
-		return;		
-	}
-	else 
-	{
-		/*
-		  This is a redular key binding, like 
-
-		  Control-o: kill-word
-
-		  Or at least we hope it is, since if it isn't, we have no idea what it is.
-		*/
-		
-		wchar_t *key;
-		wchar_t *val;
-		wchar_t *sequence;
-		
-		key=cmd;
-		
-		cmd = wcschr( cmd, ':' );
-		
-		if( !cmd )
-		{
-				debug( 1, 
-					   _( L"Unable to parse key binding" ) );
-				inputrc_error = 1;
-				return;
-		}
-		*cmd = 0;
-
-		cmd++;
-		
-		while( *cmd == L' ' )
-			cmd++;
-		
-		val = cmd;
-		
-		debug( 3, L"Map %ls to %ls\n", key, val );
-
-		sequence = input_symbolic_sequence( key );
-		if( sequence )
-		{
-			add_mapping( L"global", sequence, key, val );
-			free( sequence );
-		}
-				
-		return;	
-		
-	}
-	
-	debug( 1, _( L"I don\'t know what %ls means" ), cmd );	
-}
-
-/**
-   Read the specified inputrc file
-*/
-static void input_read_inputrc( wchar_t *fn )
-{
-	FILE *rc;
-	wchar_t *buff=0;
-	int buff_len=0;
-	int error=0;
-//	fwprintf( stderr, L"read %ls\n", fn );
-		
-	signal_block();
-	rc = wfopen( fn, "r" );
-	
-	if( rc )
-	{	
-		while( !feof( rc ) && (!error))
-		{
-			switch( fgetws2( &buff, &buff_len, rc ) )
-			{
-				case -1:
-				{
-					debug( 1, 
-						   _( L"Error while reading input information from file '%ls'" ),
-						   fn );
-						
-					wperror( L"fgetws2 (read_ni)" );
-					error=1;
-					break;
-				}
-					
-				default:
-				{
-					input_parse_inputrc_line( buff );
-					
-					if( inputrc_error )
-					{
-						fwprintf( stderr, L"%ls\n", buff );
-						error=1;
-					}
-				}
-			}
-		}
-		free( buff );
-		/*
-		  Don't need to check exit status of fclose on read-only stream
-		*/
-		fclose( rc );
-	}
-	signal_unblock();
-	
-	inputrc_skip_block_count=0;
-	inputrc_block_count=0;	
-}
-
-/**
-   Add a char * based character string mapping.
-*/
-static void add_terminfo_mapping( const wchar_t *mode, 
-								  const char *seq, 
-								  const wchar_t *desc, 
-								  const wchar_t *func )
-{
-	if( seq )
-	{
-		wchar_t *tmp;
-		tmp=str2wcs(seq);
-		if( tmp )
-		{
-			add_mapping( mode, tmp, desc, func );
-			free(tmp);
-		}
-	}
-	
-}
-
-/**
-   Call input_expand_sequence on seq, and add the result as a mapping
-*/
-static void add_escaped_mapping( const wchar_t *mode, 
-								 const wchar_t *seq,
-								 const wchar_t *desc, 
-								 const wchar_t *func )
-{
-	wchar_t *esc = input_expand_sequence( seq );
-	if( esc )
-	{
-		add_mapping( mode, esc, desc, func );
-		free(esc);
-	}
-}
-
-/**
-   Add bindings common to emacs and vi
-*/
-static void add_common_bindings()
-{
-	static const wchar_t *name[] =
-		{
-			L"emacs",
-			L"vi",
-			L"vi-command"
-		}
-	;
-	int i;
-	
-	/*
-	  Universal bindings
-	*/
-	for( i=0; i<3; i++ )
-	{
-		add_mapping( name[i], L"\n", L"Execute contents of commandline", L"execute" );
-		
-		/*
-		  This will make Meta-newline insert a newline, since
-		  self-insert ignored the escape character unless it is the
-		  only character of the sequence.
-		*/
-		add_mapping( name[i], L"\e\n", L"Meta-newline", L"self-insert" );
-		/*
-		  We need alternative keybidnings for arrowkeys, since
-		  terminfo sometimes specifies a different sequence than what
-		  keypresses actually generate
-		*/
-		add_mapping( name[i], L"\e[A", L"Up", L"history-search-backward" );
-		add_mapping( name[i], L"\e[B", L"Down", L"history-search-forward" );
-		add_terminfo_mapping( name[i], (key_up), L"Up", L"history-search-backward" );
-		add_terminfo_mapping( name[i], (key_down), L"Down", L"history-search-forward" );
-
-		add_mapping( name[i], L"\e[C", L"Right", L"forward-char" );
-		add_mapping( name[i], L"\e[D", L"Left", L"backward-char" );
-		add_terminfo_mapping( name[i], (key_right), L"Right", L"forward-char" );
-		add_terminfo_mapping( name[i], (key_left), L"Left", L"backward-char" );
-		
-		add_terminfo_mapping( name[i], (key_dc), L"Delete", L"delete-char" );
-		
-		add_terminfo_mapping( name[i], (key_backspace), L"Backspace", L"backward-delete-char" );
-		add_mapping( name[i], L"\x7f", L"Backspace", L"backward-delete-char" );
-		
-		add_mapping( name[i], L"\e[H", L"Home", L"beginning-of-line" );
-		add_mapping( name[i], L"\e[F", L"End", L"end-of-line" );
-		add_terminfo_mapping( name[i], (key_home), L"Home", L"beginning-of-line" );
-		add_terminfo_mapping( name[i], (key_end), L"End", L"end-of-line" );
-
-		/*
-		  We need lots of alternative keybidnings, since terminal
-		  emulators can't seem to agree on what sequence to generate,
-		  and terminfo doesn't specify what sequence should be
-		  generated
-		*/
-
-		add_mapping( name[i], L"\e\eOC", L"Alt-Right", L"nextd-or-forward-word" );
-		add_mapping( name[i], L"\e\eOD", L"Alt-Left", L"prevd-or-backward-word" );
-		add_mapping( name[i], L"\e\e[C", L"Alt-Right", L"nextd-or-forward-word" );
-		add_mapping( name[i], L"\e\e[D", L"Alt-Left", L"prevd-or-backward-word" );
-		add_mapping( name[i], L"\eO3C", L"Alt-Right", L"nextd-or-forward-word" );
-		add_mapping( name[i], L"\eO3D", L"Alt-Left", L"prevd-or-backward-word" );
-		add_mapping( name[i], L"\e[3C", L"Alt-Right", L"nextd-or-forward-word" );
-		add_mapping( name[i], L"\e[3D", L"Alt-Left", L"prevd-or-backward-word" );
-		add_mapping( name[i], L"\e[1;3C", L"Alt-Right", L"nextd-or-forward-word" );
-		add_mapping( name[i], L"\e[1;3D", L"Alt-Left", L"prevd-or-backward-word" );		
-		
-		add_mapping( name[i], L"\e\eOA", L"Alt-Up", L"history-token-search-backward" );
-		add_mapping( name[i], L"\e\eOB", L"Alt-Down", L"history-token-search-forward" );
-		add_mapping( name[i], L"\e\e[A", L"Alt-Up", L"history-token-search-backward" );
-		add_mapping( name[i], L"\e\e[B", L"Alt-Down", L"history-token-search-forward" );
-		add_mapping( name[i], L"\eO3A", L"Alt-Up", L"history-token-search-backward" );
-		add_mapping( name[i], L"\eO3B", L"Alt-Down", L"history-token-search-forward" );
-		add_mapping( name[i], L"\e[3A", L"Alt-Up", L"history-token-search-backward" );
-		add_mapping( name[i], L"\e[3B", L"Alt-Down", L"history-token-search-forward" );
-		add_mapping( name[i], L"\e[1;3A", L"Alt-Up", L"history-token-search-backward" );
-		add_mapping( name[i], L"\e[1;3B", L"Alt-Down", L"history-token-search-forward" );
-	}
-
-	/*
-	  Bindings used in emacs and vi mode, but not in vi-command mode
-	*/
-	for( i=0; i<2; i++ )
-	{		
-		add_mapping( name[i], L"\t", L"Tab", L"complete" );
-		add_escaped_mapping( name[i], (L"\\C-k"), L"Control-k", L"kill-line" );
-		add_escaped_mapping( name[i], (L"\\C-y"), L"Control-y", L"yank" );
-		add_mapping( name[i], L"", L"Any key", L"self-insert" );
-	}		
-
-}
-
-/**
-   Add emacs-specific bindings
-*/
-static void add_emacs_bindings()
-{	
-	add_escaped_mapping( L"emacs", (L"\\C-a"), L"Control-a", L"beginning-of-line" );
-	add_escaped_mapping( L"emacs", (L"\\C-e"), L"Control-e", L"end-of-line" );
-	add_escaped_mapping( L"emacs", (L"\\M-y"), L"Alt-y", L"yank-pop" );
-	add_escaped_mapping( L"emacs", (L"\\C-h"), L"Control-h", L"backward-delete-char" );
-	add_escaped_mapping( L"emacs", (L"\\C-e"), L"Control-e", L"end-of-line" );
-	add_escaped_mapping( L"emacs", (L"\\C-w"), L"Control-w", L"backward-kill-word" );
-	add_escaped_mapping( L"emacs", (L"\\C-p"), L"Control-p", L"history-search-backward" );
-	add_escaped_mapping( L"emacs", (L"\\C-n"), L"Control-n", L"history-search-forward" );
-	add_escaped_mapping( L"emacs", (L"\\C-f"), L"Control-f", L"forward-char" );
-	add_escaped_mapping( L"emacs", (L"\\C-b"), L"Control-b", L"backward-char" );
-	add_escaped_mapping( L"emacs", (L"\e\x7f"), L"Alt-backspace", L"backward-kill-word" );
-	add_escaped_mapping( L"emacs", (L"\eb"), L"Alt-b", L"backward-word" );
-	add_escaped_mapping( L"emacs", (L"\ef"), L"Alt-f", L"forward-word" );
-	add_escaped_mapping( L"emacs", (L"\ed"), L"Alt-d", L"forward-kill-word" );
-	add_terminfo_mapping( L"emacs", (key_ppage), L"Page Up", L"beginning-of-history" );
-	add_terminfo_mapping( L"emacs", (key_npage), L"Page Down", L"end-of-history" );
-	add_escaped_mapping( L"emacs", (L"\e<"), L"Alt-<", L"beginning-of-buffer" );
-	add_escaped_mapping( L"emacs", (L"\e>"), L"Alt->", L"end-of-buffer" );
-}
-
-/**
-   Add vi-specific bindings
-*/
-static void add_vi_bindings()
-{
-	add_mapping( L"vi", L"\e", L"Escape", L"bind -M vi-command" );
-	
-	add_mapping( L"vi-command", L"i", L"i", L"bind -M vi" );
-	add_mapping( L"vi-command", L"I", L"I", L"bind -M vi" );
-	add_mapping( L"vi-command", L"k", L"k", L"history-search-backward" );
-	add_mapping( L"vi-command", L"j", L"j", L"history-search-forward" );
-	add_mapping( L"vi-command", L" ", L"Space", L"forward-char" );
-	add_mapping( L"vi-command", L"l", L"l", L"forward-char" );
-	add_mapping( L"vi-command", L"h", L"h", L"backward-char" );
-	add_mapping( L"vi-command", L"$", L"$", L"end-of-line" );
-	add_mapping( L"vi-command", L"^", L"^", L"beginning-of-line" );
-	add_mapping( L"vi-command", L"0", L"0", L"beginning-of-line" );
-
-	add_mapping( L"vi-command", L"b", L"b", L"backward-word" );
-	add_mapping( L"vi-command", L"B", L"B", L"backward-word" );
-	add_mapping( L"vi-command", L"w", L"w", L"forward-word" );
-	add_mapping( L"vi-command", L"W", L"W", L"forward-word" );
-
-	add_mapping( L"vi-command", L"x", L"x", L"delete-char" );
-
-	add_mapping( L"vi-command", L"1", L"1", L"vi-arg-digit" );
-	add_mapping( L"vi-command", L"2", L"2", L"vi-arg-digit" );
-	add_mapping( L"vi-command", L"3", L"3", L"vi-arg-digit" );
-	add_mapping( L"vi-command", L"4", L"4", L"vi-arg-digit" );
-	add_mapping( L"vi-command", L"5", L"5", L"vi-arg-digit" );
-	add_mapping( L"vi-command", L"6", L"6", L"vi-arg-digit" );
-	add_mapping( L"vi-command", L"7", L"7", L"vi-arg-digit" );
-	add_mapping( L"vi-command", L"8", L"8", L"vi-arg-digit" );
-	add_mapping( L"vi-command", L"9", L"9", L"vi-arg-digit" );
-
-
-	add_mapping( L"vi-command", L"d", L"d", L"vi-delete-to" );
-	add_mapping( L"vi-command", L"D", L"D", L"vi-delete-to" );
-
-
-/*
-  movement ("h", "l"), word movement
-  ("b", "B", "w", "W", "e", "E"), moving to beginning and end of line
-  ("0", "^", "$"), and inserting and appending ("i", "I", "a", "A"),
-  changing and deleting ("c", "C", "d", "D"), character replacement and
-  deletion ("r", "x"), and finally yanking and pasting ("y", "p")
-*/
+	input_mapping_t *m = malloc( sizeof( input_mapping_t ) );
+	m->seq = intern( sequence );
+	m->command = intern(command);
+	al_push( &mappings, m );	
 	
 }
 
@@ -1395,15 +306,7 @@ static int interrupt_handler()
 	  Reap stray processes, including printing exit status messages
 	*/
 	if( job_reap( 1 ) )
-		repaint();
-	
-	/*
-	  Check if we should exit
-	*/
-	if( exit_status() )
-	{
-		return R_EXIT;
-	}
+		reader_repaint_needed();
 	
 	/*
 	  Tell the reader an event occured
@@ -1416,13 +319,11 @@ static int interrupt_handler()
 		return 3;
 	}
 
-	return R_WINCH;	
+	return R_NULL;	
 }
 
 int input_init()
 {
-	wchar_t *fn;
-	
 	if( is_init )
 		return 1;
 	
@@ -1435,193 +336,97 @@ int input_init()
 		debug( 0, _( L"Could not set up terminal" ) );
 		exit(1);
 	}
-	hash_init( &all_mappings, &hash_wcs_func, &hash_wcs_cmp );
+	output_set_term( env_get( L"TERM" ) );
 	
-	/* 
-	   Add the default key bindings.
-
-	   Maybe some/most of these should be moved to the keybindings file?
-	*/
+	input_terminfo_init();
 
 	/*
-	  Many terminals (xterm, screen, etc.) have two different valid escape
-	  sequences for arrow keys. One which is defined in terminfo/termcap
-	  and one which is actually emitted by the arrow keys. The logic
-	  escapes me, but I put in these hardcodes here for that reason.
-	*/	
-
-	add_common_bindings();
-	add_emacs_bindings();
-	add_vi_bindings();
-	
-	current_mode_mappings = (array_list_t *)hash_get( &all_mappings, 
-													  L"emacs" );
-
-
-	fn = env_get( L"INPUTRC" );
-
-	if( !fn )
-		fn = L"~/.inputrc";
-	
-	fn = expand_tilde( wcsdup( fn ));
-
-	if( fn )
-	{	
-		input_read_inputrc( fn );
-		free(fn);
+	  If we have no keybindings, add a few simple defaults
+	*/
+	if( !al_get_count( &mappings ) )
+	{
+		input_mapping_add( L"", L"self-insert" );
+		input_mapping_add( L"\n", L"execute" );
+		input_mapping_add( L"\t", L"complete" );
+		input_mapping_add( L"\x3", L"commandline \"\"" );
+		input_mapping_add( L"\x4", L"exit" );
+		input_mapping_add( L"\x5", L"bind" );
 	}
-	
-	current_application_mappings = (array_list_t *)hash_get( &all_mappings,
-															 L"fish" );
-	global_mappings = (array_list_t *)hash_get( &all_mappings, 
-												L"global" );
-	
+
 	return 1;
-	
 }
-
-/**
-   Free memory used by the specified mapping
-*/
-static void destroy_mapping( void *key, void *val )
-{
-	array_list_t *mappings = (array_list_t *)val;
-	
-	al_foreach( mappings, &free );		
-	al_destroy( mappings );
-
-	free((void *)key);
-	free((void *)val);	
-}
-
 
 void input_destroy()
 {
 	if( !is_init )
 		return;
 	
+
 	is_init=0;
 	
+	al_foreach( &mappings, &free );		
+	al_destroy( &mappings );
+
 	input_common_destroy();
-	
-	hash_foreach( &all_mappings, &destroy_mapping );	
-	hash_destroy( &all_mappings );
 	
 	if( del_curterm( cur_term ) == ERR )
 	{
 		debug( 0, _(L"Error while closing terminfo") );
 	}
+
+	input_terminfo_destroy();
 	
 }
 
 /**
    Perform the action of the specified binding
 */
-static wint_t input_exec_binding( mapping *m, const wchar_t *seq )
+static wint_t input_exec_binding( input_mapping_t *m, const wchar_t *seq )
 {
-	int i;
-	
-//	fwprintf( stderr, L"Binding %ls\n", m->command );
-	wchar_t code = input_get_code( m->command );
+	wchar_t code = input_function_get_code( m->command );
 	if( code != -1 )
 	{				
 		switch( code )
 		{
 
-			case R_DUMP_FUNCTIONS:
-			{
-				for( i=0; i<repeat_count; i++ )
-					dump_functions();
-				repeat_count = 1;				
-				return R_NULL;							
-			}
-
 			case R_SELF_INSERT:
 			{
-				int idx = 0;
-
-				if( seq[0] == L'\e' && seq[1] )
-				{
-					idx = 1;
-				}
-				
-				for( i=1; i<repeat_count; i++ )
-					input_unreadch( seq[idx] );							
-				repeat_count = 1;				
-				return seq[idx];							
-			}
-
-			case R_VI_ARG_DIGIT:
-			{
-				int repeat = seq[0]-L'0';
-				if( repeat > 0 && repeat <= 9 )
-					repeat_count *= repeat;
-				
-				return R_NULL;
+				return seq[0];
 			}
 			
-			case R_VI_DELETE_TO:
-			{
-				first_command = R_VI_DELETE_TO;
-				return R_NULL;
-			}
-
 			default:
 			{
-				
-				if( first_command )
-				{
-					switch( first_command )
-					{
-						case R_VI_DELETE_TO:
-						{
-						
-							break;
-							
-						}
-					}
-				}
-				else
-				{
-					for( i=1; i<repeat_count; i++ )
-					{
-						input_unreadch( code );							
-					}
-				}
-				
-				repeat_count = 1;				
-				first_command = 0;
 				return code;
 			}
 			
-		}	
+		}
 	}
 	else
 	{
-
+		
 		/*
 		  This key sequence is bound to a command, which
 		  is sent to the parser for evaluation.
 		*/
-		
-		/*
-		  First clear the commandline. Do not issue a linebreak, since
-		  many shortcut commands do not procuce output.
-		*/
-		write( 1, "\r", 1 );
-		tputs(clr_eol,1,&writeb);
-		
+		int last_status = proc_get_last_status();
+	  		
 		eval( m->command, 0, TOP );
-
+		
+		proc_set_last_status( last_status );
+		
 		/*
 		  We still need to return something to the caller, R_NULL
-		  tells the reader that no key press needs to be handled, but
-		  it might be a good idea to redraw.
+		  tells the reader that no key press needs to be handled, 
+		  and no repaint is needed.
+
+		  Bindings that produce output should emit a R_REPAINT
+		  function by calling 'commandline -f repaint' to tell
+		  fish that a repaint is in order. 
 		*/
 		
 		return R_NULL;
+
 	}
-	
 }
 
 
@@ -1629,13 +434,16 @@ static wint_t input_exec_binding( mapping *m, const wchar_t *seq )
 /**
    Try reading the specified function mapping
 */
-static wint_t input_try_mapping( mapping *m)
+static wint_t input_try_mapping( input_mapping_t *m)
 {
 	int j, k;
 	wint_t c=0;
 
+	/*
+	  Check if the actual function code of this mapping is on the stack
+	 */
 	c = input_common_readch( 0 );
-	if( c == input_get_code( m->command ) )
+	if( c == input_function_get_code( m->command ) )
 	{
 		return input_exec_binding( m, m->seq );
 	}
@@ -1643,8 +451,9 @@ static wint_t input_try_mapping( mapping *m)
 	
 	if( m->seq != 0 )
 	{
+
 		for( j=0; m->seq[j] != L'\0' && 
-				 m->seq[j] == (c=input_common_readch( j>0 )); j++ )
+			     m->seq[j] == (c=input_common_readch( j>0 )); j++ )
 			;
 		
 		if( m->seq[j] == L'\0' )
@@ -1662,7 +471,7 @@ static wint_t input_try_mapping( mapping *m)
 				input_unreadch( m->seq[k] );
 			}
 		}
-	}		
+	}
 	return 0;
 		
 }
@@ -1671,7 +480,6 @@ void input_unreadch( wint_t ch )
 {
 	input_common_unreadch( ch );
 }
-
 
 wint_t input_readch()
 {
@@ -1684,66 +492,403 @@ wint_t input_readch()
 	  Clear the interrupted flag
 	*/
 	reader_interrupted();
-
-	/*
-	  Search for sequence in various mapping tables
-	*/
 	
+	/*
+	  Search for sequence in mapping tables
+	*/
+
 	while( 1 )
 	{
-		
-		if( current_application_mappings )
-		{		
-			for( i=0; i<al_get_count( current_application_mappings); i++ )
-			{
-				wint_t res = input_try_mapping( (mapping *)al_get( current_application_mappings, i ));		
-				if( res )
-					return res;		
-			}
-		}
-		
-		if( global_mappings )
+		input_mapping_t *generic = 0;
+		for( i=0; i<al_get_count( &mappings); i++ )
 		{
-			for( i=0; i<al_get_count( global_mappings); i++ )
+			input_mapping_t *m = (input_mapping_t *)al_get( &mappings, i );
+			wint_t res = input_try_mapping( m );		
+			if( res )
+				return res;
+			
+			if( wcslen( m->seq) == 0 )
 			{
-				wint_t res = input_try_mapping( (mapping *)al_get( global_mappings, i ));		
-				if( res )
-					return res;		
+				generic = m;
 			}
-		}
-		
-		if( current_mode_mappings )
-		{
-			for( i=0; i<al_get_count( current_mode_mappings); i++ )
-			{
-				wint_t res = input_try_mapping( (mapping *)al_get( current_mode_mappings, i ));		
-				if( res )
-					return res;		
-			}
+			
 		}
 		
 		/*
-		  No matching exact mapping, try to find the generic mapping.
+		  No matching exact mapping, try to find generic mapping.
 		*/
-		
-		for( i=0; i<al_get_count( current_mode_mappings); i++ )
-		{
-			mapping *m = (mapping *)al_get( current_mode_mappings, i );
-			if( wcslen( m->seq) == 0 )
-			{	
-				wchar_t arr[2]=
-					{
-						0, 
-						0
-					}
-				;
-				arr[0] = input_common_readch(0);
+
+		if( generic )
+		{	
+			wchar_t arr[2]=
+				{
+					0, 
+					0
+				}
+			;
+			arr[0] = input_common_readch(0);
+			
+			return input_exec_binding( generic, arr );				
+		}
 				
-				return input_exec_binding( m, arr );				
+		/*
+		  No action to take on specified character, ignore it
+		  and move to next one.
+		*/
+		input_common_readch( 0 );	}	
+}
+
+void input_mapping_get_names( array_list_t *list )
+{
+	int i;
+	
+	for( i=0; i<al_get_count( &mappings ); i++ )
+	{
+		input_mapping_t *m = (input_mapping_t *)al_get( &mappings, i );
+		al_push( list, m->seq );
+	}
+	
+}
+
+
+int input_mapping_erase( const wchar_t *sequence )
+{
+	int ok = 0;
+	int i;
+	size_t sz = al_get_count( &mappings );
+	
+	for( i=0; i<sz; i++ )
+	{
+		input_mapping_t *m = (input_mapping_t *)al_get( &mappings, i );
+		if( !wcscmp( sequence, m->seq ) )
+		{
+			if( i != (sz-1 ) )
+			{
+				al_set( &mappings, i, al_get( &mappings, sz -1 ) );
 			}
+			al_truncate( &mappings, sz-1 );
+			ok = 1;
+			
+			free( m );
+			
+			break;
+			
 		}
 		
-		input_common_readch( 0 );
+	}
 
-	}	
+	return ok;
+	
 }
+
+const wchar_t *input_mapping_get( const wchar_t *sequence )
+{
+	int i;
+	size_t sz = al_get_count( &mappings );
+	
+	for( i=0; i<sz; i++ )
+	{
+		input_mapping_t *m = (input_mapping_t *)al_get( &mappings, i );
+		if( !wcscmp( sequence, m->seq ) )
+		{
+			return m->command;
+		}
+	}
+	return 0;
+}
+
+/**
+   Add all terminfo mappings
+ */
+static void input_terminfo_init()
+{
+	terminfo_mappings = al_halloc( 0 );
+	
+
+       TERMINFO_ADD(key_a1);
+       TERMINFO_ADD(key_a3);
+       TERMINFO_ADD(key_b2);
+       TERMINFO_ADD(key_backspace);
+       TERMINFO_ADD(key_beg);
+       TERMINFO_ADD(key_btab);
+       TERMINFO_ADD(key_c1);
+       TERMINFO_ADD(key_c3);
+       TERMINFO_ADD(key_cancel);
+       TERMINFO_ADD(key_catab);
+       TERMINFO_ADD(key_clear);
+       TERMINFO_ADD(key_close);
+       TERMINFO_ADD(key_command);
+       TERMINFO_ADD(key_copy);
+       TERMINFO_ADD(key_create);
+       TERMINFO_ADD(key_ctab);
+       TERMINFO_ADD(key_dc);
+       TERMINFO_ADD(key_dl);
+       TERMINFO_ADD(key_down);
+       TERMINFO_ADD(key_eic);
+       TERMINFO_ADD(key_end);
+       TERMINFO_ADD(key_enter);
+       TERMINFO_ADD(key_eol);
+       TERMINFO_ADD(key_eos);
+       TERMINFO_ADD(key_exit);
+       TERMINFO_ADD(key_f0);
+       TERMINFO_ADD(key_f1);
+       TERMINFO_ADD(key_f2);
+       TERMINFO_ADD(key_f3);
+       TERMINFO_ADD(key_f4);
+       TERMINFO_ADD(key_f5);
+       TERMINFO_ADD(key_f6);
+       TERMINFO_ADD(key_f7);
+       TERMINFO_ADD(key_f8);
+       TERMINFO_ADD(key_f9);
+       TERMINFO_ADD(key_f10);
+       TERMINFO_ADD(key_f11);
+       TERMINFO_ADD(key_f12);
+       TERMINFO_ADD(key_f13);
+       TERMINFO_ADD(key_f14);
+       TERMINFO_ADD(key_f15);
+       TERMINFO_ADD(key_f16);
+       TERMINFO_ADD(key_f17);
+       TERMINFO_ADD(key_f18);
+       TERMINFO_ADD(key_f19);
+       TERMINFO_ADD(key_f20);
+       /*
+	 I know of no keyboard with more than 20 function keys, so
+	 adding the rest here makes very little sense, since it will
+	 take up a lot of room in any listings (like tab completions),
+	 but with no benefit.
+	*/
+       /*
+       TERMINFO_ADD(key_f21);
+       TERMINFO_ADD(key_f22);
+       TERMINFO_ADD(key_f23);
+       TERMINFO_ADD(key_f24);
+       TERMINFO_ADD(key_f25);
+       TERMINFO_ADD(key_f26);
+       TERMINFO_ADD(key_f27);
+       TERMINFO_ADD(key_f28);
+       TERMINFO_ADD(key_f29);
+       TERMINFO_ADD(key_f30);
+       TERMINFO_ADD(key_f31);
+       TERMINFO_ADD(key_f32);
+       TERMINFO_ADD(key_f33);
+       TERMINFO_ADD(key_f34);
+       TERMINFO_ADD(key_f35);
+       TERMINFO_ADD(key_f36);
+       TERMINFO_ADD(key_f37);
+       TERMINFO_ADD(key_f38);
+       TERMINFO_ADD(key_f39);
+       TERMINFO_ADD(key_f40);
+       TERMINFO_ADD(key_f41);
+       TERMINFO_ADD(key_f42);
+       TERMINFO_ADD(key_f43);
+       TERMINFO_ADD(key_f44);
+       TERMINFO_ADD(key_f45);
+       TERMINFO_ADD(key_f46);
+       TERMINFO_ADD(key_f47);
+       TERMINFO_ADD(key_f48);
+       TERMINFO_ADD(key_f49);
+       TERMINFO_ADD(key_f50);
+       TERMINFO_ADD(key_f51);
+       TERMINFO_ADD(key_f52);
+       TERMINFO_ADD(key_f53);
+       TERMINFO_ADD(key_f54);
+       TERMINFO_ADD(key_f55);
+       TERMINFO_ADD(key_f56);
+       TERMINFO_ADD(key_f57);
+       TERMINFO_ADD(key_f58);
+       TERMINFO_ADD(key_f59);
+       TERMINFO_ADD(key_f60);
+       TERMINFO_ADD(key_f61);
+       TERMINFO_ADD(key_f62);
+       TERMINFO_ADD(key_f63);*/
+       TERMINFO_ADD(key_find);
+       TERMINFO_ADD(key_help);
+       TERMINFO_ADD(key_home);
+       TERMINFO_ADD(key_ic);
+       TERMINFO_ADD(key_il);
+       TERMINFO_ADD(key_left);
+       TERMINFO_ADD(key_ll);
+       TERMINFO_ADD(key_mark);
+       TERMINFO_ADD(key_message);
+       TERMINFO_ADD(key_move);
+       TERMINFO_ADD(key_next);
+       TERMINFO_ADD(key_npage);
+       TERMINFO_ADD(key_open);
+       TERMINFO_ADD(key_options);
+       TERMINFO_ADD(key_ppage);
+       TERMINFO_ADD(key_previous);
+       TERMINFO_ADD(key_print);
+       TERMINFO_ADD(key_redo);
+       TERMINFO_ADD(key_reference);
+       TERMINFO_ADD(key_refresh);
+       TERMINFO_ADD(key_replace);
+       TERMINFO_ADD(key_restart);
+       TERMINFO_ADD(key_resume);
+       TERMINFO_ADD(key_right);
+       TERMINFO_ADD(key_save);
+       TERMINFO_ADD(key_sbeg);
+       TERMINFO_ADD(key_scancel);
+       TERMINFO_ADD(key_scommand);
+       TERMINFO_ADD(key_scopy);
+       TERMINFO_ADD(key_screate);
+       TERMINFO_ADD(key_sdc);
+       TERMINFO_ADD(key_sdl);
+       TERMINFO_ADD(key_select);
+       TERMINFO_ADD(key_send);
+       TERMINFO_ADD(key_seol);
+       TERMINFO_ADD(key_sexit);
+       TERMINFO_ADD(key_sf);
+       TERMINFO_ADD(key_sfind);
+       TERMINFO_ADD(key_shelp);
+       TERMINFO_ADD(key_shome);
+       TERMINFO_ADD(key_sic);
+       TERMINFO_ADD(key_sleft);
+       TERMINFO_ADD(key_smessage);
+       TERMINFO_ADD(key_smove);
+       TERMINFO_ADD(key_snext);
+       TERMINFO_ADD(key_soptions);
+       TERMINFO_ADD(key_sprevious);
+       TERMINFO_ADD(key_sprint);
+       TERMINFO_ADD(key_sr);
+       TERMINFO_ADD(key_sredo);
+       TERMINFO_ADD(key_sreplace);
+       TERMINFO_ADD(key_sright);
+       TERMINFO_ADD(key_srsume);
+       TERMINFO_ADD(key_ssave);
+       TERMINFO_ADD(key_ssuspend);
+       TERMINFO_ADD(key_stab);
+       TERMINFO_ADD(key_sundo);
+       TERMINFO_ADD(key_suspend);
+       TERMINFO_ADD(key_undo);
+       TERMINFO_ADD(key_up);
+}
+
+static void input_terminfo_destroy()
+{
+	
+	if( terminfo_mappings )
+	{
+		halloc_free( terminfo_mappings );
+	}
+}
+
+const wchar_t *input_terminfo_get_sequence( const wchar_t *name )
+{
+	const char *res = 0;
+	int i;	
+	static string_buffer_t *buff = 0;
+	int err = ENOENT;
+	
+	CHECK( name, 0 );
+	input_init();
+	
+	for( i=0; i<al_get_count( terminfo_mappings ); i++ )
+	{
+		terminfo_mapping_t *m = (terminfo_mapping_t *)al_get( terminfo_mappings, i );
+		
+		if( !wcscmp( name, m->name ) )
+		{
+			res = m->seq;
+			err = EILSEQ;
+			break;
+		}
+	}
+	
+	if( !res )
+	{
+		errno = err;
+		return 0;
+	}
+	
+	if( !buff )
+	{
+		buff = sb_halloc( global_context );
+	}
+	
+	sb_clear( buff );
+	sb_printf( buff, L"%s", res );
+
+	return (wchar_t *)buff->buff;
+		
+}
+
+const wchar_t *input_terminfo_get_name( const wchar_t *seq )
+{
+	int i;	
+	static string_buffer_t *buff = 0;
+
+	CHECK( seq, 0 );
+	input_init();
+		
+	if( !buff )
+	{
+		buff = sb_halloc( global_context );
+	}
+	
+	for( i=0; i<al_get_count( terminfo_mappings ); i++ )
+	{
+		terminfo_mapping_t *m = (terminfo_mapping_t *)al_get( terminfo_mappings, i );
+		
+		if( !m->seq )
+		{
+			continue;
+		}
+		
+		sb_clear( buff );
+		sb_printf( buff, L"%s", m->seq );
+		
+		if( !wcscmp( seq, (wchar_t *)buff->buff ) )
+		{
+			return m->name;
+		}
+	}
+	
+	return 0;
+	
+}
+
+void input_terminfo_get_names( array_list_t *lst, int skip_null )
+{
+	int i;	
+
+	CHECK( lst, );
+	input_init();
+		
+	for( i=0; i<al_get_count( terminfo_mappings ); i++ )
+	{
+		terminfo_mapping_t *m = (terminfo_mapping_t *)al_get( terminfo_mappings, i );
+		
+		if( skip_null && !m->seq )
+		{
+			continue;
+		}
+		al_push( lst, m->name );
+	}
+}
+
+void input_function_get_names( array_list_t *lst )
+{
+	int i;	
+
+	CHECK( lst, );
+		
+	for( i=0; i<(sizeof(name_arr)/sizeof(wchar_t *)); i++ )
+	{
+		al_push( lst, name_arr[i] );
+	}
+}
+
+wchar_t input_function_get_code( const wchar_t *name )
+{
+
+	int i;
+	for( i = 0; i<(sizeof( code_arr )/sizeof(wchar_t)) ; i++ )
+	{
+		if( wcscmp( name, name_arr[i] ) == 0 )
+		{
+			return code_arr[i];
+		}
+	}
+	return -1;		
+}
+

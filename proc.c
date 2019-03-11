@@ -190,7 +190,6 @@ void proc_destroy()
 void proc_set_last_status( int s )
 {
 	last_status = s;
-//	debug( 0, L"Set last status to %d\n", s );
 }
 
 int proc_get_last_status()
@@ -489,7 +488,6 @@ void job_handle_signal ( int signal, siginfo_t *info, void *con )
 	got_signal = 1;
 
 //	write( 2, "got signal\n", 11 );
-	
 
 	while(1)
 	{
@@ -847,7 +845,6 @@ static void read_try( job_t *j )
 		if( d->io_mode == IO_BUFFER )
 		{
 			buff=d;
-			
 		}
 	}
 	
@@ -884,6 +881,15 @@ static void read_try( job_t *j )
 }
 
 
+/**
+   Give ownership of the terminal to the specified job. 
+
+   \param j The job to give the terminal to.
+
+   \param cont If this variable is set, we are giving back control to
+   a job that has previously been stopped. In that case, we need to
+   set the terminal attributes to those saved in the job.
+ */
 static int terminal_give_to_job( job_t *j, int cont )
 {
 	
@@ -913,7 +919,9 @@ static int terminal_give_to_job( job_t *j, int cont )
 }
 
 /**
-   Returns contol of the terminal to the shell
+   Returns contol of the terminal to the shell, and saves the terminal
+   attribute state to the job, so that we can restore the terminal
+   ownership to the job at a later time .  
 */
 static int terminal_return_from_job( job_t *j)
 {
@@ -1033,7 +1041,10 @@ void job_continue (job_t *j, int cont)
 					got_signal = 0;
 					quit = job_is_stopped( j ) || job_is_completed( j );
 				}
-				while( got_signal && !quit );
+
+				while( got_signal && !quit )
+					;
+
 				if( !quit )
 				{
 					
@@ -1077,7 +1088,6 @@ void job_continue (job_t *j, int cont)
 								}
 								
 							}
-							
 							break;
 						}
 								

@@ -59,7 +59,7 @@ struct winsize
 	unsigned short ws_row;	
 	unsigned short ws_col;
 }
-	;
+;
 
 #endif
 
@@ -70,6 +70,18 @@ struct winsize
    behaves strangely. This fallback seems to fix things.
 */
 int tputs(const char *str, int affcnt, int (*fish_putc)(tputs_arg_t));
+
+#endif
+
+#ifdef TPARM_SOLARIS_KLUDGE
+
+/**
+   Solaris tparm has a set fixed of paramters in it's curses implementation,
+   work around this here.
+*/
+
+#define tparm tparm_solaris_kludge
+char *tparm_solaris_kludge( char *str, ... );
 
 #endif
 
@@ -271,8 +283,8 @@ long convert_digit( wchar_t d, int base );
    supported.
 */
 long wcstol(const wchar_t *nptr,
-			wchar_t **endptr,
-			int base);
+	    wchar_t **endptr,
+	    int base);
 
 #endif
 #ifndef HAVE_WCSLCAT
@@ -325,7 +337,7 @@ struct drand48_data
 	*/
 	unsigned int seed;
 }
-	;
+;
 
 /**
    Fallback implementation of lrand48_r. Internally uses rand_r, so it is pretty weak.
@@ -370,8 +382,8 @@ char * textdomain( const char * domainname );
    Fallback implementation of dcgettext. Just returns the original string.
 */
 char * dcgettext ( const char * domainname, 
-				   const char * msgid,
-				   int category );
+		   const char * msgid,
+		   int category );
 
 #endif
 
@@ -401,7 +413,7 @@ struct option
 	int *flag;
 	int val;	
 }
-	;
+;
 
 #ifndef no_argument
 #define	no_argument 0
@@ -416,12 +428,18 @@ struct option
 #endif
 
 int getopt_long(int argc, 
-				char * const argv[],
-				const char *optstring,
-				const struct option *longopts, 
-				int *longindex);
+		char * const argv[],
+		const char *optstring,
+		const struct option *longopts, 
+		int *longindex);
+
+#endif
+
+#ifndef HAVE_SYSCONF
+
+#define _SC_ARG_MAX 1
+long sysconf(int name);
 
 #endif
 
 #endif
-

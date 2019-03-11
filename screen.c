@@ -54,6 +54,11 @@ efficient way for transforming that to the desired screen content.
 #include "env.h"
 
 /**
+   The number of characters to indent new blocks
+ */
+#define INDENT_STEP 4
+
+/**
    Ugly kludge. The internal buffer used to store output of
    tputs. Since tputs external function can only take an integer and
    not a pointer as parameter we need a static storage buffer.
@@ -104,7 +109,7 @@ static int calc_prompt_width( wchar_t *prompt )
 
 	for( j=0; prompt[j]; j++ )
 	{
-		if( prompt[j] == L'\e' )
+		if( prompt[j] == L'\x1b' )
 		{
 			/*
 			  This is the start of an escape code. Try to guess it's width.
@@ -182,7 +187,7 @@ static int calc_prompt_width( wchar_t *prompt )
 				  seem to do anything these days.
 				*/
 				len = maxi( try_sequence( tparm(esc2[l]), &prompt[j] ),
-							try_sequence( esc2[l], &prompt[j] ));
+					    try_sequence( esc2[l], &prompt[j] ));
 					
 				if( len )
 				{
@@ -196,12 +201,12 @@ static int calc_prompt_width( wchar_t *prompt )
 				if( prompt[j+1] == L'k' )
 				{
 					wchar_t *term_name = env_get( L"TERM" );
-					if( term_name && wcscmp( term_name, L"screen" ) == 0 )
+					if( term_name && wcsstr( term_name, L"screen" ) == term_name )
 					{
 						wchar_t *end;
 						j+=2;
 						found = 1;
-						end = wcsstr( &prompt[j], L"\e\\" );
+						end = wcsstr( &prompt[j], L"\x1b\\" );
 						if( end )
 						{
 							/*
@@ -246,7 +251,7 @@ static int calc_prompt_width( wchar_t *prompt )
 static int room_for_usec(struct stat *st)
 {
 	int res = ((&(st->st_atime) + 2) == &(st->st_mtime) &&
-			   (&(st->st_atime) + 4) == &(st->st_ctime));
+		   (&(st->st_atime) + 4) == &(st->st_ctime));
 	return res;
 }
 
@@ -329,7 +334,7 @@ static void s_check_status( screen_t *s)
 		
 		int prev_line = s->actual_cursor[1];
 		write( 1, "\r", 1 );
-		s_reset( s );
+		s_reset( s, 0 );
 		s->actual_cursor[1] = prev_line;
 	}
 }
@@ -391,10 +396,10 @@ static line_t *s_create_line()
    than the screen width. 
 */
 static void s_desired_append_char( screen_t *s, 
-								   wchar_t b,
-								   int c, 
-								   int indent,
-								   int prompt_width )
+				   wchar_t b,
+				   int c, 
+				   int indent,
+				   int prompt_width )
 {
 	int line_no = s->desired_cursor[1];
 	
@@ -407,7 +412,7 @@ static void s_desired_append_char( screen_t *s,
 			al_push( &s->desired, current );
 			s->desired_cursor[1]++;
 			s->desired_cursor[0]=0;
-			for( i=0; i < prompt_width+indent*4; i++ )
+			for( i=0; i < prompt_width+indent*INDENT_STEP; i++ )
 			{
 				s_desired_append_char( s, L' ', 0, indent, prompt_width );
 			}
@@ -576,7 +581,7 @@ static void s_set_color( screen_t *s, buffer_t *b, int c )
 	s_writeb_buffer = b;
 	
 	set_color( highlight_get_color( c & 0xffff ),
-			   highlight_get_color( (c>>16)&0xffff ) );
+		   highlight_get_color( (c>>16)&0xffff ) );
 	
 	output_set_writer( writer_old );
 	
@@ -653,7 +658,7 @@ static void s_update( screen_t *scr, wchar_t *prompt )
 		need_clear = 1;
 		s_move( scr, &output, 0, 0 );
 		scr->actual_width = screen_width;
-		s_reset( scr );
+		s_reset( scr, 0 );
 	}
 	
 	if( wcscmp( prompt, (wchar_t *)scr->actual_prompt.buff ) )
@@ -754,13 +759,19 @@ static void s_update( screen_t *scr, wchar_t *prompt )
 	
 }
 
+static int is_dumb()
+{
+	return ( !cursor_up || !cursor_down || !cursor_left || !cursor_right );
+}
+
+
 
 void s_write( screen_t *s,
-			  wchar_t *prompt,
-			  wchar_t *b, 
-			  int *c, 
-			  int *indent,
-			  int cursor )
+	      wchar_t *prompt,
+	      wchar_t *b, 
+	      int *c, 
+	      int *indent,
+	      int cursor )
 {
 	int i;
 	int cursor_arr[2];
@@ -768,11 +779,33 @@ void s_write( screen_t *s,
 	int prompt_width;
 	int screen_width;
 
+	int max_line_width = 0;
+	int current_line_width = 0;
+	
 	CHECK( s, );
 	CHECK( prompt, );
 	CHECK( b, );
 	CHECK( c, );
 	CHECK( indent, );
+
+	/*
+	  If we are using a dumb terminal, don't try any fancy stuff,
+	  just print out the text.
+	 */
+	if( is_dumb() )
+	{
+		char *prompt_narrow = wcs2str( prompt );
+		char *buffer_narrow = wcs2str( b );
+		
+		write( 1, "\r", 1 );
+		write( 1, prompt_narrow, strlen( prompt_narrow ) );
+		write( 1, buffer_narrow, strlen( buffer_narrow ) );
+
+		free( prompt_narrow );
+		free( buffer_narrow );
+		
+		return;
+	}
 	
 	prompt_width = calc_prompt_width( prompt );
 	screen_width = common_get_width();
@@ -780,29 +813,67 @@ void s_write( screen_t *s,
 	s_check_status( s );
 
 	/*
-	  Ignore huge prompts on small screens
+	  Ignore prompts wider than the screen - only print a two
+	  character placeholder...
+
+	  It would be cool to truncate the prompt, but because it can
+	  contain escape sequences, this is harder than you'd think.
 	*/
-	if( prompt_width > (screen_width - 8) )
+	if( prompt_width >= screen_width )
 	{
-		prompt = L"";
-		prompt_width = 0;
+		prompt = L"> ";
+		prompt_width = 2;
 	}
 	
 	/*
-	  Ignore impossibly small screens
+	  Completely ignore impossibly small screens
 	*/
 	if( screen_width < 4 )
 	{
 		return;
 	}
 
+	/*
+	  Check if we are overflowing
+	 */
+
+	for( i=0; b[i]; i++ )
+	{
+		if( b[i] == L'\n' )
+		{
+			if( current_line_width > max_line_width )
+				max_line_width = current_line_width;
+			current_line_width = indent[i]*INDENT_STEP;
+		}
+		else
+		{
+			current_line_width += wcwidth(b[i]);
+		}
+	}
+	if( current_line_width > max_line_width )
+		max_line_width = current_line_width;
+
 	s_reset_arr( &s->desired );
 	s->desired_cursor[0] = s->desired_cursor[1] = 0;
-	
-	for( i=0; i<prompt_width; i++ )
+
+	/*
+	  If overflowing, give the prompt its own line to improve the
+	  situation.
+	 */
+	if( max_line_width + prompt_width >= screen_width )
 	{
-		s_desired_append_char( s, L' ', 0, 0, prompt_width );
+		s_desired_append_char( s, L'\n', 0, 0, 0 );
+		prompt_width=0;
 	}
+	else
+	{
+		for( i=0; i<prompt_width; i++ )
+		{
+			s_desired_append_char( s, L' ', 0, 0, prompt_width );
+		}
+	}
+	
+
 	
 	for( i=0; b[i]; i++ )
 	{
@@ -820,10 +891,10 @@ void s_write( screen_t *s,
 		}
 		
 		s_desired_append_char( s, b[i], col, indent[i], prompt_width );
-
+		
 		if( i== cursor && s->desired_cursor[1] != cursor_arr[1] && b[i] != L'\n' )
 		{
-			/**
+			/*
 			   Ugh. We are placed exactly at the wrapping point of a
 			   wrapped line, move cursor to the line below so the
 			   cursor won't be on the ellipsis which looks
@@ -844,12 +915,26 @@ void s_write( screen_t *s,
 	s_save_status( s );
 }
 
-void s_reset( screen_t *s )
+void s_reset( screen_t *s, int reset_cursor )
 {
 	CHECK( s, );
+
+	int prev_line = s->actual_cursor[1];
 	s_reset_arr( &s->actual );
 	s->actual_cursor[0] = s->actual_cursor[1] = 0;
 	sb_clear( &s->actual_prompt );
 	s->need_clear=1;
+
+	if( !reset_cursor )
+	{
+		/*
+		  This should prevent reseting the cursor position during the
+		  next repaint.
+		*/
+		write( 1, "\r", 1 );
+		s->actual_cursor[1] = prev_line;
+	}
+	fstat( 1, &s->prev_buff_1 );
+	fstat( 2, &s->prev_buff_2 );
 }
 

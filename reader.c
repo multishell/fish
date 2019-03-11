@@ -99,6 +99,8 @@ commence.
 #include "output.h"
 #include "signal.h"
 #include "screen.h"
+#include "halloc.h"
+#include "halloc_util.h"
 
 #include "parse_util.h"
 
@@ -113,7 +115,7 @@ commence.
    fish specific commands, meaning it will work even if fish is not
    installed. This is used by read_i.
 */
-#define DEFAULT_PROMPT L"whoami; echo @; hostname|cut -d . -f 1; echo \" \"; pwd; printf '> ';"
+#define DEFAULT_PROMPT L"echo \"$USER@\"; hostname|cut -d . -f 1; echo \" \"; pwd; printf '> ';"
 
 #define PROMPT_FUNCTION_NAME L"fish_prompt"
 
@@ -133,6 +135,14 @@ commence.
 #define KILL_APPEND 0
 #define KILL_PREPEND 1
 
+
+#define NO_SEARCH 0
+#define LINE_SEARCH 1
+#define TOKEN_SEARCH 2
+
+#define SEARCH_BACKWARD 0
+#define SEARCH_FORWARD 1
+
 /**
    A struct describing the state of the interactive reader. These
    states can be stacked, in case reader_readline() calls are
@@ -150,7 +160,7 @@ typedef struct reader_data
 	/**
 	   Buffer containing the current search item
 	*/
-	wchar_t *search_buff;
+	string_buffer_t search_buff;
 
 	/**
 	   Saved position used by token history search
@@ -248,6 +258,18 @@ typedef struct reader_data
 	   Pointer to previous reader_data
 	*/
 	struct reader_data *next;
+
+	/**
+	   This variable keeps state on if we are in search mode, and
+	   if yes, what mode
+	 */
+	int search_mode;
+
+	/**
+	   Keep track of whether any internal code has done something
+	   which is known to require a repaint.
+	 */
+	int repaint_needed;
 }
 	reader_data_t;
 
@@ -359,6 +381,25 @@ int reader_exit_forced()
 }
 
 /**
+   Repaint the entire commandline. This means reset and clear the
+   commandline, write the prompt, perform syntax highlighting, write
+   the commandline and move the cursor.
+*/
+
+static void reader_repaint()
+{
+	parser_test( data->buff, data->indent, 0, 0 );
+	
+	s_write( &data->screen,
+		 (wchar_t *)data->prompt_buff.buff,
+		 data->buff,
+		 data->color, 
+		 data->indent, 
+		 data->buff_pos );
+	data->repaint_needed = 0;
+}
+
+/**
    Internal helper function for handling killing parts of text.
 */
 static void reader_kill( wchar_t *begin, int length, int mode, int new )
@@ -399,7 +440,7 @@ static void reader_kill( wchar_t *begin, int length, int mode, int new )
 	memmove( begin, begin+length, sizeof( wchar_t )*(wcslen( begin+length )+1) );
 	
 	reader_super_highlight_me_plenty( data->buff_pos, 0 );
-	repaint();
+	reader_repaint();
 	
 }
 
@@ -450,8 +491,6 @@ static int check_size()
 
 		data->buff = realloc( data->buff,
 							  sizeof(wchar_t)*data->buff_sz);
-		data->search_buff = realloc( data->search_buff,
-									 sizeof(wchar_t)*data->buff_sz);
 
 		data->color = realloc( data->color,
 							   sizeof(int)*data->buff_sz);
@@ -460,7 +499,6 @@ static int check_size()
 								sizeof(int)*data->buff_sz);
 
 		if( data->buff==0 ||
-			data->search_buff==0 ||
 			data->color==0 ||
 			data->indent == 0 )
 		{
@@ -470,22 +508,22 @@ static int check_size()
 	return 1;
 }
 
-/**
-   Compare two completions, ignoring their description.
-*/
-static int fldcmp( wchar_t *a, wchar_t *b )
-{
-	while( 1 )
-	{
-		if( *a != *b )
-			return *a-*b;
-		if( ( (*a == COMPLETE_SEP) || (*a == L'\0') ) &&
-			( (*b == COMPLETE_SEP) || (*b == L'\0') ) )
-			return 0;
-		a++;
-		b++;
-	}
 
+static int completion_cmp( const void *a, const void *b )
+{
+	completion_t *c= *((completion_t **)a);
+	completion_t *d= *((completion_t **)b);
+
+	return wcsfilecmp( c->completion, d->completion );
+
+}
+
+static void sort_completion_list( array_list_t *comp )
+{
+	qsort( comp->arr, 
+		   al_get_count( comp ),
+		   sizeof( void*),
+		   &completion_cmp );
 }
 
 /**
@@ -495,24 +533,24 @@ static int fldcmp( wchar_t *a, wchar_t *b )
 static void remove_duplicates( array_list_t *l )
 {
 	int in, out;
-	wchar_t *prev;
+	const wchar_t *prev;
+	completion_t *first;
+	
 	if( al_get_count( l ) == 0 )
 		return;
-
-	prev = (wchar_t *)al_get( l, 0 );
+	
+	first = (completion_t *)al_get( l, 0 );
+	prev = first->completion;
+	
 	for( in=1, out=1; in < al_get_count( l ); in++ )
 	{		
-		wchar_t *curr = (wchar_t *)al_get( l, in );
-
-		if( fldcmp( prev, curr )==0 )
-		{
-			free( curr );			
-		}
-		else
+		completion_t *curr = (completion_t *)al_get( l, in );
+		
+		if( wcscmp( prev, curr->completion )!=0 )
 		{
 			al_set( l, out++, curr );
-			prev = curr;
 		}
+		prev = curr->completion;
 	}
 	al_truncate( l, out );
 }
@@ -536,13 +574,29 @@ void reader_write_title()
 	  This is a pretty lame heuristic for detecting terminals that do
 	  not support setting the title. If we recognise the terminal name
 	  as that of a virtual terminal, we assume it supports setting the
-	  title. Otherwise we check the ttyname.
+	  title. If we recognise it as that of a console, we assume it
+	  does not support setting the title. Otherwise we check the
+	  ttyname and see if we belive it is a virtual terminal.
+
+	  One situation in which this breaks down is with screen, since
+	  screen supports setting the terminal title if the underlying
+	  terminal does so, but will print garbage on terminals that
+	  don't. Since we can't see the underlying terminal below screen
+	  there is no way to fix this.
 	*/
-	if( !term || !contains_str( term, L"xterm", L"screen", L"nxterm", L"rxvt", (wchar_t *)0 ) )
+	if( !term || !contains( term, L"xterm", L"screen", L"nxterm", L"rxvt" ) )
 	{
 		char *n = ttyname( STDIN_FILENO );
+
+		if( contains( term, L"linux" ) )
+		{
+			return;
+		}
+
 		if( strstr( n, "tty" ) || strstr( n, "/vc/") )
 			return;
+		
+			
 	}
 
 	title = function_exists( L"fish_title" )?L"fish_title":DEFAULT_TITLE;
@@ -558,7 +612,7 @@ void reader_write_title()
 		int i;
 		if( al_get_count( &l ) > 0 )
 		{
-			writestr( L"\e]2;" );
+			writestr( L"\x1b]2;" );
 			for( i=0; i<al_get_count( &l ); i++ )
 			{
 				writestr( (wchar_t *)al_get( &l, i ) );
@@ -645,18 +699,15 @@ void reader_exit( int do_exit, int forced )
 	
 }
 
-void repaint()
+void reader_repaint_needed()
 {
-	parser_test( data->buff, data->indent, 0, 0 );
-	
-	s_write( &data->screen,
-			 (wchar_t *)data->prompt_buff.buff,
-			 data->buff,
-			 data->color, 
-			 data->indent, 
-			 data->buff_pos );
-	
+	if( data )
+	{
+		data->repaint_needed = 1;
+	}
 }
+
+
 
 /**
    Remove the previous character in the character buffer and on the
@@ -681,7 +732,7 @@ static void remove_backward()
 	reader_super_highlight_me_plenty( data->buff_pos,
 									  0 );
 
-	repaint();
+	reader_repaint();
 
 }
 
@@ -719,7 +770,7 @@ static int insert_str(wchar_t *str)
 	reader_super_highlight_me_plenty( data->buff_pos-1,
 									  0 );
 	
-	repaint();
+	reader_repaint();
 	return 1;
 }
 
@@ -743,11 +794,24 @@ static int insert_char( int c )
 /**
    Calculate the length of the common prefix substring of two strings.
 */
-static int comp_len( wchar_t *a, wchar_t *b )
+static int comp_len( const wchar_t *a, const wchar_t *b )
 {
 	int i;
 	for( i=0;
 		 a[i] != '\0' && b[i] != '\0' && a[i]==b[i];
+		 i++ )
+		;
+	return i;
+}
+
+/**
+   Calculate the case insensitive length of the common prefix substring of two strings.
+*/
+static int comp_ilen( const wchar_t *a, const wchar_t *b )
+{
+	int i;
+	for( i=0;
+		 a[i] != '\0' && b[i] != '\0' && towlower(a[i])==towlower(b[i]);
 		 i++ )
 		;
 	return i;
@@ -889,78 +953,123 @@ static void get_param( wchar_t *cmd,
    just the common prefix of several completions. If the former, end by
    printing a space (and an end quote if the parameter is quoted).
 */
-static void completion_insert( wchar_t *val, int is_complete )
+static void completion_insert( const wchar_t *val, int flags )
 {
 	wchar_t *replaced;
 
 	wchar_t quote;
+	int add_space = !(flags & COMPLETE_NO_SPACE);
+	int do_replace = (flags&COMPLETE_NO_CASE);
 
-	get_param( data->buff,
-			   data->buff_pos,
-			   &quote,
-			   0, 0, 0 );
-
-	if( quote == L'\0' )
+	if( do_replace )
 	{
-		replaced = escape( val, 1 );
+		
+		int tok_start, tok_len;
+		wchar_t *begin, *end;
+		string_buffer_t sb;
+		wchar_t *escaped;
+		
+		parse_util_token_extent( data->buff, data->buff_pos, &begin, 0, 0, 0 );
+		end = data->buff+data->buff_pos;
+
+		tok_start = begin - data->buff;
+		tok_len = end-begin;
+						
+		sb_init( &sb );
+		sb_append_substring( &sb, data->buff, begin - data->buff );
+		
+		escaped = escape( val, ESCAPE_ALL | ESCAPE_NO_QUOTED );
+		
+		sb_append( &sb, escaped );
+		free( escaped );
+		
+		if( add_space ) 
+		{
+			sb_append( &sb, L" " );
+		}
+		
+		sb_append( &sb, end );
+						
+		reader_set_buffer( (wchar_t *)sb.buff, (begin-data->buff)+wcslen(val)+!!add_space );
+		sb_destroy( &sb );
+						
+		reader_super_highlight_me_plenty( data->buff_pos, 0 );
+		reader_repaint();
+		
 	}
 	else
 	{
-		int unescapable=0;
+		
+		get_param( data->buff,
+				   data->buff_pos,
+				   &quote,
+				   0, 0, 0 );
 
-		wchar_t *pin, *pout;
-
-		replaced = pout =
-			malloc( sizeof(wchar_t)*(wcslen(val) + 1) );
-
-		for( pin=val; *pin; pin++ )
+		if( quote == L'\0' )
 		{
-			switch( *pin )
-			{
-				case L'\n':
-				case L'\t':
-				case L'\b':
-				case L'\r':
-					unescapable=1;
-					break;
-				default:
-					*pout++ = *pin;
-					break;
-			}
-		}
-		if( unescapable )
-		{
-			free( replaced );
-			wchar_t *tmp = escape( val, 1 );
-			replaced = wcsdupcat( L" ", tmp );
-			free( tmp);
-			replaced[0]=quote;
+			replaced = escape( val, ESCAPE_ALL | ESCAPE_NO_QUOTED );
 		}
 		else
-			*pout = 0;
-	}
-
-	if( insert_str( replaced ) )
-	{
-		/*
-		  Print trailing space since this is the only completion 
-		*/
-		if( is_complete ) 
 		{
+			int unescapable=0;
 
-			if( (quote) &&
-				(data->buff[data->buff_pos] != quote ) ) 
+			const wchar_t *pin;
+			wchar_t *pout;
+
+			replaced = pout =
+				malloc( sizeof(wchar_t)*(wcslen(val) + 1) );
+
+			for( pin=val; *pin; pin++ )
 			{
-				/* 
-				   This is a quoted parameter, first print a quote 
-				*/
-				insert_char( quote );
+				switch( *pin )
+				{
+					case L'\n':
+					case L'\t':
+					case L'\b':
+					case L'\r':
+						unescapable=1;
+						break;
+					default:
+						*pout++ = *pin;
+						break;
+				}
 			}
-			insert_char( L' ' );
+			if( unescapable )
+			{
+				free( replaced );
+				wchar_t *tmp = escape( val, ESCAPE_ALL | ESCAPE_NO_QUOTED );
+				replaced = wcsdupcat( L" ", tmp );
+				free( tmp);
+				replaced[0]=quote;
+			}
+			else
+				*pout = 0;
 		}
-	}
 
-	free(replaced);
+		if( insert_str( replaced ) )
+		{
+			/*
+			  Print trailing space since this is the only completion 
+			*/
+			if( add_space ) 
+			{
+
+				if( (quote) &&
+					(data->buff[data->buff_pos] != quote ) ) 
+				{
+					/* 
+					   This is a quoted parameter, first print a quote 
+					*/
+					insert_char( quote );
+				}
+				insert_char( L' ' );
+			}
+		}
+
+		free(replaced);
+	
+	}
+	
 }
 
 /**
@@ -980,12 +1089,19 @@ static void run_pager( wchar_t *prefix, int is_quoted, array_list_t *comp )
 	string_buffer_t msg;
 	wchar_t * prefix_esc;
 	char *foo;
-	
-	if( !prefix || (wcslen(prefix)==0))
-		prefix_esc = wcsdup(L"\"\"");
-	else
-		prefix_esc = escape( prefix,1);
+	io_data_t *in;
+	wchar_t *escaped_separator;
+	int has_case_sensitive=0;
 
+	if( !prefix || (wcslen(prefix)==0))
+	{
+		prefix_esc = wcsdup(L"\"\"");
+	}
+	else
+	{
+		prefix_esc = escape( prefix,1);
+	}
+	
 	sb_init( &cmd );
 	sb_init( &msg );
 	sb_printf( &cmd,
@@ -996,15 +1112,80 @@ static void run_pager( wchar_t *prefix, int is_quoted, array_list_t *comp )
 
 	free( prefix_esc );
 
-	io_data_t *in= io_buffer_create( 1 );
+	in= io_buffer_create( 1 );
 	in->fd = 3;
+
+	escaped_separator = escape( COMPLETE_SEP_STR, 1);
 	
-	for( i=0; i<al_get_count( comp); i++ )
+	for( i=0; i<al_get_count( comp ); i++ )
 	{
-	    wchar_t *el = escape((wchar_t*)al_get( comp, i ), 1);
-		sb_printf( &msg, L"%ls\n", el );
-		free( el );		
+		completion_t *el = (completion_t *)al_get( comp, i );
+		has_case_sensitive |= !(el->flags & COMPLETE_NO_CASE );
 	}
+	
+	for( i=0; i<al_get_count( comp ); i++ )
+	{
+
+		int base_len=-1;
+		completion_t *el = (completion_t *)al_get( comp, i );
+
+		wchar_t *foo=0;
+		wchar_t *baz=0;
+
+		if( has_case_sensitive && (el->flags & COMPLETE_NO_CASE ))
+		{
+			continue;
+		}
+
+		if( el && el->completion )
+		{
+			if( el->flags & COMPLETE_NO_CASE )
+			{
+				if( base_len == -1 )
+				{
+					wchar_t *begin;
+				
+					parse_util_token_extent( data->buff, data->buff_pos, &begin, 0, 0, 0 );
+					base_len = data->buff_pos - (begin-data->buff);
+				}
+				
+				foo = escape( el->completion + base_len, ESCAPE_ALL | ESCAPE_NO_QUOTED );
+			}
+			else
+			{
+				foo = escape( el->completion, ESCAPE_ALL | ESCAPE_NO_QUOTED );
+			}
+		}
+		
+		if( el && el->description )
+		{
+			baz = escape( el->description, 1 );
+		}
+		
+		if( !foo )
+		{
+			debug( 0, L"Run pager called with bad argument." );
+			bugreport();
+			show_stackframe();
+		}
+		else if( baz )
+		{
+			sb_printf( &msg, L"%ls%ls%ls\n", 
+					   foo,
+					   escaped_separator,
+					   baz );
+		}
+		else
+		{
+			sb_printf( &msg, L"%ls\n", 
+					   foo );
+		}
+
+		free( foo );		
+		free( baz );		
+	}
+
+	free( escaped_separator );		
 	
 	foo = wcs2str( (wchar_t *)msg.buff );
 	b_append( in->param2.out_buffer, foo, strlen(foo) );
@@ -1060,14 +1241,14 @@ static void reader_flash()
 		data->color[i] = HIGHLIGHT_SEARCH_MATCH<<16;
 	}
 	
-	repaint();
+	reader_repaint();
 	
 	pollint.tv_sec = 0;
 	pollint.tv_nsec = 100 * 1000000;
 	nanosleep( &pollint, NULL );
 
 	reader_super_highlight_me_plenty( data->buff_pos, 0 );
-	repaint();
+	reader_repaint();
 	
 	
 }
@@ -1092,102 +1273,199 @@ static void reader_flash()
 static int handle_completions( array_list_t *comp )
 {
 	int i;
+	void *context = 0;
+	wchar_t *base = 0;
+	int len = 0;
+	int done = 0;
+	int count = 0;
+	int flags=0;
+	wchar_t *begin, *end;
+	wchar_t *tok;
 	
-	if( al_get_count( comp ) == 0 )
+	parse_util_token_extent( data->buff, data->buff_pos, &begin, 0, 0, 0 );
+	end = data->buff+data->buff_pos;
+	
+	context = halloc( 0, 0 );
+	tok = halloc_wcsndup( context, begin, end-begin );
+	
+	switch( al_get_count( comp ) )
 	{
-		reader_flash();
-		return 0;
-	}
-	else if( al_get_count( comp ) == 1 )
-	{
-		wchar_t *comp_str = wcsdup((wchar_t *)al_get( comp, 0 ));
-		wchar_t *woot = wcschr( comp_str, COMPLETE_SEP );
-		if( woot != 0 )
-			*woot = L'\0';
-		completion_insert( comp_str,
-						   ( wcslen(comp_str) == 0 ) ||
-						   ( wcschr( L"/=@:",
-									 comp_str[wcslen(comp_str)-1] ) == 0 ) );
-		free( comp_str );
-		return 1;
-	}
-	else
-	{
-		wchar_t *base = wcsdup( (wchar_t *)al_get( comp, 0 ) );
-		int len = wcslen( base );
-		for( i=1; i<al_get_count( comp ); i++ )
+		case 0:
 		{
-			int new_len = comp_len( base, (wchar_t *)al_get( comp, i ) );
-			len = new_len < len ? new_len: len;
+			reader_flash();
+			done = 1;
+			break;
 		}
-		if( len > 0 )
+		
+		case 1:
 		{
-			base[len]=L'\0';
-			wchar_t *woot = wcschr( base, COMPLETE_SEP );
-			if( woot != 0 )
-				*woot = L'\0';
-			completion_insert(base, 0);
-		}
-		else
-		{
-			/*
-			  There is no common prefix in the completions, and show_list
-			  is true, so we print the list
-			*/
-			int len;
-			wchar_t * prefix;
-			wchar_t * prefix_start;
-			get_param( data->buff,
-					   data->buff_pos,
-					   0,
-					   &prefix_start,
-					   0,
-					   0 );
-
-			len = &data->buff[data->buff_pos]-prefix_start+1;
-
-			if( len <= PREFIX_MAX_LEN )
+			
+			completion_t *c = (completion_t *)al_get( comp, 0 );
+		
+			if( !(c->flags & COMPLETE_NO_CASE) || expand_is_clean( tok ) )
 			{
-				prefix = malloc( sizeof(wchar_t)*(len+1) );
-				wcslcpy( prefix, prefix_start, len );
-				prefix[len]=L'\0';
+				completion_insert( c->completion,
+								   c->flags );			
+			}
+			done = 1;
+			len = 1;
+			break;
+		}
+	}
+	
+		
+	if( !done )
+	{
+		
+		for( i=0; i<al_get_count( comp ); i++ )
+		{
+			completion_t *c = (completion_t *)al_get( comp, i );
+			int new_len;
+
+			if( c->flags & COMPLETE_NO_CASE )
+				continue;
+			
+			count++;
+			
+			if( base )
+			{
+				new_len = comp_len( base, c->completion );
+				len = new_len < len ? new_len: len;
 			}
 			else
 			{
-				wchar_t tmp[2]=
-					{
-						ellipsis_char,
-						0
-					}
-				;
-
-				prefix = wcsdupcat( tmp,
-									prefix_start + (len - PREFIX_MAX_LEN) );
-				prefix[PREFIX_MAX_LEN] = 0;
-
+				base = wcsdup( c->completion );
+				len = wcslen( base );
+				flags = c->flags;
 			}
+		}
 
+		if( len > 0 )
+		{
+			if( count > 1 )
+				flags = flags | COMPLETE_NO_SPACE;
+
+			base[len]=L'\0';
+			completion_insert(base, flags);
+			done = 1;
+		}
+	}
+	
+
+	if( !done && base == 0 )
+	{
+
+		if( begin )
+		{
+
+			if( expand_is_clean( tok ) )
 			{
-				int is_quoted;
+				int offset = wcslen( tok );
+					
+				count = 0;
+					
+				for( i=0; i<al_get_count( comp ); i++ )
+				{
+					completion_t *c = (completion_t *)al_get( comp, i );
+					int new_len;
 
-				wchar_t quote;
-				get_param( data->buff, data->buff_pos, &quote, 0, 0, 0 );
-				is_quoted = (quote != L'\0');
-				
-				write(1, "\n", 1 );
+					if( !(c->flags & COMPLETE_NO_CASE) )
+						continue;
+			
+					count++;
 
-				run_pager( prefix, is_quoted, comp );
+					if( base )
+					{
+						new_len = offset +  comp_ilen( base+offset, c->completion+offset );
+						len = new_len < len ? new_len: len;
+					}
+					else
+					{
+						base = wcsdup( c->completion );
+						len = wcslen( base );
+						flags = c->flags;
+							
+					}
+				}
+
+				if( len > offset )
+				{
+					if( count > 1 )
+						flags = flags | COMPLETE_NO_SPACE;
+
+					base[len]=L'\0';
+					completion_insert( base, flags );
+					done = 1;
+				}
 			}
+		}
+	}
+		
+	free( base );
 
-			free( prefix );
-			s_reset( &data->screen );
-			repaint();
+	if( !done )
+	{
+		/*
+		  There is no common prefix in the completions, and show_list
+		  is true, so we print the list
+		*/
+		int len;
+		wchar_t * prefix;
+		wchar_t * prefix_start;
+		get_param( data->buff,
+				   data->buff_pos,
+				   0,
+				   &prefix_start,
+				   0,
+				   0 );
+
+		len = &data->buff[data->buff_pos]-prefix_start+1;
+
+		if( len <= PREFIX_MAX_LEN )
+		{
+			prefix = malloc( sizeof(wchar_t)*(len+1) );
+			wcslcpy( prefix, prefix_start, len );
+			prefix[len]=L'\0';
+		}
+		else
+		{
+			wchar_t tmp[2]=
+				{
+					ellipsis_char,
+					0
+				}
+			;
+
+			prefix = wcsdupcat( tmp,
+								prefix_start + (len - PREFIX_MAX_LEN) );
+			prefix[PREFIX_MAX_LEN] = 0;
 
 		}
 
-		free( base );
-		return len;
+		{
+			int is_quoted;
+
+			wchar_t quote;
+			get_param( data->buff, data->buff_pos, &quote, 0, 0, 0 );
+			is_quoted = (quote != L'\0');
+				
+			write(1, "\n", 1 );
+
+			run_pager( prefix, is_quoted, comp );
+		}
+
+		free( prefix );
+		s_reset( &data->screen, 1 );
+		reader_repaint();
+
 	}
+
+		
+	halloc_free( context );
+
+	return len;
+	
+
 }
 
 
@@ -1268,10 +1546,15 @@ void reader_sanity_check()
 {
 	if( is_interactive)
 	{
+		if( !data )
+			sanity_lose();
+
 		if(!( data->buff_pos <= data->buff_len ))
 			sanity_lose();
+
 		if(!( data->buff_len == wcslen( data->buff ) ))
 			sanity_lose();
+
 	}
 }
 
@@ -1320,7 +1603,7 @@ static void handle_history( const wchar_t *new_str )
 		data->buff_pos=wcslen(data->buff);
 		reader_super_highlight_me_plenty( data->buff_pos, 0 );
 
-		repaint();
+		reader_repaint();
 	}
 }
 
@@ -1328,8 +1611,8 @@ static void handle_history( const wchar_t *new_str )
    Check if the specified string is contained in the list, using
    wcscmp as a comparison function
 */
-static int contains( const wchar_t *needle,
-					 array_list_t *haystack )
+static int contains_al( const wchar_t *needle,
+			array_list_t *haystack )
 {
 	int i;
 	for( i=0; i<al_get_count( haystack ); i++ )
@@ -1349,18 +1632,18 @@ static void reset_token_history()
 	wchar_t *begin, *end;
 
 	parse_util_token_extent( data->buff, data->buff_pos, &begin, &end, 0, 0 );
+	
+	sb_clear( &data->search_buff );
 	if( begin )
 	{
-		wcslcpy(data->search_buff, begin, end-begin+1);
+		sb_append_substring( &data->search_buff, begin, end-begin);
 	}
-	else
-		data->search_buff[0]=0;
 
 	data->token_history_pos = -1;
 	data->search_pos=0;
 	al_foreach( &data->search_prev, &free );
 	al_truncate( &data->search_prev, 0 );
-	al_push( &data->search_prev, wcsdup( data->search_buff ) );
+	al_push( &data->search_prev, wcsdup( (wchar_t *)data->search_buff.buff ) );
 }
 
 
@@ -1406,7 +1689,7 @@ static void handle_token_history( int forward, int reset )
 
 		reader_replace_current_token( str );
 		reader_super_highlight_me_plenty( data->buff_pos, 0 );
-		repaint();
+		reader_repaint();
 	}
 	else
 	{
@@ -1422,14 +1705,14 @@ static void handle_token_history( int forward, int reset )
 			/*
 			  Search for previous item that contains this substring
 			*/
-			item = history_prev_match(data->search_buff);
+			item = history_prev_match( (wchar_t *)data->search_buff.buff);
 
 			/*
 			  If there is no match, the original string is returned
 
 			  If so, we clear the match string to avoid infinite loop
 			*/
-			if( wcscmp( item, data->search_buff ) == 0 )
+			if( wcscmp( item, (wchar_t *)data->search_buff.buff ) == 0 )
 			{
 				item=L"";
 			}
@@ -1448,9 +1731,9 @@ static void handle_token_history( int forward, int reset )
 			*/
 
 			const wchar_t *last = al_get( &data->search_prev, al_get_count( &data->search_prev ) -1 );
-			if( wcscmp( last, data->search_buff ) )
+			if( wcscmp( last, (wchar_t *)data->search_buff.buff ) )
 			{
-				str = wcsdup(data->search_buff);
+				str = wcsdup( (wchar_t *)data->search_buff.buff );
 			}
 			else
 			{
@@ -1470,7 +1753,7 @@ static void handle_token_history( int forward, int reset )
 				{
 					case TOK_STRING:
 					{
-						if( wcsstr( tok_last( &tok ), data->search_buff ) )
+						if( wcsstr( tok_last( &tok ), (wchar_t *)data->search_buff.buff ) )
 						{
 							//debug( 3, L"Found token at pos %d\n", tok_get_pos( &tok ) );
 							if( tok_get_pos( &tok ) >= current_pos )
@@ -1479,7 +1762,7 @@ static void handle_token_history( int forward, int reset )
 							}
 							//debug( 3, L"ok pos" );
 
-							if( !contains( tok_last( &tok ), &data->search_prev ) )
+							if( !contains_al( tok_last( &tok ), &data->search_prev ) )
 							{
 								free(str);
 								data->token_history_pos = tok_get_pos( &tok );
@@ -1498,7 +1781,7 @@ static void handle_token_history( int forward, int reset )
 		{
 			reader_replace_current_token( str );
 			reader_super_highlight_me_plenty( data->buff_pos, 0 );
-			repaint();
+			reader_repaint();
 			al_push( &data->search_prev, str );
 			data->search_pos = al_get_count( &data->search_prev )-1;
 		}
@@ -1655,7 +1938,7 @@ static void move_word( int dir, int erase, int new )
 	else
 	{
 		data->buff_pos = end_buff_pos;
-		repaint();
+		reader_repaint();
 	}
 }
 
@@ -1688,7 +1971,8 @@ void reader_set_buffer( wchar_t *b, int p )
 	}
 
 	reader_super_highlight_me_plenty( data->buff_pos,
-									  0 );
+					  0 );
+	reader_repaint_needed();
 }
 
 
@@ -1781,7 +2065,8 @@ void reader_push( wchar_t *name )
 	sb_init( &data->prompt_buff );
 
 	check_size();
-	data->buff[0]=data->search_buff[0]=0;
+	data->buff[0]=0;
+	sb_init( &data->search_buff );
 
 	if( data->next == 0 )
 	{
@@ -1817,7 +2102,7 @@ void reader_pop()
 	free( n->buff );
 	free( n->color );
 	free( n->indent );
-	free( n->search_buff );
+	sb_destroy( &n->search_buff );
 	sb_destroy( &n->kill_item );
 	
 	s_destroy( &n->screen );
@@ -1840,7 +2125,7 @@ void reader_pop()
 	{
 		end_loop = 0;
 		history_set_mode( data->name );
-		s_reset( &data->screen );
+		s_reset( &data->screen, 1 );
 	}
 }
 
@@ -1851,15 +2136,15 @@ void reader_set_prompt( wchar_t *new_prompt )
 }
 
 void reader_set_complete_function( void (*f)( const wchar_t *,
-											  array_list_t * ) )
+					      array_list_t * ) )
 {
 	data->complete_func = f;
 }
 
 void reader_set_highlight_function( void (*f)( wchar_t *,
-											   int *,
-											   int,
-											   array_list_t * ) )
+					       int *,
+					       int,
+					       array_list_t * ) )
 {
 	data->highlight_func = f;
 }
@@ -1882,13 +2167,13 @@ static void reader_super_highlight_me_plenty( int match_highlight_pos, array_lis
 {
 	data->highlight_func( data->buff, data->color, match_highlight_pos, error );
 
-	if( data->search_buff && wcslen(data->search_buff) )
+	if( wcslen((wchar_t *)data->search_buff.buff) )
 	{
-		wchar_t * match = wcsstr( data->buff, data->search_buff );
+		wchar_t * match = wcsstr( data->buff, (wchar_t *)data->search_buff.buff );
 		if( match )
 		{
 			int start = match-data->buff;
-			int count = wcslen(data->search_buff );
+			int count = wcslen( (wchar_t *)data->search_buff.buff );
 			int i;
 
 			for( i=0; i<count; i++ )
@@ -1909,17 +2194,80 @@ int exit_status()
 }
 
 /**
+   This function is called when the main loop notices that end_loop
+   has been set while in interactive mode. It checks if it is ok to
+   exit.
+ */
+
+static void handle_end_loop()
+{
+	job_t *j;
+	int job_count=0;
+	int is_breakpoint=0;
+	block_t *b;
+	
+	for( b = current_block; 
+	     b; 
+	     b = b->outer )
+	{
+		if( b->type == BREAKPOINT )
+		{
+			is_breakpoint = 1;
+			break;
+		}
+	}
+	
+	for( j=first_job; j; j=j->next )
+	{
+		if( !job_is_completed(j) )
+		{
+			job_count++;
+			break;
+		}
+	}
+	
+	if( !reader_exit_forced() && !data->prev_end_loop && job_count && !is_breakpoint )
+	{
+		writestr(_( L"There are stopped jobs\n" ));
+		
+		reader_exit( 0, 0 );
+		data->prev_end_loop=1;
+	}
+	else
+	{
+		if( !isatty(0) )
+		{
+			/*
+			  We already know that stdin is a tty since we're
+			  in interactive mode. If isatty returns false, it
+			  means stdin must have been closed. 
+			*/
+			for( j = first_job; j; j=j->next )
+			{
+				if( ! job_is_completed( j ) )
+				{
+					job_signal( j, SIGHUP );						
+				}
+			}
+		}
+	}
+}
+
+
+
+/**
    Read interactively. Read input from stdin while providing editing
    facilities.
 */
 static int read_i()
 {
-
+	event_fire_generic(L"fish_prompt");
+	
 	reader_push(L"fish");
 	reader_set_complete_function( &complete );
 	reader_set_highlight_function( &highlight_shell );
 	reader_set_test_function( &reader_shell_test );
-
+	
 	data->prev_end_loop=0;
 
 	while( (!data->end_loop) && (!sanity_check()) )
@@ -1937,49 +2285,13 @@ static int read_i()
 		  during evaluation.
 		*/
 
+	
 		tmp = reader_readline();
+	
 
 		if( data->end_loop)
 		{
-			job_t *j;
-			int has_job=0;
-			
-			for( j=first_job; j; j=j->next )
-			{
-				if( !job_is_completed(j) )
-				{
-					has_job = 1;
-					break;
-				}
-			}
-			
-			if( !reader_exit_forced() && !data->prev_end_loop && has_job )
-			{
-				writestr(_( L"There are stopped jobs\n" ));
-
-				reader_exit( 0, 0 );
-				data->prev_end_loop=1;
-
-				repaint();
-			}
-			else
-			{
-				if( !isatty(0) )
-				{
-					/*
-					  We already know that stdin is a tty since we're
-					  in interactive mode. If isatty returns false, it
-					  means stdin must have been closed. 
-					*/
-					for( j = first_job; j; j=j->next )
-					{
-						if( ! job_is_completed( j ) )
-						{
-							job_signal( j, SIGHUP );						
-						}
-					}
-				}
-			}
+			handle_end_loop();
 		}
 		else if( tmp )
 		{
@@ -1989,9 +2301,16 @@ static int read_i()
 			data->buff[data->buff_len]=L'\0';
 			reader_run_command( tmp );
 			free( tmp );
-
-			data->prev_end_loop=0;
+			if( data->end_loop)
+			{
+				handle_end_loop();
+			}
+			else
+			{
+				data->prev_end_loop=0;
+			}
 		}
+		
 
 	}
 	reader_pop();
@@ -2049,23 +2368,22 @@ wchar_t *reader_readline()
 	int i;
 	int last_char=0, yank=0;
 	wchar_t *yank_str;
-	array_list_t comp;
+	array_list_t *comp=0;
 	int comp_empty=1;
 	int finished=0;
 	struct termios old_modes;
 
 	check_size();
-	data->search_buff[0]=data->buff[data->buff_len]='\0';
-
-
-	al_init( &comp );
-
-	s_reset( &data->screen );
+	sb_clear( &data->search_buff );
+	data->buff[data->buff_len]='\0';
+	data->search_mode = NO_SEARCH;
+	
 	
 	exec_prompt();
 
 	reader_super_highlight_me_plenty( data->buff_pos, 0 );
-	repaint();
+	s_reset( &data->screen, 1 );
+	reader_repaint();
 
 	/* 
 	   get the current terminal modes. These will be restored when the
@@ -2080,7 +2398,8 @@ wchar_t *reader_readline()
 
 	while( !finished && !data->end_loop)
 	{
-
+		int regular_char = 0;
+		
 		/*
 		  Sometimes strange input sequences seem to generate a zero
 		  byte. I believe these simply mean a character was pressed
@@ -2131,14 +2450,13 @@ wchar_t *reader_readline()
 			if( c != 0 )
 				break;
 		}
-
-		if( (last_char == R_COMPLETE) && (c != R_COMPLETE) && (!comp_empty) )
-		{
-			al_foreach( &comp, &free );
-			al_truncate( &comp, 0 );
-			comp_empty = 1;
-		}
-
+/*
+  if( (last_char == R_COMPLETE) && (c != R_COMPLETE) && (!comp_empty) )
+  {
+  halloc_destroy( comp );
+  comp = 0;
+  }
+*/
 		if( last_char != R_YANK && last_char != R_YANK_POP )
 			yank=0;
 		
@@ -2154,7 +2472,7 @@ wchar_t *reader_readline()
 					data->buff_pos--;
 				}
 				
-				repaint();
+				reader_repaint();
 				break;
 			}
 
@@ -2166,7 +2484,7 @@ wchar_t *reader_readline()
 					data->buff_pos++;
 				}
 				
-				repaint();
+				reader_repaint();
 				break;
 			}
 
@@ -2175,7 +2493,7 @@ wchar_t *reader_readline()
 			{
 				data->buff_pos = 0;
 
-				repaint();
+				reader_repaint();
 				break;
 			}
 
@@ -2184,16 +2502,15 @@ wchar_t *reader_readline()
 			{
 				data->buff_pos = data->buff_len;
 
-				repaint();
+				reader_repaint();
 				break;
 			}
 
 			case R_NULL:
 			{
-//				exec_prompt();
-				write( 1, "\r", 1 );
-				s_reset( &data->screen );
-				repaint();
+				if( data->repaint_needed )
+					reader_repaint();
+				
 				break;
 			}
 
@@ -2201,14 +2518,8 @@ wchar_t *reader_readline()
 			{
 				exec_prompt();
 				write( 1, "\r", 1 );
-				s_reset( &data->screen );
-				repaint();
-				break;
-			}
-
-			case R_WINCH:
-			{
-				repaint();
+				s_reset( &data->screen, 0 );
+				reader_repaint();
 				break;
 			}
 
@@ -2233,7 +2544,7 @@ wchar_t *reader_readline()
 					wchar_t *buffcpy;
 					int len;
 					int cursor_steps;
-					
+
 					parse_util_cmdsubst_extent( data->buff, data->buff_pos, &begin, &end );
 
 					parse_util_token_extent( begin, data->buff_pos - (begin-data->buff), &token_begin, &token_end, 0, 0 );
@@ -2245,24 +2556,22 @@ wchar_t *reader_readline()
 						remove_backward();
 					}
 					
-					repaint();
+					reader_repaint();
 					
 					len = data->buff_pos - (begin-data->buff);
 					buffcpy = wcsndup( begin, len );
 
-					data->complete_func( buffcpy, &comp );
+					comp = al_halloc( 0 );
+					data->complete_func( buffcpy, comp );
 
-					sort_list( &comp );
-					remove_duplicates( &comp );
+					sort_completion_list( comp );
+					remove_duplicates( comp );
 
 					free( buffcpy );
+					comp_empty = handle_completions( comp );
 
-				}
-				if( (comp_empty =
-					 handle_completions( &comp ) ) )
-				{
-					al_foreach( &comp, &free );
-					al_truncate( &comp, 0 );
+					halloc_free( comp );
+					comp = 0;
 				}
 
 				break;
@@ -2371,24 +2680,26 @@ wchar_t *reader_readline()
 			}
 
 			/* Escape was pressed */
-			case L'\e':
+			case L'\x1b':
 			{
-				if( *data->search_buff )
+				if( data->search_mode )
 				{
+					data->search_mode= NO_SEARCH;
+										
 					if( data->token_history_pos==-1 )
 					{
 						history_reset();
-						reader_set_buffer( data->search_buff,
-										   wcslen(data->search_buff ) );
+						reader_set_buffer( (wchar_t *)data->search_buff.buff,
+										   wcslen( (wchar_t *)data->search_buff.buff ) );
 					}
 					else
 					{
-						reader_replace_current_token( data->search_buff );
+						reader_replace_current_token( (wchar_t *)data->search_buff.buff );
 					}
-					*data->search_buff=0;
+					sb_clear( &data->search_buff );
 					reader_super_highlight_me_plenty( data->buff_pos, 0 );
-					repaint();
-
+					reader_repaint();
+					
 				}
 
 				break;
@@ -2412,16 +2723,6 @@ wchar_t *reader_readline()
 				{
 					data->buff_pos++;
 					remove_backward();
-				}
-				break;
-			}
-
-			/* exit, but only if line is empty */
-			case R_EXIT:
-			{
-				if( data->buff_len == 0 )
-				{
-					data->end_loop=1;
 				}
 				break;
 			}
@@ -2457,7 +2758,7 @@ wchar_t *reader_readline()
 						}
 						finished=1;
 						data->buff_pos=data->buff_len;
-						repaint();
+						reader_repaint();
 						break;
 					}
 					
@@ -2477,8 +2778,8 @@ wchar_t *reader_readline()
 					*/
 					default:
 					{
-						s_reset( &data->screen );
-						repaint();
+						s_reset( &data->screen, 1 );
+						reader_repaint();
 						break;
 					}
 
@@ -2487,67 +2788,68 @@ wchar_t *reader_readline()
 				break;
 			}
 
-			/* History up */
+			/* History functions */
 			case R_HISTORY_SEARCH_BACKWARD:
-			{
-				if( (last_char != R_HISTORY_SEARCH_BACKWARD) &&
-					(last_char != R_HISTORY_SEARCH_FORWARD) &&
-					(last_char != R_FORWARD_CHAR) &&
-					(last_char != R_BACKWARD_CHAR) )
-
-				{
-					wcscpy(data->search_buff, data->buff );
-					data->search_buff[data->buff_pos]=0;
-				}
-
-				handle_history(history_prev_match(data->search_buff));
-				break;
-			}
-
-			/* History down */
-			case R_HISTORY_SEARCH_FORWARD:
-			{
-				if( (last_char != R_HISTORY_SEARCH_BACKWARD) &&
-					(last_char != R_HISTORY_SEARCH_FORWARD) &&
-					(last_char != R_FORWARD_CHAR) &&
-					(last_char != R_BACKWARD_CHAR) )
-				{
-					wcscpy(data->search_buff, data->buff );
-					data->search_buff[data->buff_pos]=0;
-				}
-
-				handle_history(history_next_match(data->search_buff));
-				break;
-			}
-
-			/* Token search for a earlier match */
 			case R_HISTORY_TOKEN_SEARCH_BACKWARD:
-			{
-				int reset=0;
-				if( (last_char != R_HISTORY_TOKEN_SEARCH_BACKWARD) &&
-					(last_char != R_HISTORY_TOKEN_SEARCH_FORWARD) )
-				{
-					reset=1;
-				}
-
-				handle_token_history( 0, reset );
-
-				break;
-			}
-
-			/* Token search for a later match */
+			case R_HISTORY_SEARCH_FORWARD:
 			case R_HISTORY_TOKEN_SEARCH_FORWARD:
 			{
-				int reset=0;
-
-				if( (last_char != R_HISTORY_TOKEN_SEARCH_BACKWARD) &&
-					(last_char != R_HISTORY_TOKEN_SEARCH_FORWARD) )
+				int reset = 0;
+				
+				if( data->search_mode == NO_SEARCH )
 				{
-					reset=1;
+					reset = 1;
+					if( ( c == R_HISTORY_SEARCH_BACKWARD ) ||
+					    ( c == R_HISTORY_SEARCH_FORWARD ) )
+					{
+						data->search_mode = LINE_SEARCH;
+					}
+					else
+					{
+						data->search_mode = TOKEN_SEARCH;
+					}
+					
+					sb_append( &data->search_buff, data->buff );
 				}
 
-				handle_token_history( 1, reset );
+				switch( data->search_mode )
+				{
 
+					case LINE_SEARCH:
+					{
+						const wchar_t *it = 0;
+						
+						if( ( c == R_HISTORY_SEARCH_BACKWARD ) ||
+							( c == R_HISTORY_TOKEN_SEARCH_BACKWARD ) )
+						{
+							it = history_prev_match((wchar_t *)data->search_buff.buff);
+						}
+						else
+						{
+							it = history_next_match((wchar_t *)data->search_buff.buff);
+						}
+						
+						handle_history( it );
+						
+						break;
+					}
+					
+					case TOKEN_SEARCH:
+					{
+						if( ( c == R_HISTORY_SEARCH_BACKWARD ) ||
+							( c == R_HISTORY_TOKEN_SEARCH_BACKWARD ) )
+						{
+							handle_token_history( SEARCH_BACKWARD, reset );
+						}
+						else
+						{
+							handle_token_history( SEARCH_FORWARD, reset );
+						}
+						
+						break;
+					}
+						
+				}
 				break;
 			}
 
@@ -2558,7 +2860,7 @@ wchar_t *reader_readline()
 				if( data->buff_pos > 0 )
 				{
 					data->buff_pos--;
-					repaint();
+					reader_repaint();
 				}
 				break;
 			}
@@ -2569,17 +2871,8 @@ wchar_t *reader_readline()
 				if( data->buff_pos < data->buff_len )
 				{
 					data->buff_pos++;					
-					repaint();
+					reader_repaint();
 				}
-				break;
-			}
-
-			case R_DELETE_LINE:
-			{
-				data->buff[0]=0;
-				data->buff_len=0;
-				data->buff_pos=0;
-				repaint();
 				break;
 			}
 
@@ -2623,11 +2916,58 @@ wchar_t *reader_readline()
 				break;
 			}
 
+			case R_UP_LINE:
+			case R_DOWN_LINE:
+			{
+				int line_old = parse_util_get_line_from_offset( data->buff,
+										data->buff_pos );
+				int line_new;
+				
+				if( c == R_UP_LINE )
+					line_new = line_old-1;
+				else
+					line_new = line_old+1;
+	
+				int line_count = parse_util_lineno( data->buff, data->buff_len )-1;
+				
+				if( line_new >= 0 && line_new <= line_count)
+				{
+					int base_pos_new;
+					int base_pos_old;
+					
+					int indent_old;
+					int indent_new;
+					int line_offset_old;
+					int total_offset_new;
+
+					base_pos_new = parse_util_get_offset_from_line( data->buff, 
+										    line_new );
+
+					base_pos_old = parse_util_get_offset_from_line( data->buff, 
+											line_old );
+					
+					
+					indent_old = data->indent[base_pos_old];
+					indent_new = data->indent[base_pos_new];
+					
+					line_offset_old = data->buff_pos - parse_util_get_offset_from_line( data->buff,
+												 line_old );
+					total_offset_new = parse_util_get_offset( data->buff, line_new, line_offset_old - 4*(indent_new-indent_old));
+					data->buff_pos = total_offset_new;
+					reader_repaint();
+				}
+								
+				break;
+			}
+			
+
 			/* Other, if a normal character, we add it to the command */
 			default:
 			{
+				
 				if( (!wchar_private(c)) && (( (c>31) || (c==L'\n'))&& (c != 127)) )
 				{
+					regular_char = 1;
 					insert_char( c );
 				}
 				else
@@ -2643,25 +2983,27 @@ wchar_t *reader_readline()
 			}
 
 		}
-
+		
 		if( (c != R_HISTORY_SEARCH_BACKWARD) &&
-			(c != R_HISTORY_SEARCH_FORWARD) &&
-			(c != R_HISTORY_TOKEN_SEARCH_BACKWARD) &&
-			(c != R_HISTORY_TOKEN_SEARCH_FORWARD) &&
-			(c != R_FORWARD_CHAR) &&
-			(c != R_BACKWARD_CHAR) )
+		    (c != R_HISTORY_SEARCH_FORWARD) &&
+		    (c != R_HISTORY_TOKEN_SEARCH_BACKWARD) &&
+		    (c != R_HISTORY_TOKEN_SEARCH_FORWARD) &&
+		    (c != R_NULL) )
 		{
-			data->search_buff[0]=0;
+			data->search_mode = NO_SEARCH;
+			sb_clear( &data->search_buff );
 			history_reset();
 			data->token_history_pos=-1;
 		}
-
-
+		
 		last_char = c;
 	}
 
 	writestr( L"\n" );
-	al_destroy( &comp );
+/*
+  if( comp )
+  halloc_free( comp );
+*/
 	if( !reader_exit_forced() )
 	{
 		if( tcsetattr(0,TCSANOW,&old_modes))      /* return to previous mode */
@@ -2675,12 +3017,23 @@ wchar_t *reader_readline()
 	return finished ? data->buff : 0;
 }
 
+int reader_search_mode()
+{
+	if( !data )
+	{
+		return -1;
+	}
+	
+	return !!data->search_mode;	
+}
+
+
 /**
    Read non-interactively.  Read input from stdin without displaying
    the prompt, using syntax highlighting. This is used for reading
    scripts and init files.
 */
-static int read_ni( int fd )
+static int read_ni( int fd, io_data_t *io )
 {
 	FILE *in_stream;
 	wchar_t *buff=0;
@@ -2709,16 +3062,18 @@ static int read_ni( int fd )
 			int c;
 
 			c = fread(buff, 1, 4096, in_stream);
-			if( ferror( in_stream ) )
+			
+			if( ferror( in_stream ) && ( errno != EINTR ) )
 			{
 				debug( 1,
-					   _( L"Error while reading commands" ) );
-
+					   _( L"Error while reading from file descriptor" ) );
+				
 				/*
 				  Reset buffer on error. We won't evaluate incomplete files.
 				*/
 				acc.used=0;
 				break;
+				
 			}
 
 			b_append( &acc, buff, c );
@@ -2738,21 +3093,21 @@ static int read_ni( int fd )
 
 		if( str )
 		{
-		string_buffer_t sb;
-		sb_init( &sb );
+			string_buffer_t sb;
+			sb_init( &sb );
 		
-		if( !parser_test( str, 0, &sb, L"fish" ) )
-		{
-			eval( str, 0, TOP );
-		}
-		else
-		{
-			fwprintf( stderr, L"%ls", sb.buff );
-			res = 1;
-		}
-		sb_destroy( &sb );
+			if( !parser_test( str, 0, &sb, L"fish" ) )
+			{
+				eval( str, io, TOP );
+			}
+			else
+			{
+				fwprintf( stderr, L"%ls", sb.buff );
+				res = 1;
+			}
+			sb_destroy( &sb );
 		
-		free( str );
+			free( str );
 		}
 		else
 		{
@@ -2782,7 +3137,7 @@ static int read_ni( int fd )
 	return res;
 }
 
-int reader_read( int fd )
+int reader_read( int fd, io_data_t *io )
 {
 	int res;
 
@@ -2792,9 +3147,10 @@ int reader_read( int fd )
 	  is handled by proc_push_interactive/proc_pop_interactive.
 	*/
 
-	proc_push_interactive( ((fd == 0) && isatty(STDIN_FILENO)));
+	int inter = ((fd == STDIN_FILENO) && isatty(STDIN_FILENO));
+	proc_push_interactive( inter );
 	
-	res= is_interactive?read_i():read_ni( fd );
+	res= is_interactive?read_i():read_ni( fd, io );
 
 	/*
 	  If the exit command was called in a script, only exit the

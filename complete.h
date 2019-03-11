@@ -67,6 +67,63 @@
 #define PROG_COMPLETE_SEP L'\t'
 
 /**
+   Do not insert space afterwards if this is the only completion. (The
+   default is to try insert a space)
+*/
+#define COMPLETE_NO_SPACE 1
+
+/**
+   This compeltion is case insensitive. 
+
+   Warning: The contents of the completion_t structure is actually
+   different if this flag is set! Specifically, the completion string
+   contains the _entire_ completion token, not only the current
+*/
+#define COMPLETE_NO_CASE 2
+
+/**
+   This compeltion is the whole argument, not just the remainder. This
+   flag must never be set on completions returned from the complete()
+   function. It is strictly for internal use in the completion code.
+*/
+#define COMPLETE_WHOLE_ARGUMENT 4
+
+/**
+   This completion may or may not want a space at the end - guess by
+   checking the last character of the completion.
+*/
+#define COMPLETE_AUTO_SPACE 8
+
+typedef struct
+{
+
+	/**
+	   The completion string
+	*/
+	const wchar_t *completion;
+
+	/**
+	   The description for this completion
+	*/
+	const wchar_t *description;
+
+	/**
+	   Flags determining the completion behaviour. 
+
+	   Determines whether a space should be inserted after this
+	   compeltion if it is the only possible completion using the
+	   COMPLETE_NO_SPACE flag.
+
+	   The COMPLETE_NO_CASE can be used to signal that this completion
+	   is case insensitive.
+	*/
+	int flags;
+
+}
+	completion_t;
+
+
+/**
 
   Add a completion. 
 
@@ -116,15 +173,16 @@ void complete_add( const wchar_t *cmd,
 				   int result_mode, 
 				   const wchar_t *condition,
 				   const wchar_t *comp,
-				   const wchar_t *desc ); 
+				   const wchar_t *desc,
+				   int flags ); 
 /**
   Sets whether the completion list for this command is complete. If
   true, any options not matching one of the provided options will be
   flagged as an error by syntax highlighting.
 */
-void complete_set_authorative( const wchar_t *cmd,
+void complete_set_authoritative( const wchar_t *cmd,
 							   int cmd_type,
-							   int authorative );
+							   int authoritative );
 
 /**
   Remove a previously defined completion
@@ -154,15 +212,6 @@ void complete( const wchar_t *cmd, array_list_t *out );
 void complete_print( string_buffer_t *out );
 
 /**
-   Obtain a description string for the file specified by the filename.
-
-   The returned value is a string constant and should not be freed.
-
-   \param filename The file for which to find a description string
-*/
-const wchar_t *complete_get_desc( const wchar_t *filename );
-
-/**
    Tests if the specified option is defined for the specified command
 */
 int complete_is_valid_option( const wchar_t *str, 
@@ -188,5 +237,19 @@ int complete_is_valid_argument( const wchar_t *str,
    \param reload should the commands completions be reloaded, even if they where previously loaded. (This is set to true on actual completions, so that changed completion are updated in running shells)
 */
 void complete_load( const wchar_t *cmd, int reload );
+
+/**
+   Create a new completion entry
+
+   \param context The halloc context to use for allocating new memory
+   \pram comp The completion string
+   \param desc The description of the completion
+   \param flags completion flags
+*/
+void completion_allocate( array_list_t *context,
+			  const wchar_t *comp,
+			  const wchar_t *desc,
+			  int flags );
+
 
 #endif

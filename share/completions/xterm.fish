@@ -1,8 +1,5 @@
 # completion for xterm
 
-function __fish_complete_xterm_encoding -d "Complete encoding information for xterm"
-    iconv --list|sed -e 's|//||'
-end
 
 complete -c xterm -n '__fish_test_arg "+*"' -a +ah --description 'Never highlight the text cursor'
 complete -c xterm -n '__fish_test_arg "+*"' -a +ai --description 'Enable active icon support'
@@ -101,13 +98,13 @@ complete -c xterm -o wc --description 'Use wide characters'
 complete -c xterm -o wf --description 'Wait the first time for the window to be mapped'
 complete -c xterm -o Sccn --description 'Use as input/output channel for an existing program'
 
-complete -c xterm -s e -a "(commandline -ct)(complete -C(commandline -ct))" -x --description 'Run program in xterm'
+complete -c xterm -s e -a "(complete -C(commandline -ct))" -x --description 'Run program in xterm'
 
 complete -r -c xterm -o bcf --description 'Blinking cursor will be off for that many milliseconds'
 complete -r -c xterm -o bcn --description 'Blinking cursor will be on for that many milliseconds'
 complete -r -c xterm -o class --description 'Override xterm resource class'
 complete -r -c xterm -o cr --description 'Color for the text cursor'
-complete -r -c xterm -o en -xa "(__fish_complete_xterm_encoding )" --description 'xterm encoding'
+complete -r -c xterm -o en -xa "(__fish_print_encodings)" --description 'xterm encoding'
 complete -r -c xterm -o fb --description 'Bold font'
 complete -r -c xterm -o fa --description 'FreeType font pattern'
 complete -r -c xterm -o fd --description 'FreeType double-width font pattern'

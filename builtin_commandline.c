@@ -163,7 +163,7 @@ static void write_part( const wchar_t *begin,
 				case TOK_STRING:
 				{
 					wchar_t *tmp = unescape( tok_last( &tok ), UNESCAPE_INCOMPLETE );
-					sb_append2( &out, tmp, L"\n", (void *)0 );
+					sb_append( &out, tmp, L"\n", (void *)0 );
 					free( tmp );
 					break;
 				}
@@ -220,6 +220,8 @@ static int builtin_commandline( wchar_t **argv )
 	int tokenize = 0;	
 	
 	int cursor_mode = 0;
+	int line_mode = 0;
+	int search_mode = 0;
 	wchar_t *begin, *end;
 
 	current_buffer = (wchar_t *)builtin_complete_get_temporary_buffer();
@@ -235,13 +237,23 @@ static int builtin_commandline( wchar_t **argv )
 
 	if( !get_buffer() )
 	{
-		sb_append2( sb_err,
-					argv[0],
-					L": Can not set commandline in non-interactive mode\n",
-					(void *)0 );
+		if (is_interactive_session)
+		{
+			/*
+			  Prompt change requested while we don't have
+			  a prompt, most probably while reading the
+			  init files. Just ignore it.
+			*/
+			return 1;
+		}
+		
+		sb_append( sb_err,
+			    argv[0],
+			    L": Can not set commandline in non-interactive mode\n",
+			    (void *)0 );
 		builtin_print_help( argv[0], sb_err );
-		return 1;		
-	}	
+		return 1;
+	}
 
 	woptind=0;
 
@@ -303,6 +315,14 @@ static int builtin_commandline( wchar_t **argv )
 				}
 				,
 				{
+					L"line", no_argument, 0, 'L'
+				}
+				,
+				{
+					L"search-mode", no_argument, 0, 'S'
+				}
+				,
+				{
 					0, 0, 0, 0 
 				}
 			}
@@ -312,7 +332,7 @@ static int builtin_commandline( wchar_t **argv )
 		
 		int opt = wgetopt_long( argc,
 								argv, 
-								L"aijpctwforhI:C", 
+								L"abijpctwforhI:CLS", 
 								long_options, 
 								&opt_index );
 		if( opt == -1 )
@@ -334,6 +354,11 @@ static int builtin_commandline( wchar_t **argv )
 			case L'a':
 				append_mode = APPEND_MODE;
 				break;
+
+			case L'b':
+				buffer_part = STRING_MODE;
+				break;
+				
 				
 			case L'i':
 				append_mode = INSERT_MODE;
@@ -376,6 +401,14 @@ static int builtin_commandline( wchar_t **argv )
 				cursor_mode = 1;
 				break;
 				
+			case 'L':
+				line_mode = 1;
+				break;
+				
+			case 'S':
+				search_mode = 1;
+				break;
+				
 			case 'h':
 				builtin_print_help( argv[0], sb_out );
 				return 0;
@@ -393,7 +426,7 @@ static int builtin_commandline( wchar_t **argv )
 		/*
 		  Check for invalid switch combinations
 		*/
-		if( buffer_part || cut_at_cursor || append_mode || tokenize || cursor_mode )
+		if( buffer_part || cut_at_cursor || append_mode || tokenize || cursor_mode || line_mode || search_mode )
 		{
 			sb_printf(sb_err,
 					  BUILTIN_ERR_COMBO,
@@ -415,7 +448,7 @@ static int builtin_commandline( wchar_t **argv )
  		}
 		for( i=woptind; i<argc; i++ )
 		{
-			wint_t c = input_get_code( argv[i] );
+			wint_t c = input_function_get_code( argv[i] );
 			if( c != -1 )
 			{
 				/*
@@ -428,9 +461,9 @@ static int builtin_commandline( wchar_t **argv )
 			else
 			{
 				sb_printf( sb_err,
-						   _(L"%ls: Unknown readline function '%ls'\n"),
-						   argv[0],
-						   argv[i] );
+					   _(L"%ls: Unknown input function '%ls'\n"),
+					   argv[0],
+					   argv[i] );
 				builtin_print_help( argv[0], sb_err );
 				return 1;
 			}
@@ -442,10 +475,10 @@ static int builtin_commandline( wchar_t **argv )
 	/*
 	  Check for invalid switch combinations
 	*/
-	if( cursor_mode && (argc-woptind > 1) )
+	if( (search_mode || line_mode || cursor_mode) && (argc-woptind > 1) )
 	{
 		
-		sb_append2( sb_err,
+		sb_append( sb_err,
 					argv[0],
 					L": Too many arguments\n",
 					(void *)0 );
@@ -453,7 +486,7 @@ static int builtin_commandline( wchar_t **argv )
 		return 1;
 	}
 
-	if( (buffer_part || tokenize || cut_at_cursor) && cursor_mode )
+	if( (buffer_part || tokenize || cut_at_cursor) && (cursor_mode || line_mode || search_mode) )
 	{		
 		sb_printf( sb_err,
 				   BUILTIN_ERR_COMBO,
@@ -512,9 +545,9 @@ static int builtin_commandline( wchar_t **argv )
 			if( *endptr || errno )
 			{
 				sb_printf( sb_err,
-						   BUILTIN_ERR_NOT_NUMBER,
-						   argv[0],
-						   argv[woptind] );
+					   BUILTIN_ERR_NOT_NUMBER,
+					   argv[0],
+					   argv[woptind] );
 				builtin_print_help( argv[0], sb_err );
 			}
 			
@@ -529,6 +562,20 @@ static int builtin_commandline( wchar_t **argv )
 			return 0;
 		}
 		
+	}
+	
+	if( line_mode )
+	{
+		int pos = reader_get_cursor_pos();
+		wchar_t *buff = reader_get_buffer();
+		sb_printf( sb_out, L"%d\n", parse_util_lineno( buff, pos ) );
+		return 0;
+			
+	}
+	
+	if( search_mode )
+	{
+		return !reader_search_mode();
 	}
 	
 		

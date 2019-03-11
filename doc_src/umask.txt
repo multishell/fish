@@ -1,4 +1,4 @@
-\section umask umask - set or get the shells resource usage limits
+\section umask umask - set or get the file-creation mask
 
 \subsection umask-synopsis Synopsis
 <code>umask [OPTIONS] [MASK]</code>
@@ -43,7 +43,7 @@ in bash.
 
 \subsection umask-example Example
 
-<code>umask 177</code> or <code>umask u=rw</code>sets the file
+<code>umask 177</code> or <code>umask u=rw</code> sets the file
 creation mask to read and write for the owner and no permissions at
 all for any other users.
 

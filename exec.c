@@ -52,10 +52,17 @@
    file descriptor redirection error message
 */
 #define FD_ERROR   _( L"An error occurred while redirecting file descriptor %d" )
+
 /**
    file redirection error message
 */
 #define FILE_ERROR _( L"An error occurred while redirecting file '%ls'" )
+
+/**
+   file redirection clobbering error message
+*/
+#define NOCLOB_ERROR _( L"The file '%ls' already exists" )
+
 /**
    fork error message
 */
@@ -113,10 +120,10 @@ void exec_close( int fd )
 			if( n == fd )
 			{
 				al_set_long( open_fds,
-							 i,
-							 al_get_long( open_fds, al_get_count( open_fds ) -1 ) );
+					     i,
+					     al_get_long( open_fds, al_get_count( open_fds ) -1 ) );
 				al_truncate( open_fds, 
-							 al_get_count( open_fds ) -1 );
+					     al_get_count( open_fds ) -1 );
 				break;
 			}
 		}
@@ -288,13 +295,24 @@ static int handle_child_io( io_data_t *io )
 			case IO_FILE:
 			{
 				if( (tmp=wopen( io->param1.filename,
-                                io->param2.flags, OPEN_MASK ) )==-1 )
+						io->param2.flags, OPEN_MASK ) )==-1 )
 				{
-					debug( 1, 
-						   FILE_ERROR,
-						   io->param1.filename );
+					if( ( io->param2.flags & O_EXCL ) &&
+					    ( errno ==EEXIST ) )
+					{
+						debug( 1, 
+						       NOCLOB_ERROR,
+						       io->param1.filename );
+					}
+					else
+					{
+						debug( 1, 
+						       FILE_ERROR,
+						       io->param1.filename );
+										
+						wperror( L"open" );
+					}
 					
-					wperror( L"open" );
 					return -1;
 				}
 				else if( tmp != io->fd)
@@ -439,62 +457,129 @@ static void launch_process( process_t *p )
 	
 //	debug( 1, L"exec '%ls'", p->argv[0] );
 
+	char **argv = wcsv2strv( (const wchar_t **) p->argv);
+	char **envv = env_export_arr( 0 );
+	
 	execve ( wcs2str(p->actual_cmd), 
-			 wcsv2strv( (const wchar_t **) p->argv), 
-			 env_export_arr( 0 ) );
-
-    err = errno;
+		 argv,
+		 envv );
+	
+	err = errno;
 	
 	/* 
-	Something went wrong with execve, check for a ":", and run
-	/bin/sh if encountered. This is a weird predecessor to the shebang
-	that is still sometimes used since it is supported on Windows.
+	   Something went wrong with execve, check for a ":", and run
+	   /bin/sh if encountered. This is a weird predecessor to the shebang
+	   that is still sometimes used since it is supported on Windows.
 	*/
 	f = wfopen(p->actual_cmd, "r");
-    if( f )
-    {
-        char begin[1] = {0};
+	if( f )
+	{
+		char begin[1] = {0};
 		size_t read;
-
+		
 		read = fread(begin, 1, 1, f);
 		fclose( f );
 		
-        if( (read==1) && (begin[0] == ':') )
-        {
-            int count = 0;
-            int i = 1;
+		if( (read==1) && (begin[0] == ':') )
+		{
+			int count = 0;
+			int i = 1;
 			wchar_t **res;
-
-            while( p->argv[count] != 0 )
+            char **res_real;
+			
+			while( p->argv[count] != 0 )
 				count++;
-            
+			
 			res = malloc( sizeof(wchar_t*)*(count+2));
-            
+			
 			res[0] = L"/bin/sh";
-            res[1] = p->actual_cmd;
-            
+			res[1] = p->actual_cmd;
+			
 			for( i=1;  p->argv[i]; i++ ){
-                res[i+1] = p->argv[i];
-            }
+				res[i+1] = p->argv[i];
+			}
+			
+			res[i+1] = 0;
+			p->argv = res;
+			p->actual_cmd = L"/bin/sh";
 
-            res[i+1] = 0;
-            p->argv = res;
-            p->actual_cmd = L"/bin/sh";
+            res_real = wcsv2strv( (const wchar_t **) res);
 			
 			execve ( wcs2str(p->actual_cmd), 
-					 wcsv2strv( (const wchar_t **) p->argv), 
-					 env_export_arr( 0 ) );
-        }
-    }
-    
-	debug( 0, 
-		   _( L"Failed to execute process '%ls'" ),
-		   p->actual_cmd );
-
-	errno = err;
+				 res_real,
+				 envv );
+		}
+	}
 	
-	wperror( L"execve" );
-	FATAL_EXIT();
+	errno = err;
+	debug( 0, 
+	       _( L"Failed to execute process '%ls'. Reason:" ),
+	       p->actual_cmd );
+	
+	switch( errno )
+	{
+		
+		case E2BIG:
+		{
+			size_t sz = 0;
+			char **p;
+
+			string_buffer_t sz1;
+			string_buffer_t sz2;
+			
+			long arg_max = -1;
+						
+			sb_init( &sz1 );
+			sb_init( &sz2 );
+						
+			for(p=argv; *p; p++)
+			{
+				sz += strlen(*p)+1;
+			}
+			
+			for(p=envv; *p; p++)
+			{
+				sz += strlen(*p)+1;
+			}
+			
+			sb_format_size( &sz1, sz );
+
+			arg_max = sysconf( _SC_ARG_MAX );
+			
+			if( arg_max > 0 )
+			{
+				
+				sb_format_size( &sz2, ARG_MAX );
+				
+				debug( 0,
+				       L"The total size of the argument and environment lists (%ls) exceeds the system limit of %ls.",
+				       (wchar_t *)sz1.buff,
+				       (wchar_t *)sz2.buff);
+			}
+			else
+			{
+				debug( 0,
+				       L"The total size of the argument and environment lists (%ls) exceeds the system limit.",
+				       (wchar_t *)sz1.buff);
+			}
+			
+			debug( 0, 
+			       L"Please try running the command again with fewer arguments.");
+			sb_destroy( &sz1 );
+			sb_destroy( &sz2 );
+			
+			exit(STATUS_EXEC_FAIL);
+			
+			break;
+		}
+
+		default:
+		{
+		  debug(0, L"The file '%ls' is marked as an executable but could not be run by the operating system.", p->actual_cmd);
+		  exit(STATUS_EXEC_FAIL);
+		}
+	}
+	
 }
 
 
@@ -668,13 +753,14 @@ static int set_child_group( job_t *j, process_t *p, int print_errors )
 			if( getpgid( p->pid) != j->pgid && print_errors )
 			{
 				debug( 1, 
-					   _( L"Could not send process %d, '%ls' in job %d, '%ls' from group %d to group %d" ),
-					   p->pid,
-					   p->argv[0],
-					   j->job_id,
-					   j->command,
-					   getpgid( p->pid),
-					   j->pgid );
+				       _( L"Could not send process %d, '%ls' in job %d, '%ls' from group %d to group %d" ),
+				       p->pid,
+				       p->argv[0],
+				       j->job_id,
+				       j->command,
+				       getpgid( p->pid),
+				       j->pgid );
+
 				wperror( L"setpgid" );
 				res = -1;
 			}
@@ -884,25 +970,34 @@ void exec( job_t *j )
 	signal_block();
 
 	/*
-	  See if we need to create a group keepalive process. This is a
-	  process that we create to make sure that the process group
-	  doesn't die accidentally, and is needed when a block/function is
-	  inside a pipeline.
+	  See if we need to create a group keepalive process. This is
+	  a process that we create to make sure that the process group
+	  doesn't die accidentally, and is often needed when a
+	  builtin/block/function is inside a pipeline, since that
+	  usually means we have to wait for one program to exit before
+	  continuing in the pipeline, causing the group leader to
+	  exit.
 	*/
 	
 	if( job_get_flag( j, JOB_CONTROL ) )
 	{
 		for( p=j->first_process; p; p = p->next )
 		{
-			if( (p->type == INTERNAL_BLOCK ) || 
-				(p->type == INTERNAL_FUNCTION ) )
+			if( p->type != EXTERNAL )
 			{
 				if( p->next )
 				{
 					needs_keepalive = 1;
 					break;
 				}
+				if( p != j->first_process )
+				{
+					needs_keepalive = 1;
+					break;
+				}
+				
 			}
+			
 		}
 	}
 		
@@ -993,6 +1088,9 @@ void exec( job_t *j )
 			{
 				const wchar_t * orig_def;
 				wchar_t * def=0;
+				array_list_t *named_arguments;
+				int shadows;
+				
 
 				/*
 				  Calls to function_get_definition might need to
@@ -1002,6 +1100,9 @@ void exec( job_t *j )
 
 				signal_unblock();
 				orig_def = function_get_definition( p->argv[0] );
+				named_arguments = function_get_named_arguments( p->argv[0] );
+				shadows = function_get_shadows( p->argv[0] );
+
 				signal_block();
 				
 				if( orig_def )
@@ -1014,12 +1115,20 @@ void exec( job_t *j )
 					break;
 				}
 
-				parser_push_block( FUNCTION_CALL );
+				parser_push_block( shadows?FUNCTION_CALL:FUNCTION_CALL_NO_SHADOW );
 				
 				current_block->param2.function_call_process = p;
 				current_block->param1.function_call_name = halloc_register( current_block, wcsdup( p->argv[0] ) );
 						
-				parse_util_set_argv( p->argv+1 );
+
+				/*
+				  set_argv might trigger an event
+				  handler, hence we need to unblock
+				  signals.
+				*/
+				signal_unblock();
+				parse_util_set_argv( p->argv+1, named_arguments );
+				signal_block();
 								
 				parser_forbid_function( p->argv[0] );
 
@@ -1099,7 +1208,33 @@ void exec( job_t *j )
 								
 								break;
 							}
+	
+							case IO_CLOSE:
+							{
+								/*
+								  FIXME:
 
+								  When
+								  requesting
+								  that
+								  stdin
+								  be
+								  closed,
+								  we
+								  really
+								  don't
+								  do
+								  anything. How
+								  should
+								  this
+								  be
+								  handled?
+								 */
+								builtin_stdin = -1;
+								
+								break;
+							}
+							
 							default:
 							{
 								builtin_stdin=-1;
@@ -1152,7 +1287,7 @@ void exec( job_t *j )
 					
 					signal_unblock();
 					
-					p->status = builtin_run( p->argv );
+					p->status = builtin_run( p->argv, j->io );
 					
 					builtin_out_redirect=old_out;
 					builtin_err_redirect=old_err;
@@ -1297,7 +1432,7 @@ void exec( job_t *j )
 			
 			case INTERNAL_BUILTIN:
 			{
-				int skip_fork=0;
+				int skip_fork;
 				
 				/*
 				  Handle output from builtin commands. In the general
@@ -1316,14 +1451,14 @@ void exec( job_t *j )
 					( !sb_out->used ) &&
 					( !sb_err->used ) &&
 					( !p->next );
-				
+	
 				/*
 				  If the output of a builtin is to be sent to an internal
 				  buffer, there is no need to fork. This helps out the
 				  performance quite a bit in complex completion code.
 				*/
 
-				io_data_t *io = io_get( j->io, 1 );		
+				io_data_t *io = io_get( j->io, 1 );
 				int buffer_stdout = io && io->io_mode == IO_BUFFER;
 				
 				if( ( !sb_err->used ) && 
@@ -1331,12 +1466,20 @@ void exec( job_t *j )
 					( sb_out->used ) && 
 					( buffer_stdout ) )
 				{
-					char *res = wcs2str( (wchar_t *)sb_out->buff );				
+					char *res = wcs2str( (wchar_t *)sb_out->buff );
 					b_append( io->param2.out_buffer, res, strlen( res ) );
 					skip_fork = 1;
-					free( res );				
+					free( res );
 				}
 
+				for( io = j->io; io; io=io->next )
+				{
+					if( io->io_mode == IO_FILE && wcscmp(io->param1.filename, L"/dev/null" ))
+					{
+						skip_fork = 0;
+					}
+				}
+				
 				if( skip_fork )
 				{
 					p->completed=1;
@@ -1487,9 +1630,27 @@ int exec_subshell( const wchar_t *cmd,
 	int prev_subshell = is_subshell;
 	int status, prev_status;
 	io_data_t *io_buffer;
-
+	const wchar_t *ifs;
+	char sep=0;
+	
 	CHECK( cmd, -1 );
+
+	ifs = env_get(L"IFS");
+
+	if( ifs && ifs[0] )
+	{
+		if( ifs[0] < 128 )
+		{
+			sep = '\n';//ifs[0];
+		}
+		else
+		{
+			sep = 0;
+			debug( 0, L"Warning - invalid command substitution separator '%lc'. Please change the firsta character of IFS", ifs[0] );
+		}
 		
+	}
+	
 	is_subshell=1;	
 	io_buffer= io_buffer_create( 0 );
 	
@@ -1505,7 +1666,7 @@ int exec_subshell( const wchar_t *cmd,
 	}
 	
 	io_buffer_read( io_buffer );
-	
+		
 	proc_set_last_status( prev_status );
 	
 	is_subshell = prev_subshell;
@@ -1518,31 +1679,11 @@ int exec_subshell( const wchar_t *cmd,
 	{
 		while( 1 )
 		{
-			switch( *end )
+			if( *end == 0 )
 			{
-				case 0:
-				
-					if( begin != end )
-					{
-						wchar_t *el = str2wcs( begin );
-						if( el )
-						{
-							al_push( lst, el );
-						}
-						else
-						{
-							debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
-						}
-					}				
-					io_buffer_destroy( io_buffer );
-					
-					return status;
-				
-				case '\n':
+				if( begin != end )
 				{
-					wchar_t *el;
-					*end=0;
-					el = str2wcs( begin );
+					wchar_t *el = str2wcs( begin );
 					if( el )
 					{
 						al_push( lst, el );
@@ -1551,9 +1692,25 @@ int exec_subshell( const wchar_t *cmd,
 					{
 						debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
 					}
-					begin = end+1;
-					break;
+				}				
+				io_buffer_destroy( io_buffer );
+				
+				return status;
+			}
+			else if( *end == sep )
+			{
+				wchar_t *el;
+				*end=0;
+				el = str2wcs( begin );
+				if( el )
+				{
+					al_push( lst, el );
 				}
+				else
+				{
+					debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
+				}
+				begin = end+1;
 			}
 			end++;
 		}

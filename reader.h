@@ -12,11 +12,12 @@
 #include <wchar.h>
 
 #include "util.h"
+#include "io.h"
 
 /**
   Read commands from \c fd until encountering EOF
 */
-int reader_read( int fd);
+int reader_read( int fd, io_data_t *io);
 
 /**
   Tell the shell that it should exit after the currently running command finishes.
@@ -62,11 +63,10 @@ wchar_t *reader_pop_current_filename();
 void reader_write_title();
 
 /**
-   Repaint the entire commandline. This means reset and clear the
-   commandline, write the prompt, perform syntax highlighting, write
-   the commandline and move the cursor.
-*/
-void repaint();
+   Call this function to tell the reader that a repaint is needed, and
+   should be performed when possible.
+ */
+void reader_repaint_needed();
 
 /**
    Run the specified command with the correct terminal modes, and
@@ -172,5 +172,13 @@ int reader_exit_forced();
    for testing. Suitable for reader_set_test_function().
 */
 int reader_shell_test( wchar_t *b );
+
+/**
+   Test whether the interactive reader is in search mode.
+
+   \return o if not in search mode, 1 if in search mode and -1 if not in interactive mode
+ */
+int reader_search_mode();
+
 
 #endif

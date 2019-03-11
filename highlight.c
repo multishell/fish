@@ -22,6 +22,7 @@
 #include "proc.h"
 #include "parser.h"
 #include "parse_util.h"
+#include "parser_keywords.h"
 #include "builtin.h"
 #include "function.h"
 #include "env.h"
@@ -41,10 +42,9 @@
 #define VAR_COUNT ( sizeof(highlight_var)/sizeof(wchar_t *) )
 
 static void highlight_universal_internal( wchar_t * buff, 
-										  int *color, 
-										  int pos, 
-										  array_list_t *error );
-
+					  int *color, 
+					  int pos, 
+					  array_list_t *error );
 
 /**
    The environment variables used to specify the color of different tokens.
@@ -282,10 +282,15 @@ static void highlight_param( const wchar_t * buff,
 							color[in_pos+1] = normal_status;
 						}
 					}
-					else if( wcschr( L"nrtbe*?$(){}'\"<>^ \\#;|&", buff[in_pos] ) )
+					else if( wcschr( L"abefnrtv*?$(){}[]'\"<>^ \\#;|&", buff[in_pos] ) )
 					{
 						color[start_pos]=HIGHLIGHT_ESCAPE;
 						color[in_pos+1]=normal_status;
+					}
+					else if( wcschr( L"c", buff[in_pos] ) )
+						{
+						color[start_pos]=HIGHLIGHT_ESCAPE;
+						color[in_pos+2]=normal_status;
 					}
 					else if( wcschr( L"uUxX01234567", buff[in_pos] ) )
 					{
@@ -602,11 +607,14 @@ void highlight_shell( wchar_t * buff,
 					if( cmd && (wcscmp( cmd, L"cd" ) == 0) )
 					{
 						wchar_t *dir = expand_one( context, 
-												   wcsdup(tok_last( &tok )),
-												   EXPAND_SKIP_CMDSUBST );
+									   wcsdup(tok_last( &tok )),
+									   EXPAND_SKIP_CMDSUBST );
 						if( dir )
 						{
-							if( !path_get_cdpath( context, dir ) )
+							int is_long_help = wcsncmp(dir,L"--help", wcslen(dir) );
+							int is_short_help = wcsncmp(dir,L"-h", wcslen(dir) );
+							
+							if( !is_long_help && !is_short_help  && !path_get_cdpath( context, dir ) )
 							{
 								color[ tok_get_pos( &tok ) ] = HIGHLIGHT_ERROR;							
 							}
@@ -642,7 +650,7 @@ void highlight_shell( wchar_t * buff,
 						int mark = tok_get_pos( &tok );
 						color[ tok_get_pos( &tok ) ] = HIGHLIGHT_COMMAND;
 
-						if( parser_is_subcommand( cmd ) )
+						if( parser_keywords_is_subcommand( cmd ) )
 						{
 							
 							int sw;
@@ -662,9 +670,9 @@ void highlight_shell( wchar_t * buff,
 
 							tok_next( &tok );
 							
-							sw = parser_is_switch( tok_last( &tok ) );
+							sw = parser_keywords_is_switch( tok_last( &tok ) );
 							
-							if( !parser_is_block( cmd ) &&
+							if( !parser_keywords_is_block( cmd ) &&
 								sw == ARG_SWITCH )
 							{
 								/* 
@@ -736,7 +744,7 @@ void highlight_shell( wchar_t * buff,
 							else
 							{
 								if( error )
-									al_push( error, wcsdupcat2 ( L"Unknown command \'", cmd, L"\'", (void *)0 ));
+									al_push( error, wcsdupcat ( L"Unknown command \'", cmd, L"\'" ));
 								color[ tok_get_pos( &tok ) ] = (HIGHLIGHT_ERROR);
 							}
 							had_cmd = 1;
@@ -752,6 +760,7 @@ void highlight_shell( wchar_t * buff,
 				break;
 			}
 		
+			case TOK_REDIRECT_NOCLOB:
 			case TOK_REDIRECT_OUT:
 			case TOK_REDIRECT_IN:
 			case TOK_REDIRECT_APPEND:
@@ -810,7 +819,7 @@ void highlight_shell( wchar_t * buff,
 						{
 							color[ tok_get_pos( &tok ) ] = HIGHLIGHT_ERROR;
 							if( error )
-								al_push( error, wcsdupcat2( L"Directory \'", dir, L"\' does not exist", (void *)0 ) );
+								al_push( error, wcsdupcat( L"Directory \'", dir, L"\' does not exist" ) );
 							
 						}
 					}
@@ -820,13 +829,22 @@ void highlight_shell( wchar_t * buff,
 					  if it exists.
 					*/
 					if( last_type == TOK_REDIRECT_IN || 
-						last_type == TOK_REDIRECT_APPEND )
+					    last_type == TOK_REDIRECT_APPEND )
 					{
 						if( wstat( target, &buff ) == -1 )
 						{
 							color[ tok_get_pos( &tok ) ] = HIGHLIGHT_ERROR;
 							if( error )
-								al_push( error, wcsdupcat2( L"File \'", target, L"\' does not exist", (void *)0 ) );
+								al_push( error, wcsdupcat( L"File \'", target, L"\' does not exist" ) );
+						}
+					}
+					if( last_type == TOK_REDIRECT_NOCLOB )
+					{
+						if( wstat( target, &buff ) != -1 )
+						{
+							color[ tok_get_pos( &tok ) ] = HIGHLIGHT_ERROR;
+							if( error )
+								al_push( error, wcsdupcat( L"File \'", target, L"\' exists" ) );
 						}
 					}
 				}

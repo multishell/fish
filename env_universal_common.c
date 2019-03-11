@@ -93,7 +93,7 @@
 typedef struct var_uni_entry
 {
 	int export; /**< Whether the variable should be exported */
-	wchar_t val[0]; /**< The value of the variable */
+	wchar_t val[1]; /**< The value of the variable */
 }
 var_uni_entry_t;
 
@@ -113,7 +113,6 @@ void (*callback)( int type,
 				  const wchar_t *key, 
 				  const wchar_t *val );
 
-
 /**
    Variable used by env_get_names to communicate auxiliary information
    to add_key_to_hash
@@ -125,6 +124,58 @@ static int get_names_show_exported;
 */
 static int get_names_show_unexported;
 
+/**
+   List of names for the UTF-8 character set.
+ */
+static char *iconv_utf8_names[]=
+  {
+    "utf-8", "UTF-8",
+    "utf8", "UTF8",
+    0
+  }
+  ;
+
+/**
+    List of wide character names, undefined byte length.
+ */
+static char *iconv_wide_names_unknown[]=
+  {
+    "wchar_t", "WCHAR_T", 
+    "wchar", "WCHAR", 
+    0
+  }
+  ;
+
+/**
+   List of wide character names, 4 bytes long.
+ */
+static char *iconv_wide_names_4[]=
+  {
+    "wchar_t", "WCHAR_T", 
+    "wchar", "WCHAR", 
+    "ucs-4", "UCS-4", 
+    "ucs4", "UCS4", 
+    "utf-32", "UTF-32", 
+    "utf32", "UTF32", 
+    0
+  }
+  ;
+
+/**
+   List of wide character names, 2 bytes long.
+ */
+static char *iconv_wide_names_2[]=
+  {
+    "wchar_t", "WCHAR_T", 
+    "wchar", "WCHAR", 
+    "ucs-2", "UCS-2", 
+    "ucs2", "UCS2", 
+    "utf-16", "UTF-16", 
+    "utf16", "UTF16", 
+    0
+  }
+  ;
+
 
 wchar_t *utf2wcs( const char *in )
 {
@@ -133,20 +184,38 @@ wchar_t *utf2wcs( const char *in )
 
 	wchar_t *out;
 
-	char *to_name[]=
-	{
-		"wchar_t", "WCHAR_T", "wchar", "WCHAR", 0
-	}
-	;
+	/*
+	  Try to convert to wchar_t. If that is not a valid character set,
+	  try various names for ucs-4. We can't be sure that ucs-4 is
+	  really the character set used by wchar_t, but it is the best
+	  assumption we can make.
+	*/
+	char **to_name=0;
 
-	char *from_name[]=
+	switch (sizeof (wchar_t))
 	{
-		"utf-8", "UTF-8", "utf8", "UTF8", 0
+	
+		case 2:
+			to_name = iconv_wide_names_2;
+			break;
+
+		case 4:
+			to_name = iconv_wide_names_4;
+			break;
+			
+		default:
+			to_name = iconv_wide_names_unknown;
+			break;
 	}
-	;
+	
+
+	/*
+	  The line protocol fish uses is always utf-8. 
+	*/
+	char **from_name = iconv_utf8_names;
 
 	size_t in_len = strlen( in );
-	size_t out_len =  sizeof( wchar_t )*(in_len+1);
+	size_t out_len =  sizeof( wchar_t )*(in_len+2);
 	size_t nconv;
 	char *nout;
 	
@@ -184,8 +253,7 @@ wchar_t *utf2wcs( const char *in )
 		return 0;		
 	}
 	
-	
-	nconv = iconv( cd, (char **)&in, &in_len, &nout, &out_len );
+	nconv = iconv( cd, (const char **)&in, &in_len, &nout, &out_len );
 		
 	if (nconv == (size_t) -1)
 	{
@@ -194,6 +262,24 @@ wchar_t *utf2wcs( const char *in )
 	}
 	     
 	*((wchar_t *) nout) = L'\0';
+
+	/*
+		Check for silly iconv behaviour inserting an bytemark in the output
+		string.
+	 */
+	if (*out == L'\xfeff' || *out == L'\xffef' || *out == L'\xefbbbf')
+	{
+		wchar_t *out_old = out;
+		out = wcsdup(out+1);
+		if (! out )
+		{
+			debug(0, L"FNORD!!!!");
+			free( out_old );
+			return 0;
+		}
+		free( out_old );
+	}
+	
 	
 	if (iconv_close (cd) != 0)
 		wperror (L"iconv_close");
@@ -209,17 +295,31 @@ char *wcs2utf( const wchar_t *in )
 	char *char_in = (char *)in;
 	char *out;
 
-	char *from_name[]=
-	{
-		"wchar_t", "WCHAR_T", "wchar", "WCHAR", 0
-	}
-	;
+	/*
+	  Try to convert to wchar_t. If that is not a valid character set,
+	  try various names for ucs-4. We can't be sure that ucs-4 is
+	  really the character set used by wchar_t, but it is the best
+	  assumption we can make.
+	*/
+	char **from_name=0;
 
-	char *to_name[]=
+	switch (sizeof (wchar_t))
 	{
-		"utf-8", "UTF-8", "utf8", "UTF8", 0
+	
+		case 2:
+			from_name = iconv_wide_names_2;
+			break;
+
+		case 4:
+			from_name = iconv_wide_names_4;
+			break;
+			
+		default:
+			from_name = iconv_wide_names_unknown;
+			break;
 	}
-	;
+
+	char **to_name = iconv_utf8_names;
 
 	size_t in_len = wcslen( in );
 	size_t out_len =  sizeof( char )*( (MAX_UTF8_BYTES*in_len)+1);

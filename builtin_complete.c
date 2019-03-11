@@ -50,7 +50,8 @@ static void	builtin_complete_add2( const wchar_t *cmd,
 								   int result_mode, 
 								   const wchar_t *condition,
 								   const wchar_t *comp,
-								   const wchar_t *desc )
+								   const wchar_t *desc,
+								   int flags )
 {
 	int i;
 	const wchar_t *s;
@@ -65,7 +66,8 @@ static void	builtin_complete_add2( const wchar_t *cmd,
 					  result_mode,
 					  condition,
 					  comp,
-					  desc );
+					  desc,
+					  flags );
 	}
 	
 	for( i=0; i<al_get_count( gnu_opt ); i++ )
@@ -78,7 +80,8 @@ static void	builtin_complete_add2( const wchar_t *cmd,
 					  result_mode,
 					  condition,
 					  comp,
-					  desc );
+					  desc,
+					  flags );
 	}
 	
 	for( i=0; i<al_get_count( old_opt ); i++ )
@@ -91,7 +94,8 @@ static void	builtin_complete_add2( const wchar_t *cmd,
 					  result_mode,
 					  condition,
 					  comp,
-					  desc );
+					  desc,
+					  flags );
 	}	
 
 	if( al_get_count( old_opt )+al_get_count( gnu_opt )+wcslen(short_opt) == 0 )
@@ -104,7 +108,8 @@ static void	builtin_complete_add2( const wchar_t *cmd,
 					  result_mode,
 					  condition,
 					  comp,
-					  desc );
+					  desc,
+					  flags );
 	}	
 }
 
@@ -117,10 +122,11 @@ static void	builtin_complete_add( array_list_t *cmd,
 								  array_list_t *gnu_opt,
 								  array_list_t *old_opt, 
 								  int result_mode, 
-								  int authorative,
+								  int authoritative,
 								  const wchar_t *condition,
 								  const wchar_t *comp,
-								  const wchar_t *desc )
+								  const wchar_t *desc,
+								  int flags )
 {
 	int i;
 	
@@ -134,13 +140,14 @@ static void	builtin_complete_add( array_list_t *cmd,
 							   result_mode, 
 							   condition, 
 							   comp, 
-							   desc );
+							   desc,
+							   flags );
 
-		if( authorative != -1 )
+		if( authoritative != -1 )
 		{
-			complete_set_authorative( al_get( cmd, i ),
+			complete_set_authoritative( al_get( cmd, i ),
 									  COMMAND,
-									  authorative );
+									  authoritative );
 		}
 		
 	}
@@ -155,13 +162,14 @@ static void	builtin_complete_add( array_list_t *cmd,
 							   result_mode, 
 							   condition, 
 							   comp, 
-							   desc );
+							   desc,
+							   flags );
 
-		if( authorative != -1 )
+		if( authoritative != -1 )
 		{
-			complete_set_authorative( al_get( path, i ),
+			complete_set_authoritative( al_get( path, i ),
 									  PATH,
-									  authorative );
+									  authoritative );
 		}
 		
 	}	
@@ -286,7 +294,8 @@ static int builtin_complete( wchar_t **argv )
 	int argc=0;
 	int result_mode=SHARED;
 	int remove = 0;
-	int authorative = -1;
+	int authoritative = -1;
+	int flags = COMPLETE_AUTO_SPACE;
 	
 	string_buffer_t short_opt;
 	array_list_t gnu_opt, old_opt;
@@ -364,11 +373,11 @@ static int builtin_complete( wchar_t **argv )
 				}
 				,
 				{
-					L"unauthorative", no_argument, 0, 'u'
+					L"unauthoritative", no_argument, 0, 'u'
 				}
 				,
 				{
-					L"authorative", no_argument, 0, 'A'
+					L"authoritative", no_argument, 0, 'A'
 				}
 				,
 				{
@@ -447,11 +456,11 @@ static int builtin_complete( wchar_t **argv )
 				break;
 				
 			case 'u':
-				authorative=0;
+				authoritative=0;
 				break;
 				
 			case 'A':
-				authorative=1;
+				authoritative=1;
 				break;
 				
 			case 's':
@@ -535,31 +544,51 @@ static int builtin_complete( wchar_t **argv )
 	{
 		if( do_complete )
 		{
-			array_list_t comp;
+			array_list_t *comp;
 			int i;
 
 			const wchar_t *prev_temporary_buffer = temporary_buffer;
+
+			wchar_t *token;
+
+			parse_util_token_extent( do_complete, wcslen( do_complete ), &token, 0, 0, 0 );
+						
 			temporary_buffer = do_complete;		
 
 			if( recursion_level < 1 )
 			{
 				recursion_level++;
 			
-				al_init( &comp );
+				comp = al_halloc( 0 );
 			
-				complete( do_complete, &comp );
+				complete( do_complete, comp );
 			
-				for( i=0; i<al_get_count( &comp ); i++ )
+				for( i=0; i<al_get_count( comp ); i++ )
 				{
-					wchar_t *next = (wchar_t *)al_get( &comp, i );
-					wchar_t *sep = wcschr( next, COMPLETE_SEP );
-					if( sep )
-						*sep = L'\t';
-					sb_printf( sb_out, L"%ls\n", next );
+					completion_t *next = (completion_t *)al_get( comp, i );
+					wchar_t *prepend;
+					
+					if( next->flags & COMPLETE_NO_CASE )
+					{
+						prepend = L"";
+					}
+					else
+					{
+						prepend = token;
+					}
+						
+
+					if( next->description )
+					{
+						sb_printf( sb_out, L"%ls%ls\t%ls\n", prepend, next->completion, next->description );
+					}
+					else
+					{
+						sb_printf( sb_out, L"%ls%ls\n", prepend, next->completion );
+					}
 				}
 			
-				al_foreach( &comp, &free );
-				al_destroy( &comp );
+				halloc_free( comp );
 				recursion_level--;
 			}
 		
@@ -599,10 +628,11 @@ static int builtin_complete( wchar_t **argv )
 									  &gnu_opt,
 									  &old_opt, 
 									  result_mode, 
-									  authorative,
+									  authoritative,
 									  condition,
 									  comp,
-									  desc ); 
+									  desc,
+									  flags ); 
 			}
 
 		}	

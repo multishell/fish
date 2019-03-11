@@ -1,5 +1,5 @@
 /*
-Copyright (C) 2005-2006 Axel Liljencrantz
+Copyright (C) 2005-2008 Axel Liljencrantz
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License version 2 as
@@ -16,7 +16,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 
 
-/** \file main.c
+/** \file fish.c
 	The main loop of <tt>fish</tt>.
 */
 
@@ -73,20 +73,13 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 static int read_init()
 {
-	wchar_t cwd[4096];
 	wchar_t *config_dir;
 	wchar_t *config_dir_escaped;
 	void *context;
 	string_buffer_t *eval_buff;
-	
-	if( !wgetcwd( cwd, 4096 ) )
-	{
-		wperror( L"wgetcwd" );		
-		return 0;
-	}
 
-	eval( L"builtin cd " DATADIR L"/fish 2>/dev/null; and builtin . config.fish 2>/dev/null", 0, TOP );
-	eval( L"builtin cd " SYSCONFDIR L"/fish 2>/dev/null; and builtin . config.fish 2>/dev/null", 0, TOP );
+	eval( L"builtin . " DATADIR "/fish/config.fish 2>/dev/null", 0, TOP );
+	eval( L"builtin . " SYSCONFDIR L"/fish/config.fish 2>/dev/null", 0, TOP );
 	
 	/*
 	  We need to get the configuration directory before we can source the user configuration file
@@ -94,36 +87,35 @@ static int read_init()
 	context = halloc( 0, 0 );
 	eval_buff = sb_halloc( context );
 	config_dir = path_get_config( context );
-	config_dir_escaped = escape( config_dir, 1 );
-	sb_printf( eval_buff, L"builtin cd %ls 2>/dev/null; and builtin . config.fish 2>/dev/null", config_dir_escaped );
-	eval( (wchar_t *)eval_buff->buff, 0, TOP );
+
+	/*
+	  If config_dir is null then we have no configuration directory
+	  and no custom config to load.
+	*/
+	if( config_dir )
+	{
+		config_dir_escaped = escape( config_dir, 1 );
+		sb_printf( eval_buff, L"builtin . %ls/config.fish 2>/dev/null", config_dir_escaped );
+		eval( (wchar_t *)eval_buff->buff, 0, TOP );
+		free( config_dir_escaped );
+	}
 	
 	halloc_free( context );
-	free( config_dir_escaped );
 	
-	if( wchdir( cwd ) == -1 )
-	{
-		/*
-		  If we can't change back to previos directory, we go to
-		  ~. Should be a sane default behavior.
-		*/
-		eval( L"builtin cd", 0, TOP );
-	}
-	else
-	{
-		env_set( L"PWD", cwd, ENV_EXPORT );
-	}
-
 	return 1;
 }
 
 
+/*
+  Parse the argument list, return the index of the first non-switch
+  arguments.
+
+ */
 static int fish_parse_opt( int argc, char **argv, char **cmd_ptr )
 {
 	int my_optind;
 	int force_interactive=0;
-	
-	
+		
 	while( 1 )
 	{
 		static struct option
@@ -263,9 +255,17 @@ static int fish_parse_opt( int argc, char **argv, char **cmd_ptr )
 	
 	is_login |= (strcmp( argv[0], "-fish") == 0);
 		
+	/*
+	  We are an interactive session if we have not been given an
+	  explicit command to execute, _and_ stdin is a tty.
+	 */
 	is_interactive_session &= (*cmd_ptr == 0);
 	is_interactive_session &= (my_optind == argc);
 	is_interactive_session &= isatty(STDIN_FILENO);	
+
+	/*
+	  We are also an interactive session if we have are forced-
+	 */
 	is_interactive_session |= force_interactive;
 
 	return my_optind;
@@ -301,7 +301,6 @@ int main( int argc, char **argv )
 		no_exec = 0;
 	}
 	
-
 	proc_init();	
 	event_init();	
 	wutil_init();
@@ -325,7 +324,7 @@ int main( int argc, char **argv )
 		{
 			if( my_optind == argc )
 			{
-				res = reader_read( 0 );				
+				res = reader_read( 0, 0 );				
 			}
 			else
 			{
@@ -361,27 +360,31 @@ int main( int argc, char **argv )
 
 				rel_filename = str2wcs( file );
 				abs_filename = wrealpath( rel_filename, 0 );
+
 				if( !abs_filename )
+				{
 					abs_filename = wcsdup(rel_filename);
+				}
+
 				reader_push_current_filename( intern( abs_filename ) );
 				free( rel_filename );
 				free( abs_filename );
 
-				res = reader_read( fd );
+				res = reader_read( fd, 0 );
 
 				if( res )
 				{
 					debug( 1, 
-						   _(L"Error while reading file %ls\n"), 
-						   reader_current_filename()?reader_current_filename(): _(L"Standard input") );
+					       _(L"Error while reading file %ls\n"), 
+					       reader_current_filename()?reader_current_filename(): _(L"Standard input") );
 				}				
 				reader_pop_current_filename();
 			}
 		}
 	}
-
+	
 	proc_fire_event( L"PROCESS_EXIT", EVENT_EXIT, getpid(), res );
-
+	
 	history_destroy();
 	proc_destroy();
 	builtin_destroy();
@@ -390,12 +393,12 @@ int main( int argc, char **argv )
 	parser_destroy();
 	wutil_destroy();
 	event_destroy();
-
+	
 	halloc_util_destroy();
-
+	
 	env_destroy();
-
+	
 	intern_free_all();
-
+	
 	return res?STATUS_UNKNOWN_COMMAND:proc_get_last_status();	
 }

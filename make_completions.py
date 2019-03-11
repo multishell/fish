@@ -4,85 +4,155 @@ import sys
 import commands
 import re
 
+# Regexes for performing cleanup
+
+cl = { re.compile(r"-[ \t]*\n[ \t\r]+" ):"",
+       re.compile(r"[ \n\t\r]+", re.MULTILINE):" ",
+       re.compile(r"^[ \n\t\r]"):"",
+       re.compile(r"[ \n\t\r]$"):"" }
+
+def header(cmd):
+  print '''#
+# Command specific completions for the %s command.
+# These completions where generated from the commands
+# man page by the make_completions.py script, but may
+# have been hand edited since.
+#
+''' % (cmd)
+
+def up_first(s):
+  return s[0].upper() + s[1:]
+
 def escape_quotes(s):
   return re.sub('\'', '\\\'', s)
 
 def escape(s):
   return re.sub('([\'"#%*?])', r"\\\1", s)
 
-def print_completion( cmd, switch_name, desc ):
+def clean(s):
+  res=s
+  for r, str in cl.items():
+    res = r.sub(str, res)
+  return res
 
-	offset=1
-	switch_type = "o"
+def print_completion( cmd, switch_arr, arg, desc ):
 
-	if len(switch_name) == 2:
-		switch_type = "s"
+  if len(switch_arr)==0:
+    return
+  
+  res = "complete -c %s" % (cmd)
+  for sw in switch_arr:
+    
+    offset=1
+    switch_type = "o"
+    
+    if len(sw) == 2:
+      switch_type = "s"
 
-	if switch_name[1] == "-":
-		switch_type = "l"
-		offset=2
+    if sw[1] == "-":
+      switch_type = "l"
+      offset=2
 
-	print "complete -c %s -%s %s --description '%s'" % (cmd, switch_type, escape( switch_name[offset:] ), escape_quotes(desc))
+    res += " -%s %s" % (switch_type, escape(sw[offset:]))
 
-def clean_whitespace( str ):
-	clean_whitespace_prog0 = re.compile( r"-[ \t]*\n[ \t\r]+" )
-	clean_whitespace_prog1 = re.compile( r"[ \n\t]+" )
-	clean_whitespace_prog2 = re.compile( r"^[ \t\r]*", re.MULTILINE )
-	str = clean_whitespace_prog0.sub( "", str )
-	str = clean_whitespace_prog1.sub( " ", str )
-	str = clean_whitespace_prog2.sub( "", str )
-	return str
+  res += " --description '%s'" % (up_first(escape_quotes(clean(desc))))
 
-
+  print res
 
 cmd = sys.argv[1]
+
+header(cmd)
+
 man = commands.getoutput( "man %s | col -b" % cmd )
+
 remainder = man
 
-re1 = r"\n( *-[^ ,]*  *(|\n))+[^.]+"
-prog1 = re.compile(re1, re.MULTILINE)
+MODE_NONE = 0
+MODE_SWITCH = 1
+MODE_BETWEEN = 2
+MODE_BETWEEN_IGNORE = 3
+MODE_DESC = 4
 
-re2 = r"^(|=[^ ]*)( |\n)*(?P<switch>-[^ =./\n]+)(  *[^-\n ]*\n|)"
-prog2 = re.compile(re2, re.MULTILINE)
+mode = MODE_NONE
+pos = 0
+sw=''
+sw_arr=[]
+switch_end="= \t\n[,"
+switch_between_ignore="[="
+switch_between_continue=" \t\n|"
+before_switch=" \t\r"
+between_ignore=" \t\n]"
+pc=False
+desc=''
 
-while True:
+can_be_switch =True
 
-	match = prog1.search( remainder )  
+for c in man:
 
-	if match == None:
-		break
+  if mode == MODE_NONE:
+    if c == '-' and can_be_switch:
+      mode = MODE_SWITCH
+      sw = '-'
 
-#	print "yay match!!!\n"
-	str = match.string[match.start():match.end()]
+    elif c == '\n':
+      can_be_switch = True
+    elif before_switch.find(c)<0:
+      can_be_switch = False
+      
 
-#	print str
+  elif mode == MODE_SWITCH:
+    if not switch_end.find(c)>=0:
+      sw+=c
+    else:
+      if len(sw) > 1:
+        sw_arr.append(sw)
+      
+      if switch_between_ignore.find(c) >= 0:
+        mode=MODE_BETWEEN_IGNORE
+      else:
+        mode=MODE_BETWEEN
+    #  print "End of switch argumnt", sw, "switch to between mode"
+      sw=''
 
-	rem2 = str
+  elif mode == MODE_BETWEEN:
+    if c == '-':
+      mode = MODE_SWITCH
+      sw = '-'
+    elif switch_between_ignore.find(c) >= 0:
+      mode = MODE_BETWEEN_IGNORE
+   #   print "Found character", c, "switching to ignore mode"
+    elif not switch_between_continue.find(c) >= 0:
+      mode = MODE_DESC
+      desc = c
+        
+  elif mode == MODE_BETWEEN_IGNORE:
+    if between_ignore.find(c)>=0:
+      mode = MODE_BETWEEN
 
-	switch = []
+  elif mode == MODE_DESC:
 
-	while True:
-		match2 = prog2.search( rem2 )
+    stop = False
 
-		if match2 == None:
-			break
+    if c == '.':
+      stop = True
 
-		sw = match2.expand( r"\g<switch>" )
-#		print "yay switch %s!!!\n" %sw
+    if c == '\n' and pc == '\n':
+      stop=True
 
-		switch.append( sw )
+    if stop:      
+      mode=MODE_NONE
+      
+      print_completion( cmd, sw_arr, None, desc )
 
-		rem2 = rem2[match2.end():]
+      sw_arr = []
 
-	desc = clean_whitespace(rem2)
+      desc = ''
+      
+    else:
+      desc += c
 
-	if len( desc) > 8:
-
-#		print "Yay desc '%s'!!\n" % desc
-
-		for i in switch:
-			print_completion( cmd, i, desc )
-
-
-	remainder = remainder[match.end():]
+  else:
+    print "Unknown mode", mode
+      
+  pc = c
 

@@ -741,8 +741,8 @@ command</a>.
 
 Example: 
 
-To set the variable \c smurf to the value \c blue, use the command
-<code>set smurf blue</code>.
+To set the variable \c smurf_color to the value \c blue, use the command
+<code>set smurf_color blue</code>.
 
 After a variable has been set, you can use the value of a variable in
 the shell through <a href="expand-variable">variable expansion</a>.
@@ -751,7 +751,8 @@ Example:
 
 To use the value of a the variable \c smurf, write $ (dollar symbol)
 followed by the name of the variable, like <code>echo Smurfs are
-$smurf</code>, which would print the result 'Smurfs are blue'.
+usually $smurf_color</code>, which would print the result 'Smurfs are
+usually blue'.
 
 \subsection variables-scope Variable scope
 
@@ -853,7 +854,7 @@ identical to the scoping rules for variables:
 
 -# If a variable is explicitly set to either be exported or not exported, that setting will be honored.
 -# If a variable is not explicitly set to be exported or not exported, but has been previously defined, the previous exporting rule for the variable is kept.
--# If a variable is not explicitly set to be either global or local and has never before been defined, the variable will not be exported.
+-# If a variable is not explicitly set to be either exported or not exported and has never before been defined, the variable will not be exported.
 
 
 \subsection variables-arrays Arrays
@@ -911,7 +912,7 @@ The user can change the settings of \c fish by changing the values of
 certain environment variables.
 
 - \c BROWSER, which is the users preferred web browser. If this variable is set, fish will use the specified browser instead of the system default browser to display the fish documentation.
-- \c CDPATH, which is an array of directories in which to search for the new directory for the \c cd builtin.
+- \c CDPATH, which is an array of directories in which to search for the new directory for the \c cd builtin. The fish init files defined CDPATH to be a universal variable with the values . and ~.
 - A large number of variable starting with the prefixes \c fish_color and \c fish_pager_color. See <a href='#variables-color'>Variables for changing highlighting colors</a> for more information.
 - \c fish_greeting, which is the greeting message printed on startup.
 - \c LANG, \c LC_ALL, \c LC_COLLATE, \c LC_CTYPE, \c LC_MESSAGES, \c LC_MONETARY, \c LC_NUMERIC and \c LC_TIME set the language option for the shell and subprograms. See the section <a href='#variables-locale'>Locale variables</a> for more information.
@@ -930,12 +931,20 @@ values of most of these variables.
 - \c status, which is the exit status of the last foreground job to exit. 
 - \c USER, which is the username. This variable can only be changed by the root user.
 
+The names of these variables are mostly derived from the csh family of
+shells and differ from the ones used by Bourne style shells such as
+bash. The csh names where chosen because Bourne style names, such as
+?, * and @ lead to significantly less readable code, and much larger
+discoverability problems, and given the existence of tab completion,
+the keystroke savings are minimal.
+
 Variables whose name are in uppercase are exported to the commands
 started by fish, those in lowercase are not exported. This rule is not
 enforced by fish, but it is good coding practice to use casing to
 distinguish between exported and unexported variables. \c fish also
 uses several variables internally. Such variables are prefixed with
-the string __FISH or __fish. These should be ignored by the user.
+the string __FISH or __fish. These should never be used by the
+user. Changing their value may break fish.
 
 \subsection variables-status The status variable
 
@@ -953,8 +962,9 @@ If fish encounters a problem while executing a command, the status
 variable may also be set to a specific value:
 
 - 1 is the generally the exit status from fish builtins if they where supplied with invalid arguments
-- 125 means an unknown error occured while trying to execute the command
-- 126 means that the command was not executed because none of the wildcards in the command produced any matches
+- 124 means that the command was not executed because none of the wildcards in the command produced any matches
+- 125 means that while an executable with the specified name was located, the operating system could not actually execute the command
+- 126 means that while a file with the specified name was located, it was not executable
 - 127 means that no function, builtin or command with the given name could be located
 
 \subsection variables-color Variables for changing highlighting colors
@@ -1052,14 +1062,8 @@ Here are some of the commands available in the editor:
 - Alt-l lists the contents of the current directory, unless the cursor is over a directory argument, in which case the contents of that directory will be listed 
 - Alt-p adds the string '| less;' to the end of the job under the cursor. The result is that the output of the command will be paged.
 
-You can change these key bindings by making an inputrc file. To do
-this, copy the file /etc/fish/fish_inputrc to your home directory and
-rename it to '.config/fish/fish_inputrc'. Now you can edit the file
-to change your key bindings. The file format of this file is described
-in the manual page for readline. Use the command <code>man readline</code>
-to read up on this syntax. Please note that the list of key binding
-functions in fish is different to that offered by readline. Currently,
-the following functions are available:
+You can change these key bindings using the 
+<a href="commands.html#bind">bind</a> builtin command. 
 
 
 - \c backward-char, moves one character to the left
@@ -1086,11 +1090,9 @@ the following functions are available:
 - \c yank, insert the latest entry of the killring into the buffer
 - \c yank-pop, rotate to the previous entry of the killring
 
-You can also bind a pice of shellscript to a key using the same
-syntax. For example, the Alt-p functionality described above is
-implemented using the following keybinding.
-
-<pre>"\M-p": if commandline -j|grep -v 'less *$' &gt;/dev/null; commandline -aj "|less;"; end</pre>
+If such a script produces output, the script needs to finish by
+calling 'commandline -f repaint' in order to tell fish that a repaint
+is in order.
 
 \subsection killring Copy and paste (Kill Ring) 
 
@@ -1230,28 +1232,6 @@ Issuing <code>set fish_color_error black --background=red
 --bold</code> will make all commandline errors be written in a black,
 bold font, with a red background.
 
-\subsection prompt Programmable prompt
-
-By defining the \c fish_prompt function, the user can choose a custom
-prompt. The \c fish_prompt function is executed and the output is used
-as a prompt.
-
-Example: 
-<p>
-The default \c fish prompt is 
-</p>
-<p>
-<pre>
-function fish_prompt -d "Write out the prompt"
-	printf '\%s\@\%s\%s\%s\%s> ' (whoami) (hostname|cut -d . -f 1) (set_color \$fish_color_cwd) (prompt_pwd) (set_color normal)
-end
-</pre>
-
-where \c prompt_pwd is a shellscript function that displays a condensed version of the current working directory.
-
-</p>
-
-
 \subsection title Programmable title
 
 When using most virtual terminals, it is possible to set the message
@@ -1285,6 +1265,7 @@ specific event takes place. Events that can trigger a handler currently are:
 - When a signal is delivered
 - When a process or job exits
 - When the value of a variable is updated
+- When the prompt is about to be shown
 
 Example:
 
@@ -1298,6 +1279,20 @@ end
 For more information on how to define new event handlers, see the
 documentation for the <a href='commands.html#function'>function</a>
 command.
+
+\subsection debuging Debuging fish scripts
+
+Fish includes a built in debuger. The debuger allows you to stop
+execution of a script at an arbitrary point and launch a prompt. This
+prompt can then be used to check or change the value of any variables
+or perform any shellscript command. To resume normal execution of the
+script, simply exit the prompt.
+
+To start the debugger, simply call the builtin command
+'breakpoint'. The default action of the TRAP signal is to call this
+builtin, so a running script can be debuged by sending it the TRAP
+signal. Once in the debuger, it is easy to insert new breakpoints by
+using the funced function to edit the definition of a function.
 
 \section issues Common issues with fish
 
@@ -1374,28 +1369,19 @@ href='fish-users@lists.sf.net'>fish-users@lists.sf.net</a>.
 
 \subsection todo-features Missing features
 
-- A limited interactive mode for really dumb terminals
-- The completion autoloader does not remember which completions where actually autoloaded, and may unload manually specified completions. 
-- Use a struct to describe a possible completion instead of a weirdly formated string
 - Complete vi-mode key bindings
-- More completions (for example xterm, vim, 
-konsole, gnome-terminal, cron,
+- More completions (for example konsole, gnome-terminal, 
 rlogin, rsync, arch, finger, bibtex, aspell, xpdf,
-compress, wine, xmms, dig, batch, cron, 
+compress, wine, dig, batch, 
 g++, javac, java, gcj, lpr, doxygen, whois)
 - Undo support
-- Check keybinding commands for output - if nothing has happened, don't repaint to reduce flicker
 - wait shellscript
 - Support for the screen clipboard
 - It should be possible to test in a script if a function is autoloaded or manually defined
-- A pretty-printer. It should among other things be able to indent a piece of code.
-- Up/down to move between lines in multiline mode
-- a 'funced' function, which works like the vared function. Needs the above three features in order to work well.
 - The validator should be better about error reporting unclosed quotes. They are usually reported as something else.
 
 \subsection todo-possible Possible features
 
-- tab completion could use smart casing
 - mouse support like zsh has with http://stchaz.free.fr/mouse.zsh 
   installed would be awesome
 - suggest a completion on unique matches by writing it out in an understated color
@@ -1405,7 +1391,6 @@ g++, javac, java, gcj, lpr, doxygen, whois)
 - Descriptions for variables using 'set -d'.
 - Parse errors should when possible honor IO redirections
 - Support for writing strings like /u/l/b/foo and have them expand to /usr/local/bin/foo - perhaps through tab expansion
-- Autoreload inputrc-file on updates
 - Right-side prompt
 - Selectable completions in the pager
 - Per process output redirection
@@ -1415,7 +1400,6 @@ g++, javac, java, gcj, lpr, doxygen, whois)
 - History could reload itself when the file is updated. This would need to be done in a clever way to avoid chain reactions
 - The error function should probably be moved into it's own library, and be made mere general purpose.
 - The code validation functions should be moved from the parser to parse_util.
-- The parser_is_* functions should be moved to parse_util. Possibly, they should be made into a single function, i.e. parse_util_classify( "begin", BLOCK_COMMAND);
 - Try to remove more malloc calls to reduce memory usage. The time_t arrays used by the autoloader sound like a good candidate. 
 - The code validator should warn about unknown commands.
 - Auto-newlines
@@ -1423,15 +1407,17 @@ g++, javac, java, gcj, lpr, doxygen, whois)
 - The parser/validator could be more clever in order to make things like writing 'function --help' work as expected
 - Some event handler functions make much more sense as oneshots - maybe they should be automatically deleted after firing?
 - exec_subshell should be either merged with eval or moved to parser.c
+- Don't use expand_string to perform completions. wildcard_complete can be called directly, the brace expansion handling should be universal, and the process expansion can be moved to complete.c.
+- Make the history search support incremental searching
+- An automatic logout feature 
 
 \subsection bugs Known bugs and issues
 
 - Suspending and then resuming pipelines containing a builtin or a shellscript function is broken. Ideally, the exec function in exec.c should be able to resume execution of a partially executed job.
 - delete-word is broken on the commandline 'sudo update-alternatives --config x-'
-- When a builtin has its output redirected to a file, and the builtin does not produce any IO, then the file is never opened. Thus tha file may not be cleared.
-- No '--' completion
-- else is not indented properly
-- if an if fails inside an if, the out if's else may trigger
+- Sometimes autoheader needs to be run on a fresh tarball. Fix dates before creating tarballs.
+- The completion autoloader does not remember which completions where actually autoloaded, and may unload manually specified completions. 
+- There have been stray reports of issues with strang values of the PATH variable during startup. 
 
 If you think you have found a bug not described here, please send a
 report to <a href="mailto:fish-users@lists.sf.net">fish-users@lists.sf.net</a>.

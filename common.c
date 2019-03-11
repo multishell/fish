@@ -214,7 +214,7 @@ int fgetws2( wchar_t **b, int *len, FILE *f )
 /**
    Wrapper for wcsfilecmp
 */
-static int completion_cmp( const void *a, const void *b )
+static int str_cmp( const void *a, const void *b )
 {
 	wchar_t *c= *((wchar_t **)a);
 	wchar_t *d= *((wchar_t **)b);
@@ -226,7 +226,7 @@ void sort_list( array_list_t *comp )
 	qsort( comp->arr, 
 		   al_get_count( comp ),
 		   sizeof( void*),
-		   &completion_cmp );
+		   &str_cmp );
 }
 
 wchar_t *str2wcs( const char *in )
@@ -258,15 +258,27 @@ wchar_t *str2wcs_internal( const char *in, wchar_t *out )
 	len = strlen(in);
 
 	memset( &state, 0, sizeof(state) );
-	
+
 	while( in[in_pos] )
 	{
 		res = mbrtowc( &out[out_pos], &in[in_pos], len-in_pos, &state );
 
-		switch( res )
+		if( ( ( out[out_pos] >= ENCODE_DIRECT_BASE) &&
+		      ( out[out_pos] < ENCODE_DIRECT_BASE+256)) ||
+		    ( out[out_pos] == INTERNAL_SEPARATOR ) )
 		{
-			case (size_t)(-2):
-			case (size_t)(-1):
+			out[out_pos] = ENCODE_DIRECT_BASE + (unsigned char)in[in_pos];
+			in_pos++;
+			memset( &state, 0, sizeof(state) );
+			out_pos++;
+		}
+		else
+		{
+			
+			switch( res )
+			{
+				case (size_t)(-2):
+				case (size_t)(-1):
 				{
 					out[out_pos] = ENCODE_DIRECT_BASE + (unsigned char)in[in_pos];
 					in_pos++;
@@ -274,18 +286,20 @@ wchar_t *str2wcs_internal( const char *in, wchar_t *out )
 					break;
 				}
 				
-			case 0:
-			{
-				return out;
-			}
+				case 0:
+				{
+					return out;
+				}
 		
-			default:
-			{
-				in_pos += res;
-				break;
+				default:
+				{
+					in_pos += res;
+					break;
+				}
 			}
+			out_pos++;
 		}
-		out_pos++;
+		
 	}
 	out[out_pos] = 0;
 	
@@ -324,7 +338,7 @@ char *wcs2str_internal( const wchar_t *in, char *out )
 		{
 		}
 		else if( ( in[in_pos] >= ENCODE_DIRECT_BASE) &&
-			( in[in_pos] < ENCODE_DIRECT_BASE+256) )
+			 ( in[in_pos] < ENCODE_DIRECT_BASE+256) )
 		{
 			out[out_pos++] = in[in_pos]- ENCODE_DIRECT_BASE;
 		}
@@ -371,12 +385,7 @@ char **wcsv2strv( const wchar_t **in )
 
 }
 
-wchar_t *wcsdupcat( const wchar_t *a, const wchar_t *b )
-{
-	return wcsdupcat2( a, b, (void *)0 );
-}
-
-wchar_t *wcsdupcat2( const wchar_t *a, ... )
+wchar_t *wcsdupcat_internal( const wchar_t *a, ... )
 {
 	int len=wcslen(a);
 	int pos;
@@ -534,7 +543,7 @@ const wchar_t *wsetlocale(int category, const wchar_t *locale)
 	return (wchar_t *)setlocale_buff->buff;	
 }
 
-int contains_str( const wchar_t *a, ... )
+int contains_internal( const wchar_t *a, ... )
 {
 	wchar_t *arg;
 	va_list va;
@@ -693,17 +702,50 @@ void write_screen( const wchar_t *msg, string_buffer_t *buff )
 	sb_append_char( buff, L'\n' );
 }
 
-wchar_t *escape( const wchar_t *in, 
-				 int escape_all )
+static wchar_t *escape_simple( const wchar_t *in )
 {
 	wchar_t *out;
+	size_t len = wcslen(in);
+	out = malloc( sizeof(wchar_t)*(len+3));
+	if( !out )
+		DIE_MEM();
+	
+	out[0] = L'\'';
+	wcscpy(&out[1], in );
+	out[len+1]=L'\'';
+	out[len+2]=0;
+	return out;
+}
+
+
+wchar_t *escape( const wchar_t *in_orig, 
+		 int flags )
+{
+	const wchar_t *in = in_orig;
+	
+	int escape_all = flags & ESCAPE_ALL;
+	int no_quoted  = flags & ESCAPE_NO_QUOTED;
+	
+	wchar_t *out;
 	wchar_t *pos;
+
+	int need_escape=0;
+	int need_complex_escape=0;
 
 	if( !in )
 	{
 		debug( 0, L"%s called with null input", __func__ );
 		FATAL_EXIT();
 	}
+
+	if( !no_quoted && (wcslen( in ) == 0) )
+	{
+		out = wcsdup(L"''");
+		if( !out )
+			DIE_MEM();
+		return out;
+	}
+	
 	
 	out = malloc( sizeof(wchar_t)*(wcslen(in)*4 + 1));
 	pos = out;
@@ -728,6 +770,7 @@ wchar_t *escape( const wchar_t *in,
 			
 			tmp = val%16;			
 			*pos++ = tmp > 9? L'a'+(tmp-10):L'0'+tmp;
+			need_escape=need_complex_escape=1;
 			
 		}
 		else
@@ -738,29 +781,44 @@ wchar_t *escape( const wchar_t *in,
 				case L'\t':
 					*(pos++) = L'\\';
 					*(pos++) = L't';					
+					need_escape=need_complex_escape=1;
 					break;
 					
 				case L'\n':
 					*(pos++) = L'\\';
 					*(pos++) = L'n';					
+					need_escape=need_complex_escape=1;
 					break;
 					
 				case L'\b':
 					*(pos++) = L'\\';
 					*(pos++) = L'b';					
+					need_escape=need_complex_escape=1;
 					break;
 					
 				case L'\r':
 					*(pos++) = L'\\';
 					*(pos++) = L'r';					
+					need_escape=need_complex_escape=1;
 					break;
 					
-				case L'\e':
+				case L'\x1b':
 					*(pos++) = L'\\';
 					*(pos++) = L'e';					
+					need_escape=need_complex_escape=1;
 					break;
 					
+
 				case L'\\':
+				case L'\'':
+				{
+					need_escape=need_complex_escape=1;
+					if( escape_all )
+						*pos++ = L'\\';
+					*pos++ = *in;
+					break;
+				}
+
 				case L'&':
 				case L'$':
 				case L' ':
@@ -778,11 +836,11 @@ wchar_t *escape( const wchar_t *in,
 				case L'*':
 				case L'|':
 				case L';':
-				case L'\'':
 				case L'"':
 				case L'%':
 				case L'~':
 				{
+					need_escape=1;
 					if( escape_all )
 						*pos++ = L'\\';
 					*pos++ = *in;
@@ -793,11 +851,24 @@ wchar_t *escape( const wchar_t *in,
 				{
 					if( *in < 32 )
 					{
+						if( *in <27 && *in > 0 )
+						{
+							*(pos++) = L'\\';
+							*(pos++) = L'c';
+							*(pos++) = L'a' + *in -1;
+							
+							need_escape=need_complex_escape=1;
+							break;
+								
+						}
+						
+
 						int tmp = (*in)%16;
 						*pos++ = L'\\';
 						*pos++ = L'x';
 						*pos++ = ((*in>15)? L'1' : L'0');
 						*pos++ = tmp > 9? L'a'+(tmp-10):L'0'+tmp;
+						need_escape=need_complex_escape=1;
 					}
 					else
 					{
@@ -811,6 +882,17 @@ wchar_t *escape( const wchar_t *in,
 		in++;
 	}
 	*pos = 0;
+
+	/*
+	  Use quoted escaping if possible, since most people find it
+	  easier to read. 
+	 */
+	if( !no_quoted && need_escape && !need_complex_escape && escape_all )
+	{
+		free( out );
+		out = escape_simple( in_orig );
+	}
+	
 	return out;
 }
 
@@ -999,7 +1081,7 @@ wchar_t *unescape( const wchar_t * orig, int flags )
 						}
 						
 						/*
-						  \e means escape
+						  \x1b means escape
 						*/
 						case L'e':
 						{
@@ -1044,7 +1126,7 @@ wchar_t *unescape( const wchar_t * orig, int flags )
 						}
 
 						/*
-						  \v means vetrical tab
+						  \v means vertical tab
 						*/
 						case L'v':
 						{
@@ -1483,7 +1565,7 @@ int acquire_lock_file( const char *lockfile, const int timeout, int force )
 		goto done;
 	}
 	(void)unlink( linkfile );
-	if( ( fd = open( linkfile, O_CREAT|O_RDONLY ) ) == -1 )
+	if( ( fd = open( linkfile, O_CREAT|O_RDONLY, 0600 ) ) == -1 )
 	{
 		debug( 1, L"acquire_lock_file: open: %s", strerror( errno ) );
 		goto done;
@@ -1671,8 +1753,50 @@ int create_directory( wchar_t *d )
 void bugreport()
 {
 	debug( 1,
-		   _( L"This is a bug. "
-			  L"If you can reproduce it, please send a bug report to %s." ),
+	       _( L"This is a bug. "
+		  L"If you can reproduce it, please send a bug report to %s." ),
 		PACKAGE_BUGREPORT );
 }
 
+
+void sb_format_size( string_buffer_t *sb,
+		     long long sz )
+{
+	wchar_t *sz_name[]=
+		{
+			L"kB", L"MB", L"GB", L"TB", L"PB", L"EB", L"ZB", L"YB", 0
+		}
+	;
+
+	if( sz < 0 )
+	{
+		sb_append( sb, L"unknown" );
+	}
+	else if( sz < 1 )
+	{
+		sb_append( sb, _( L"empty" ) );
+	}
+	else if( sz < 1024 )
+	{
+		sb_printf( sb, L"%lldB", sz );
+	}
+	else
+	{
+		int i;
+		
+		for( i=0; sz_name[i]; i++ )
+		{
+			if( sz < (1024*1024) || !sz_name[i+1] )
+			{
+				int isz = sz/1024;
+				if( isz > 9 )
+					sb_printf( sb, L"%d%ls", isz, sz_name[i] );
+				else
+					sb_printf( sb, L"%.1f%ls", (double)sz/1024, sz_name[i] );
+				break;
+			}
+			sz /= 1024;
+			
+		}
+	}		
+}

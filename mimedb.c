@@ -12,7 +12,7 @@ because of the performance implications of parsing xml. The current
 version only does a simple string search, which is much, much
 faster but it might fall on it's head.
 
-This code is Copyright 2005 Axel Liljencrantz.
+This code is Copyright 2005-2008 Axel Liljencrantz.
 It is released under the GPL.
 
 The xdgmime library is dual licensed under LGPL/artistic
@@ -66,7 +66,7 @@ license. Read the source code of the library for more information.
 /**
    Start tag for langauge-specific comment
 */
-#define START_TAG "<comment *(| +xml:lang *= *(\"%s\"|'%s') *)>"
+#define START_TAG "<comment( +xml:lang *= *(\"%s\"|'%s'))? *>"
 
 /**
    End tab for comment
@@ -418,7 +418,7 @@ static char *get_lang_re()
 	const char *lang = setlocale( LC_MESSAGES, 0 );
 	int close=0;
 	char *out=buff;
-
+    
 	if( (1+strlen(lang)*4) >= BUFF_SIZE )
 	{
 		fprintf( stderr, _( "%s: Locale string too long\n"), MIMEDB );
@@ -434,11 +434,13 @@ static char *get_lang_re()
 			case '.':
 			case '_':
 				if( close )
+				{
 					*out++ = ')';
+					*out++ = '?';
+				}
 				
 				close=1;
 				*out++ = '(';
-				*out++ = '|';
 				*out++ = *lang;
 				break;
 				
@@ -448,8 +450,12 @@ static char *get_lang_re()
 	}
 	
 	if( close )
+	{
 		*out++ = ')';
+		*out++ = '?';
+	}
 	*out++=0;
+
 	return buff;
 }
 
@@ -480,18 +486,32 @@ static char *get_description( const char *mimetype )
 		start_re = my_malloc( sizeof(regex_t));
 		stop_re = my_malloc( sizeof(regex_t));
 		
-		if( regcomp( start_re, buff, REG_EXTENDED ) || 
-			regcomp( stop_re, STOP_TAG, REG_EXTENDED ) )
-		{
-			fprintf( stderr, _( "%s: Could not compile regular expressions\n"), MIMEDB );
+        int reg_status;
+		if( ( reg_status = regcomp( start_re, buff, REG_EXTENDED ) ) )
+        {
+            char regerrbuf[BUFF_SIZE];
+            regerror(reg_status, start_re, regerrbuf, BUFF_SIZE);
+			fprintf( stderr, _( "%s: Could not compile regular expressions %s with error %s\n"), MIMEDB, buff, regerrbuf);
 			error=1;
+        
+        }
+        else if ( ( reg_status = regcomp( stop_re, STOP_TAG, REG_EXTENDED ) ) )
+		{
+            char regerrbuf[BUFF_SIZE];
+            regerror(reg_status, stop_re, regerrbuf, BUFF_SIZE);
+			fprintf( stderr, _( "%s: Could not compile regular expressions %s with error %s\n"), MIMEDB, buff, regerrbuf);
+			error=1;
+        
+        }
 
+        if( error )
+        {
 			free( start_re );
 			free( stop_re );
 			start_re = stop_re = 0;
 
 			return 0;
-		}
+        }
 	}
 	
 	fn_part = my_malloc( strlen(MIME_DIR) + strlen( mimetype) + strlen(MIME_SUFFIX) + 1 );
@@ -742,6 +762,7 @@ static void writer_hex( int num )
 	int a, b;
 	a = num /16;
 	b = num %16;
+
 	writer( a>9?('A'+a-10):('0'+a));
 	writer( b>9?('A'+b-10):('0'+b));
 }
@@ -830,7 +851,7 @@ static void write_url( char *file )
 		if( ((*str >= 'a') && (*str <='z')) ||
 			((*str >= 'A') && (*str <='Z')) ||
 			((*str >= '0') && (*str <='9')) ||
-			(strchr( "./_",*str) != 0) )
+			(strchr( "-_.~/",*str) != 0) )
 		{
 			writer(*str);			
 		}
@@ -842,7 +863,7 @@ static void write_url( char *file )
 		else
 		{
 			writer( '%' );
-			writer_hex( *str );
+			writer_hex( (unsigned char)*str );
 		}
 		str++;
 	}
@@ -1324,6 +1345,9 @@ int main (int argc, char *argv[])
 			case DESCRIPTION:
 			{
 				output = get_description( mimetype );				
+				if( !output )
+					output = strdup( _("Unknown") );
+				
 				break;
 			}
 			case ACTION:

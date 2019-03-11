@@ -135,6 +135,97 @@ int parse_util_lineno( const wchar_t *str, int len )
 	return res;
 }
 
+
+int parse_util_get_line_from_offset( wchar_t *buff, int pos )
+{
+	//	return parse_util_lineno( buff, pos );
+
+	int i;
+	int count = 0;
+	if( pos < 0 )
+	{
+		return -1;
+	}
+	
+	for( i=0; i<pos; i++ )
+	{
+		if( !buff[i] )
+		{
+			return -1;
+		}
+		
+		if( buff[i] == L'\n' )
+		{
+			count++;
+		}
+	}
+	return count;
+}
+
+
+int parse_util_get_offset_from_line( wchar_t *buff, int line )
+{
+	int i;
+	int count = 0;
+	
+	if( line < 0 )
+	{
+		return -1;
+	}
+
+	if( line == 0 )
+		return 0;
+		
+	for( i=0;; i++ )
+	{
+		if( !buff[i] )
+		{
+			return -1;
+		}
+		
+		if( buff[i] == L'\n' )
+		{
+			count++;
+			if( count == line )
+			{
+				return i+1;
+			}
+			
+		}
+	}
+}
+
+int parse_util_get_offset( wchar_t *buff, int line, int line_offset )
+{
+	int off = parse_util_get_offset_from_line( buff, line );
+	int off2 = parse_util_get_offset_from_line( buff, line+1 );
+	int line_offset2 = line_offset;
+	
+	if( off < 0 )
+	{
+		return -1;
+	}
+	
+	if( off2 < 0 )
+	{
+		off2 = wcslen( buff )+1;
+	}
+	
+	if( line_offset2 < 0 )
+	{
+		line_offset2 = 0;
+	}
+	
+	if( line_offset2 >= off2-off-1 )
+	{
+		line_offset2 = off2-off-1;
+	}
+	
+	return off + line_offset2;
+	
+}
+
+
 int parse_util_locate_cmdsubst( const wchar_t *in, 
 								wchar_t **begin, 
 								wchar_t **end,
@@ -923,7 +1014,7 @@ static int parse_util_load_internal( const wchar_t *cmd,
 		struct stat buf;
 		wchar_t *next = (wchar_t *)al_get( path_list, i );
 		sb_clear( path );
-		sb_append2( path, next, L"/", cmd, L".fish", (void *)0 );
+		sb_append( path, next, L"/", cmd, L".fish", (void *)0 );
 
 		if( (wstat( (wchar_t *)path->buff, &buf )== 0) &&
 			(waccess( (wchar_t *)path->buff, R_OK ) == 0) )
@@ -1001,7 +1092,7 @@ static int parse_util_load_internal( const wchar_t *cmd,
 	return reloaded;	
 }
 
-void parse_util_set_argv( wchar_t **argv )
+void parse_util_set_argv( wchar_t **argv, array_list_t *named_arguments )
 {
 	if( *argv )
 	{
@@ -1025,6 +1116,23 @@ void parse_util_set_argv( wchar_t **argv )
 	{
 		env_set( L"argv", 0, ENV_LOCAL );
 	}				
+
+	if( named_arguments )
+	{
+		wchar_t **arg;
+		int i;
+		
+		for( i=0, arg=argv; i < al_get_count( named_arguments ); i++ )
+		{
+			env_set( al_get( named_arguments, i ), *arg, ENV_LOCAL );
+
+			if( *arg )
+				arg++;
+		}
+			
+		
+	}
+	
 }
 
 wchar_t *parse_util_unescape_wildcards( const wchar_t *str )

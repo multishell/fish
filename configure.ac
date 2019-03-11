@@ -9,8 +9,29 @@
 # configure the build process.
 #
 
-AC_INIT(fish,1.22.3,fish-users@lists.sf.net)
+AC_INIT(fish,1.23.0,fish-users@lists.sf.net)
 
+
+#
+# List of output variables produced by this configure script
+#
+
+AC_SUBST( docdir )
+AC_SUBST( HAVE_GETTEXT )
+AC_SUBST( LDFLAGS_FISH )
+AC_SUBST( LIBS_FISH )
+AC_SUBST( LIBS_FISH_INDENT )
+AC_SUBST( LIBS_FISH_PAGER )
+AC_SUBST( LIBS_FISHD )
+AC_SUBST( LIBS_MIMEDB )
+AC_SUBST( LIBS_SET_COLOR )
+AC_SUBST( localedir )
+AC_SUBST( optbindirs )
+AC_SUBST( prefix )
+AC_SUBST( SEQ_FALLBACK )
+AC_SUBST( XSEL )
+AC_SUBST( XSEL_MAN )
+AC_SUBST( XSEL_MAN_PATH )
 
 #
 # If needed, run autoconf to regenerate the configure file
@@ -107,8 +128,6 @@ for i in /usr/pkg /sw /opt /opt/local; do
 
 done
 
-AC_SUBST( optbindirs, $optbindirs )
-
 
 #
 # Tell autoconf to create config.h header 
@@ -134,10 +153,12 @@ AH_BOTTOM([#if __GNUC__ >= 3
 # Set up various programs needed for install
 #
 
-AC_PROG_CC
+# Here we look for c99 before cc as Sun Studio compiler supports c99
+# through the c99 binary.
+
+AC_PROG_CC([gcc c99 cc])
 AC_PROG_CPP
 AC_PROG_INSTALL
-
 
 #
 # Check for seq command. If missing, make sure fallback shellscript
@@ -161,7 +182,7 @@ if test "$SEQ_FALLBACK"; then
 		shebang=`grep "\(^#!/.*/fish\|^#!/usr/bin/env fish\)" $file`
 
 		if test "$shebang"; then
-			AC_SUBST( SEQ_FALLBACK, seq )
+			SEQ_FALLBACK=seq
 			AC_MSG_RESULT(yes, replace it)
 		else
 			AC_MSG_RESULT(no, keep it)
@@ -185,13 +206,9 @@ AC_ARG_WITH(
 )
 
 if [[ "$xsel" = "with_xsel" ]]; then
-	AC_SUBST( XSEL,[xsel-0.9.6/xsel])
-	AC_SUBST( XSEL_MAN,[xsel.1x])
-	AC_SUBST( XSEL_MAN_PATH,[xsel-0.9.6/xsel.1x])
-else
-	AC_SUBST( XSEL,[ ])
-	AC_SUBST( XSEL_MAN,[ ])
-	AC_SUBST( XSEL_MAN_PATH,[ ])
+	XSEL=xsel-0.9.6/xsel
+	XSEL_MAN=xsel.1x
+	XSEL_MAN_PATH=xsel-0.9.6/xsel.1x
 fi
 
 
@@ -217,56 +234,59 @@ fi
 #
 # Test if the compiler accepts the -std=c99 flag. If so, using it
 # increases the odds of correct compilation, since we want to use the
-# *wprintf functions, which where defined in C99. 
+# *wprintf functions, which where defined in C99.
+#
+# NOTE: Never versions of autoconf has AC_CHECK_PROG_CC_C99
 #
 
-XCFLAGS="$CFLAGS"
-CFLAGS="$CFLAGS -std=c99"
-XCPPFLAGS="$CPPFLAGS"
-CPPFLAGS="$CPPFLAGS -std=c99"
-AC_MSG_CHECKING(if -std=c99 works)
+if test "$CC" != "c99"; then
+  XCFLAGS="$CFLAGS"
+	CFLAGS="$CFLAGS -std=c99"
+	XCPPFLAGS="$CPPFLAGS"
+	CPPFLAGS="$CPPFLAGS -std=c99"
+	AC_MSG_CHECKING(if -std=c99 works)
 
-AC_CACHE_VAL(
-	local_cv_has__std_c99,
-	[
-		AC_TRY_RUN(
-			[
-				#include <stdlib.h>
-				#include <stdio.h>
+	AC_CACHE_VAL(
+  	  local_cv_has__std_c99,
+    	[
+      	  AC_TRY_RUN(
+        	    [
+          	      #include <stdlib.h>
+            	    #include <stdio.h>
 
-				int main() 
-				{
-					return 0;
-				}
-			],
-			local_cv_has__std_c99=yes,
-			local_cv_has__std_c99=no,
-		)
-	]
-)
+              	  int main()
+                	{
+                  	  return 0;
+	                }
+	            ],
+	            local_cv_has__std_c99=yes,
+	            local_cv_has__std_c99=no,
+  	      )
+    	]
+	)
+
+	AC_MSG_RESULT($local_cv_has__std_c99)
+	case x$local_cv_has__std_c99 in
+	xno)
+  	  CFLAGS="$XCFLAGS"
+    	CPPFLAGS="$XCPPFLAGS" ;;
+	esac
+fi
 
 #
-# Try to enale large file support. This will make sure that on systems
+# Try to enable large file support. This will make sure that on systems
 # where off_t can be either 32 or 64 bit, the latter size is used. On
 # other systems, this should do nothing. (Hopefully)
 #
 
 CFLAGS="$CFLAGS -D_LARGEFILE_SOURCE=1 -D_FILE_OFFSET_BITS=64"
 
-AC_MSG_RESULT($local_cv_has__std_c99)
-case x$local_cv_has__std_c99 in
-xno) 
-	CFLAGS="$XCFLAGS" 
-	CPPFLAGS="$XCPPFLAGS" ;;
-esac
-
-
 #
 # If we are using gcc, set some flags that increase the odds of the
 # compiler producing a working binary...
 #
 
-if test "$CC" = gcc; then
+if test "$GCC" = yes; then
 
 	#
 	# -fno-optimize-sibling-calls seems to work around a bug where
@@ -291,7 +311,7 @@ if test "$CC" = gcc; then
 	# This is needed in order to get the really cool backtraces
 	#
 
-	LDFLAGS="$LDFLAGS -rdynamic"
+	LDFLAGS_FISH="$LDFLAGS_FISH -rdynamic"
 
 fi
 
@@ -372,6 +392,34 @@ case $target_os in
 		;;
 esac
 
+# Check for Solaris curses tputs having fixed length parameter list.
+AC_MSG_CHECKING([if we are using non varargs tparm.])
+AC_COMPILE_IFELSE(
+	[
+		AC_LANG_PROGRAM(
+			[			
+				#include <curses.h>
+				#include <term.h>
+			],
+			[
+				tparm( "" );
+			]
+		)
+	],
+	[tparm_solaris_kludge=no], 
+	[tparm_solaris_kludge=yes] 
+)
+if test "x$tparm_solaris_kludge" = "xyes"; then
+	AC_MSG_RESULT(yes)
+	AC_DEFINE(
+		[TPARM_SOLARIS_KLUDGE],
+		[1],
+		[Define to 1 if tparm accepts a fixed amount of paramters.]
+  )
+else
+  AC_MSG_RESULT(no)
+fi
+
 
 #
 # BSD-specific flags go here
@@ -398,10 +446,7 @@ esac
 #
 
 if [[ "$prefix" = NONE ]]; then
-	export prefix=/usr/local
-	AC_SUBST( prefix, /usr/local)
-else
-	AC_SUBST( prefix, [$prefix])
+	prefix=/usr/local
 fi
 
 
@@ -413,9 +458,9 @@ fi
 AC_ARG_VAR( [docdir], [Documentation direcotry] )
 
 if test -z $docdir; then
-	AC_SUBST(docdir, [$datadir/doc/fish] )
+	docdir=$datadir/doc/fish
 else
-	AC_SUBST(docdir, [$docdir])
+	docdir=$docdir
 fi
 
 
@@ -424,7 +469,7 @@ fi
 # installed.
 #
 
-AC_SUBST( [localedir], [$datadir/locale])
+localedir=$datadir/locale
 
 
 #
@@ -448,18 +493,96 @@ AC_DEFINE(
 
 
 #
-# Check presense of various libraries
+# Check presense of various libraries. This is done on a per-binary
+# level, since including various extra libraries in all binaries only
+# because thay are used by some of them can cause extra bloat and
+# slower compiles when developing fish.
 #
 
-# Only link with gettext if we are using it
-if test x$local_gettext != xno; then 
-	AC_SEARCH_LIBS( gettext, intl,,)
-fi
+# Check for os dependant libraries for all binaries.
+LIBS_COMMON=$LIBS
+LIBS=""
 AC_SEARCH_LIBS( connect, socket, , [AC_MSG_ERROR([Cannot find the socket library, needed to build this package.] )] )
 AC_SEARCH_LIBS( nanosleep, rt, , [AC_MSG_ERROR([Cannot find the rt library, needed to build this package.] )] )
 AC_SEARCH_LIBS( setupterm, [ncurses curses], , [AC_MSG_ERROR([Could not find a curses implementation, needed to build fish])] )
-AC_SEARCH_LIBS( iconv_open, iconv, , [AC_MSG_ERROR([Could not find an iconv implementation, needed to build fish])] )
+LIBS_SHARED=$LIBS
+LIBS=$LIBS_COMMON
 
+#
+# Check for libraries needed by fish. 
+#
+
+LIBS_COMMON=$LIBS
+LIBS="$LIBS_SHARED"
+if test x$local_gettext != xno; then 
+	AC_SEARCH_LIBS( gettext, intl,,)
+fi
+
+
+AC_SEARCH_LIBS( iconv_open, iconv, , [AC_MSG_ERROR([Could not find an iconv implementation, needed to build fish])] )
+LIBS_FISH=$LIBS
+LIBS=$LIBS_COMMON
+
+#
+# Check for libraries needed by fish_indent. 
+#
+
+LIBS_COMMON=$LIBS
+LIBS="$LIBS_SHARED"
+if test x$local_gettext != xno; then 
+	AC_SEARCH_LIBS( gettext, intl,,)
+fi
+LIBS_FISH_INDENT=$LIBS
+LIBS=$LIBS_COMMON
+
+#
+# Check for libraries needed by fish_pager. 
+#
+
+LIBS_COMMON=$LIBS
+LIBS="$LIBS_SHARED"
+if test x$local_gettext != xno; then 
+	AC_SEARCH_LIBS( gettext, intl,,)
+fi
+LIBS_FISH_PAGER=$LIBS
+LIBS=$LIBS_COMMON
+
+#
+# Check for libraries needed by fishd. 
+#
+
+LIBS_COMMON=$LIBS
+LIBS="$LIBS_SHARED"
+if test x$local_gettext != xno; then 
+	AC_SEARCH_LIBS( gettext, intl,,)
+fi
+LIBS_FISHD=$LIBS
+LIBS=$LIBS_COMMON
+
+#
+# Check for libraries needed by mimedb. 
+#
+
+LIBS_COMMON=$LIBS
+LIBS="$LIBS_SHARED"
+if test x$local_gettext != xno; then 
+	AC_SEARCH_LIBS( gettext, intl,,)
+fi
+LIBS_MIMEDB=$LIBS
+LIBS=$LIBS_COMMON
+
+
+#
+# Check for libraries needed by set_color 
+#
+
+LIBS_COMMON=$LIBS
+LIBS="$LIBS_SHARED"
+if test x$local_gettext != xno; then 
+	AC_SEARCH_LIBS( gettext, intl,,)
+fi
+LIBS_SET_COLOR=$LIBS
+LIBS=$LIBS_COMMON
 
 #
 # Check presense of various header files
@@ -609,7 +732,7 @@ fi
 AC_CHECK_FUNCS( wcsdup wcsndup wcslen wcscasecmp wcsncasecmp fwprintf )
 AC_CHECK_FUNCS( futimes wcwidth wcswidth wcstok fputwc fgetwc )
 AC_CHECK_FUNCS( wcstol wcslcat wcslcpy lrand48_r killpg gettext )
-AC_CHECK_FUNCS( dcgettext backtrace backtrace_symbols)
+AC_CHECK_FUNCS( dcgettext backtrace backtrace_symbols sysconf )
 
 #
 # The Makefile also needs to know if we have gettext, so it knows if
@@ -617,7 +740,7 @@ AC_CHECK_FUNCS( dcgettext backtrace backtrace_symbols)
 #
 
 if test x$local_gettext != xno; then 
-	AC_CHECK_FUNC( gettext, AC_SUBST( HAVE_GETTEXT, 1 ), AC_SUBST( HAVE_GETTEXT, 0 ) )
+	AC_CHECK_FUNC( gettext, HAVE_GETTEXT=1, HAVE_GETTEXT=0 )
 fi
 
 #

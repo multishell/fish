@@ -31,8 +31,10 @@ wchar_t *path_get_path( void *context, const wchar_t *cmd )
 {
 	wchar_t *path;
 
+	int err = ENOENT;
+	
 	CHECK( cmd, 0 );
-		
+
 	debug( 3, L"path_get_path( '%ls' )", cmd );
 
 	if(wcschr( cmd, L'/' ) != 0 )
@@ -40,19 +42,33 @@ wchar_t *path_get_path( void *context, const wchar_t *cmd )
 		if( waccess( cmd, X_OK )==0 )
 		{
 			struct stat buff;
-			wstat( cmd, &buff );
+			if(wstat( cmd, &buff ))
+			{
+				return 0;
+			}
+			
 			if( S_ISREG(buff.st_mode) )
 				return halloc_wcsdup( context, cmd );
 			else
+			{
+				errno = EACCES;
 				return 0;
+			}
 		}
+		else
+		{
+			struct stat buff;
+			wstat( cmd, &buff );
+			return 0;
+		}
+		
 	}
 	else
 	{
 		path = env_get(L"PATH");
 		if( path == 0 )
 		{
-			if( contains_str( PREFIX L"/bin", L"/bin", L"/usr/bin", (void *)0 ) )
+			if( contains( PREFIX L"/bin", L"/bin", L"/usr/bin" ) )
 			{
 				path = L"/bin" ARRAY_SEP_STR L"/usr/bin";
 			}
@@ -66,6 +82,7 @@ wchar_t *path_get_path( void *context, const wchar_t *cmd )
 		  Allocate string long enough to hold the whole command
 		*/
 		wchar_t *new_cmd = halloc( context, sizeof(wchar_t)*(wcslen(cmd)+wcslen(path)+2) );
+		
 		/*
 		  We tokenize a copy of the path, since strtok modifies
 		  its arguments
@@ -106,6 +123,8 @@ wchar_t *path_get_path( void *context, const wchar_t *cmd )
 					free( path_cpy );
 					return new_cmd;
 				}
+				err = EACCES;
+				
 			}
 			else
 			{
@@ -129,6 +148,8 @@ wchar_t *path_get_path( void *context, const wchar_t *cmd )
 		free( path_cpy );
 
 	}
+
+	errno = err;
 	return 0;
 }
 
@@ -136,7 +157,7 @@ wchar_t *path_get_path( void *context, const wchar_t *cmd )
 wchar_t *path_get_cdpath( void *context, wchar_t *dir )
 {
 	wchar_t *res = 0;
-
+	int err = ENOENT;
 	if( !dir )
 		return 0;
 
@@ -150,6 +171,11 @@ wchar_t *path_get_cdpath( void *context, wchar_t *dir )
 			{
 				res = halloc_wcsdup( context, dir );
 			}
+			else
+			{
+				err = ENOTDIR;
+			}
+
 		}
 	}
 	else
@@ -191,9 +217,9 @@ wchar_t *path_get_cdpath( void *context, wchar_t *dir )
 			}
 
 			whole_path =
-				wcsdupcat2( expanded_path,
+				wcsdupcat( expanded_path,
 							( expanded_path[path_len-1] != L'/' )?L"/":L"",
-							dir, (void *)0 );
+							dir );
 
 			free(expanded_path );
 
@@ -206,11 +232,29 @@ wchar_t *path_get_cdpath( void *context, wchar_t *dir )
 					halloc_register( context, whole_path );					
 					break;
 				}
+				else
+				{
+					err = ENOTDIR;
+				}
 			}
+			else
+			{
+				if( lwstat( whole_path, &buf ) == 0 )
+				{
+					err = EROTTEN;
+				}
+			}
+			
 			free( whole_path );
 		}
 		free( path_cpy );
 	}
+
+	if( !res )
+	{
+		errno = err;
+	}
+
 	return res;
 }
 
@@ -263,5 +307,40 @@ wchar_t *path_get_config( void *context)
 		return 0;
 	}
 	
+}
+
+wchar_t *path_make_canonical( void *context, const wchar_t *path )
+{
+	wchar_t *res = halloc_wcsdup( context, path );
+	wchar_t *in, *out;
+	
+	in = out = res;
+	
+	while( *in )
+	{
+		if( *in == L'/' )
+		{
+			while( *(in+1) == L'/' )
+			{
+				in++;
+			}
+		}
+		*out = *in;
+	
+		out++;
+		in++;
+	}
+
+	while( 1 )
+	{
+		if( out == res )
+			break;
+		if( *(out-1) != L'/' )
+			break;
+		out--;
+	}
+	*out = 0;
+		
+	return res;
 }
 
