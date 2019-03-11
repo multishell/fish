@@ -121,8 +121,6 @@ function __fish_git_files
     contains -- copied $argv; and set -l copied
     and set -l copied_desc (_ "Copied file")
 
-    set -l dir_desc (_ "Directory")
-
     # A literal "?" for use in `case`.
     set -l q '\\?'
     if status test-feature qmark-noglob
@@ -144,26 +142,20 @@ function __fish_git_files
     # (don't use --ignored=no because that was only added in git 2.16, from Jan 2018.
     set -q ignored; and set -a status_opt --ignored
 
-    # Glob just the current token for performance
-    # and so git shows untracked files (even in untracked dirs) for that.
-    # If the current token is empty, this matches everything in $PWD.
-    set -l files (commandline -ct)
-    # The trailing "**" is necessary to match files inside the given directories.
-    set files "$files*" "$files*/**"
     set -q untracked; and set -a status_opt -unormal
     or set -a status_opt -uno
 
     # We need to set status.relativePaths to true because the porcelain v2 format still honors that,
     # and core.quotePath to false so characters > 0x80 (i.e. non-ASCII) aren't considered special.
     # We explicitly enable globs so we can use that to match the current token.
-    set -l git_opt -c status.relativePaths -c core.quotePath= --glob-pathspecs
+    set -l git_opt -c status.relativePaths -c core.quotePath=
 
     # We pick the v2 format if we can, because it shows relative filenames (if used without "-z").
     # We fall back on the v1 format by reading git's _version_, because trying v2 first is too slow.
     set -l ver (command git --version | string replace -rf 'git version (\d+)\.(\d+)\.?.*' '$1\n$2')
     # Version >= 2.11.* has the v2 format.
     if test "$ver[1]" -gt 2 2>/dev/null; or test "$ver[1]" -eq 2 -a "$ver[2]" -ge 11 2>/dev/null
-        command git $git_opt status --porcelain=2 $status_opt -- $files \
+        command git $git_opt status --porcelain=2 $status_opt \
         | while read -la -d ' ' line
             set -l file
             set -l desc
@@ -251,34 +243,29 @@ function __fish_git_files
                 # First the relative filename.
                 printf '%s\t%s\n' "$file" $desc
                 # Now from repo root.
-                set -l fromroot (builtin realpath -- $file 2>/dev/null)
-                and set fromroot (string replace -- "$root/" ":/" "$fromroot")
-                and printf '%s\t%s\n' "$fromroot" $desc
-
-                # And the containing directory.
-                # TODO: We may want to offer the parent, but only if another child of that also has a change.
-                # E.g:
-                # - a/b/c is added
-                # - a/d/e is modified
-                # - a/ should be offered, but only a/b/ and a/d/ are.
-                #
-                # Always offering all parents is overkill however, which is why we don't currently do it.
-                set -l dir (string replace -rf '/[^/]+$' '/' -- $file)
-                and printf '%s\t%s\n' $dir "$dir_desc"
+                # Only do this if the filename isn't a simple child,
+                # or the current token starts with ":"
+                if string match -q '../*' -- $file
+                    or string match -q ':*' -- (commandline -ct)
+                    set -l fromroot (builtin realpath -- $file 2>/dev/null)
+                    and set fromroot (string replace -- "$root/" ":/" "$fromroot")
+                    and printf '%s\t%s\n' "$fromroot" $desc
+                end
             end
         end
     else
         # v1 format logic
         # We need to compute relative paths on our own, which is slow.
         # Pre-remove the root at least, so we have fewer components to deal with.
-        set -l _pwd_list (string replace "$root/" "" -- $PWD | string split /)
+        set -l _pwd_list (string replace "$root/" "" -- $PWD/ | string split /)
+        test -z "$_pwd_list[-1]"; and set -e _pwd_list[-1]
         # Cache the previous relative path because these are sorted, so we can reuse it
         # often for files in the same directory.
         set -l previous
         set -l previousfile
         # Note that we can't use space as a delimiter between status and filename, because
         # the status can contain spaces - " M" is different from "M ".
-        command git $git_opt status --porcelain -z $status_opt -- $files \
+        command git $git_opt status --porcelain -z $status_opt \
         | while read -lz line
             set -l desc
             # The entire line is the "from" from a rename.
@@ -355,9 +342,7 @@ function __fish_git_files
                 # Again: "XY filename", so the filename starts on character 4.
                 set -l relfile (string sub -s 4 -- $line)
 
-                # The filename with ":/" prepended.
-                set -l file (string replace -- "$root/" ":/" "$root/$relfile")
-
+                set -l file
                 # Computing relative path by hand.
                 set -l abs (string split / -- $relfile)
                 # If it's in the same directory, we just need to change the filename.
@@ -365,7 +350,6 @@ function __fish_git_files
                     set previous[-1] $abs[-1]
                 else
                     set -l pwd_list $_pwd_list
-                    set previousfile $abs
                     # Remove common prefix
                     while test "$pwd_list[1]" = "$abs[1]"
                         set -e pwd_list[1]
@@ -375,10 +359,18 @@ function __fish_git_files
                     set previous (string replace -r '.*' '..' -- $pwd_list) $abs
                 end
                 set -a file (string join / -- $previous)
-                printf '%s\n' $file\t$desc
 
-                set -l dir (string replace -rf '/[^/]+$' '/' -- $file)
-                and printf '%s\t%s\n' $dir "$dir_desc"
+                # The filename with ":/" prepended.
+                if string match -q '../*' -- $file
+                    or string match -q ':*' -- (commandline -ct)
+                    set file (string replace -- "$root/" ":/" "$root/$relfile")
+                end
+
+                if test "$root/$relfile" = (pwd -P)/$relfile
+                    set file $relfile
+                end
+
+                printf '%s\n' $file\t$desc
             end
         end
     end
@@ -446,6 +438,12 @@ end
 # This is because alias:command is an n:1 mapping (an alias can only have one corresponding command,
 #                                                  but a command can be aliased multiple times)
 git config -z --get-regexp 'alias\..*' | while read -lz alias command _
+    # If the command starts with a "!", it's a shell command, run with /bin/sh,
+    # or any other shell defined at git's build time.
+    #
+    # We can't do anything with them, and we run git-config again for listing aliases,
+    # so we skip them here.
+    string match -q '!*' -- $command; and continue
     # Git aliases can contain chars that variable names can't - escape them.
     set alias (string replace 'alias.' '' -- $alias | string escape --style=var)
     set -g __fish_git_alias_$alias $command

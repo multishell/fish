@@ -962,7 +962,11 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
 
     // initialize the PWD variable if necessary
     // Note we may inherit a virtual PWD that doesn't match what getcwd would return; respect that.
-    if (env_get(L"PWD").missing_or_empty()) {
+    // Note we treat PWD as read-only so it was not set in vars.
+    const char *incoming_pwd = getenv("PWD");
+    if (incoming_pwd && incoming_pwd[0]) {
+        env_set_one(L"PWD",  ENV_EXPORT | ENV_GLOBAL, str2wcstring(incoming_pwd));
+    } else {
         env_set_pwd_from_getcwd();
     }
     env_set_termsize();    // initialize the terminal size variables
@@ -1184,6 +1188,7 @@ static int env_set_internal(const wcstring &key, env_mode_flags_t input_var_mode
 
             var.set_vals(std::move(val));
             var.set_pathvar(var_mode & ENV_PATHVAR);
+            var.set_read_only(is_read_only(key));
 
             if (var_mode & ENV_EXPORT) {
                 // The new variable is exported.
@@ -1654,12 +1659,16 @@ wcstring env_get_runtime_path() {
     } else {
         // Don't rely on $USER being set, as setup_user() has not yet been called.
         // See https://github.com/fish-shell/fish-shell/issues/5180
-        const char *uname = getpwuid(geteuid())->pw_name;
+        // getpeuid() can't fail, but getpwuid sure can.
+        auto pwuid = getpwuid(geteuid());
+        const char *uname = pwuid ? pwuid->pw_name : NULL;
         // /tmp/fish.user
         std::string tmpdir = "/tmp/fish.";
-        tmpdir.append(uname);
+        if (uname) {
+            tmpdir.append(uname);
+        }
 
-        if (check_runtime_path(tmpdir.c_str()) != 0) {
+        if (!uname || check_runtime_path(tmpdir.c_str()) != 0) {
             debug(0, L"Runtime path not available.");
             debug(0, L"Try deleting the directory %s and restarting fish.", tmpdir.c_str());
             return result;

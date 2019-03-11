@@ -354,7 +354,12 @@ typedef unsigned int process_generation_count_t;
 static std::vector<pid_t> s_disowned_pids;
 
 void add_disowned_pgid(pid_t pgid) {
-    s_disowned_pids.push_back(pgid * -1);
+    // NEVER add our own pgid, or one of the special values,
+    // or waiting for it will
+    // snag other processes away.
+    if (pgid != getpgrp() && (pgid > 0 || pgid < -1)) {
+        s_disowned_pids.push_back(pgid * -1);
+    }
 }
 
 /// A static value tracking how many SIGCHLDs we have seen, which is used in a heurstic to
@@ -442,10 +447,34 @@ static bool process_mark_finished_children(bool block_on_fg) {
             options &= ~WNOHANG;
         }
 
-        // If the pgid is 0, we need to wait by process because that's invalid.
-        // This happens in firejail for reasons not entirely clear to me.
-        bool wait_by_process = !j->job_chain_is_fully_constructed() || j->pgid == 0;
-        process_list_t::iterator process = j->processes.begin();
+        // Child jobs (produced via execution of functions) share job ids with their not-yet-
+        // fully-constructed parent jobs, so we have to wait on these by individual process id
+        // and not by the shared pgroup. End result is the same, but it just makes more calls
+        // to the kernel.
+        bool wait_by_process = !j->job_chain_is_fully_constructed();
+
+        // Firejail can result in jobs with pgroup 0, in which case we cannot wait by
+        // job id. See discussion in #5295.
+        if (j->pgid == 0) {
+            wait_by_process = true;
+        }
+
+        // Cygwin does some voodoo with regards to process management that I do not understand, but
+        // long story short, we cannot reap processes by their pgroup. The way child processes are
+        // launched under Cygwin is... weird, and outwardly they do not appear to retain information
+        // about their parent process when viewed in Task Manager. Waiting on processes by their
+        // pgroup results in never reaping any, so we just wait on them by process id instead.
+        if (is_cygwin()) {
+            wait_by_process = true;
+        }
+
+        // When waiting on processes individually in a pipeline, we need to enumerate in reverse
+        // order so that the first process we actually wait on (i.e. ~WNOHANG) is the last process
+        // in the IO chain, because that's the one that controls the lifetime of the foreground job
+        // - as long as it is still running, we are in the background and once it exits or is
+        // killed, all previous jobs in the IO pipeline must necessarily terminate as well.
+        auto process = j->processes.begin();
+
         // waitpid(2) returns 1 process each time, we need to keep calling it until we've reaped all
         // children of the pgrp in question or else we can't reset the dirty_state flag. In all
         // cases, calling waitpid(2) is faster than potentially calling select_try() on a process
@@ -467,6 +496,11 @@ static bool process_mark_finished_children(bool block_on_fg) {
                     break;
                 }
                 assert((*process)->pid != INVALID_PID && "Waiting by process on an invalid PID!");
+                // Don't wait for completed jobs; see #5438.
+                if ((*process)->completed) {
+                    process++;
+                    continue;
+                }
                 pid = waitpid((*process)->pid, &status, options);
                 process++;
             } else {
@@ -475,26 +509,34 @@ static bool process_mark_finished_children(bool block_on_fg) {
                 pid = waitpid(-1 * j->pgid, &status, options);
             }
 
-            // Never make two calls to waitpid(2) without WNOHANG (i.e. with "HANG") in a row,
-            // because we might wait on a non-stopped job that becomes stopped, but we don't refresh
-            // our view of the process state before calling waitpid(2) again here.
-            options |= WNOHANG;
-
             if (pid > 0) {
                 // A child process has been reaped
+                debug(4, "Reaped PID %d", pid);
                 handle_child_status(pid, status);
+
+                // Always set WNOHANG (that is, don't hang). Otherwise we might wait on a non-stopped job
+                // that becomes stopped, but we don't refresh our view of the process state before
+                // calling waitpid(2) again here.
+                options |= WNOHANG;
             } else if (pid == 0 || errno == ECHILD) {
                 // No killed/dead children in this particular process group
                 if (!wait_by_process) {
+                    if ((options & WNOHANG) == 0) {
+                        // This normally implies that the job has completed, but if we try to wait
+                        // on a job that includes a process that changed its own group before we
+                        // enter `waitpid`, we will be waiting forever. See #5596 for such a case.
+                        wait_by_process = true;
+                        continue;
+                    }
                     break;
                 }
             } else {
                 // pid < 0 indicates an error. One likely failure is ECHILD (no children), which is
-                // not an error and is ignored. The other likely failure is EINTR, which means we
-                // got a signal, which is considered an error. We absolutely do not break or return
-                // on error, as we need to iterate over all constructed jobs but we only call
-                // waitpid for one pgrp at a time. We do bypass future waits in case of error,
-                // however.
+                // not an error and is ignored in the branch above. The other likely failure is
+                // EINTR, which means we got a signal, which is considered an error. We absolutely
+                // do not break or return on error, as we need to iterate over all constructed jobs
+                // but we only call waitpid for one pgrp at a time. We do bypass future waits in
+                // case of error, however.
                 has_error = true;
 
                 // Do not audibly complain on interrupt (see #5293)

@@ -2474,9 +2474,15 @@ const wchar_t *reader_readline(int nchars) {
     // Get the current terminal modes. These will be restored when the function returns.
     if (tcgetattr(STDIN_FILENO, &old_modes) == -1 && errno == EIO) redirect_tty_output();
     // Set the new modes.
-    if (is_interactive_session) {
-        if (tcsetattr(0, TCSANOW, &shell_modes) == -1) {
-            if (errno == EIO) redirect_tty_output();
+    if (tcsetattr(0, TCSANOW, &shell_modes) == -1) {
+        int err = errno;
+        if (err == EIO) {
+            redirect_tty_output();
+        }
+        // This check is required to work around certain issues with fish's approach to
+        // terminal control when launching interactive processes while in non-interactive
+        // mode. See #4178 for one such example.
+        if (err != ENOTTY || is_interactive_session) {
             wperror(L"tcsetattr");
         }
     }
@@ -2705,10 +2711,15 @@ const wchar_t *reader_readline(int nchars) {
                 break;
             }
             case R_PAGER_TOGGLE_SEARCH: {
-                if (data->is_navigating_pager_contents()) {
+                if (!data->pager.empty()) {
+                    // Toggle search, and begin navigating if we are now searching.
                     bool sfs = data->pager.is_search_field_shown();
                     data->pager.set_search_field_shown(!sfs);
                     data->pager.set_fully_disclosed(true);
+                    if (data->pager.is_search_field_shown() &&
+                        !data->is_navigating_pager_contents()) {
+                        select_completion_in_direction(direction_south);
+                    }
                     reader_repaint_needed();
                 }
                 break;

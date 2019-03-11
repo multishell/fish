@@ -166,7 +166,7 @@ Any file descriptor can be redirected in an arbitrary way by prefixing the redir
 - To redirect output of FD N, write `N>DESTINATION`
 - To append the output of FD N to a file, write `N>>DESTINATION_FILE`
 
-Example: `echo Hello 2>output.stderr` and `echo Hello 2>output.stderr` are equivalent, and write the standard error (file descriptor 2) of the target program to `output.stderr`.
+Example: `echo Hello 2>output.stderr` writes the standard error (file descriptor 2) of the target program to `output.stderr`.
 
 \subsection piping Piping
 
@@ -320,7 +320,9 @@ Autosuggestions are a powerful way to quickly summon frequently entered commands
 
 \section completion Tab completion
 
-Tab completion is one of the most time saving features of any modern shell. By tapping the tab key, the user asks `fish` to guess the rest of the command or parameter that the user is currently typing. If  `fish` can only find one possible completion, `fish` will write it out. If there is more than one completion, `fish` will write out the longest prefix that all completions have in common. If the completions differ on the first character, a list of all possible completions is printed. The list features descriptions of the completions and if the list doesn't fit the screen, it is scrollable by using the arrow keys, the page up/page down keys, the tab key or the space bar. Once the list has been entered, pressing any other key will start a search. If the list has not been entered, pressing any other key will exit the list and insert the pressed key into the command line.
+Tab completion is one of the most time saving features of any modern shell. By tapping the tab key, the user asks `fish` to guess the rest of the command or parameter that the user is currently typing. If  `fish` can only find one possible completion, `fish` will write it out. If there is more than one completion, `fish` will write out the longest prefix that all completions have in common. If the completions differ on the first character, a list of all possible completions is printed. The list features descriptions of the completions and if the list doesn't fit the screen, it is scrollable by using the arrow keys, the page up/page down keys, the tab key or the space bar.
+
+If the list is visible, pressing control-S (or the `pager-toggle-search` binding) will allow filtering the list. Shift-tab (or the `complete-and-search` binding) will trigger completion with the search field immediately visible.
 
 These are the general purpose tab completions that `fish` provides:
 
@@ -424,7 +426,7 @@ If a star (`*`) or a question mark (`?`) is present in the parameter, `fish` att
 
 - `*` can match any string of characters not containing '/'. This includes matching an empty string.
 
-- `**` matches any string of characters. This includes matching an empty string. The matched string may include the `/` character; that is, it recurses into subdirectories. Note that augmenting this wildcard with other strings will not match files in the current working directory (`$PWD`) if you separate the strings with a slash ("/"). This is unlike other shells such as zsh. For example, `**\/*.fish` in zsh will match `.fish` files in the PWD but in fish will only match such files in a subdirectory. In fish you should type `***.fish` to match files in the PWD as well as subdirectories.
+- `**` matches any string of characters. This includes matching an empty string. The matched string may include the `/` character; that is, it recurses into subdirectories. Note that augmenting this wildcard with other strings will not match files in the current working directory (`$PWD`) if you separate the strings with a slash ("/"). This is unlike other shells such as zsh. For example, `**\/*.fish` in zsh will match `.fish` files in the PWD but in fish will only match such files in a subdirectory. In fish you should type `**.fish` to match files in the PWD as well as subdirectories.
 
 Other shells, such as zsh, provide a rich glob syntax for restricting the files matched by globs. For example, `**(.)`, to only match regular files. Fish prefers to defer such features to programs, such as `find`, rather than reinventing the wheel. Thus, if you want to limit the wildcard expansion to just regular files the fish approach is to define and use a function. For example,
 
@@ -930,6 +932,8 @@ The user can change the settings of `fish` by changing the values of certain var
 - `history`, an array containing the last commands that were entered.
 
 - `HOME`, the user's home directory. This variable can be changed by the user.
+
+- `hostname`, the machine's hostname.
 
 - `IFS`, the internal field separator that is used for word splitting with the <a href="commands.html#read">read builtin</a>. Setting this to the empty string will also disable line splitting in <a href="#expand-command-substitution">command substitution</a>. This variable can be changed by the user.
 
