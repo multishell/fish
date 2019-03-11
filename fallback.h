@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include <stdarg.h>
+#include <bits/types/wint_t.h>
 
 #ifdef TPUTS_KLUDGE
 
