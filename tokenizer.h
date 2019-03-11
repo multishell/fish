@@ -19,10 +19,9 @@ enum token_type
 {
     TOK_NONE, /**< Tokenizer not yet constructed */
     TOK_ERROR, /**< Error reading token */
-    TOK_INVALID,/**< Invalid token */
     TOK_STRING,/**< String token */
     TOK_PIPE,/**< Pipe token */
-    TOK_END,/**< End token */
+    TOK_END,/**< End token (semicolon or newline, not literal end) */
     TOK_REDIRECT_OUT, /**< redirection token */
     TOK_REDIRECT_APPEND,/**< redirection append token */
     TOK_REDIRECT_IN,/**< input redirection token */
@@ -62,6 +61,10 @@ enum tokenizer_error
 */
 #define TOK_SQUASH_ERRORS 4
 
+/** Ordinarily, the tokenizer ignores newlines following a newline, or a semicolon.
+    This flag tells the tokenizer to return each of them as a separate END. */
+#define TOK_SHOW_BLANK_LINES 8
+
 typedef unsigned int tok_flags_t;
 
 /**
@@ -85,8 +88,10 @@ struct tokenizer_t
     bool has_next;
     /** Whether incomplete tokens are accepted*/
     bool accept_unfinished;
-    /** Whether commants should be returned*/
+    /** Whether comments should be returned*/
     bool show_comments;
+    /** Whether all blank lines are returned */
+    bool show_blank_lines;
     /** Type of last quote, can be either ' or ".*/
     wchar_t last_quote;
     /** Last error */
@@ -98,8 +103,8 @@ struct tokenizer_t
     size_t cached_lineno_offset;
     int cached_lineno_count;
 
-    /** Return the line number of the character at the given offset */
-    int line_number_of_character_at_offset(size_t offset);
+    /* Whether to continue the previous line after the comment */
+    bool continue_line_after_comment;
 
     /**
       Constructor for a tokenizer. b is the string that is to be
@@ -126,14 +131,9 @@ void tok_next(tokenizer_t *tok);
 enum token_type tok_last_type(tokenizer_t *tok);
 
 /**
-  Returns the last token string. The string should not be freed by the caller.
+  Returns the last token string. The string should not be freed by the caller. This returns nonsense results for some token types, like TOK_END.
 */
 const wchar_t *tok_last(tokenizer_t *tok);
-
-/**
-  Returns the type of quote from the last TOK_QSTRING
-*/
-wchar_t tok_last_quote(tokenizer_t *tok);
 
 /**
   Returns true as long as there are more tokens left
@@ -143,15 +143,10 @@ int tok_has_next(tokenizer_t *tok);
 /**
   Returns the position of the beginning of the current token in the original string
 */
-int tok_get_pos(tokenizer_t *tok);
+int tok_get_pos(const tokenizer_t *tok);
 
-/** Returns the token type after the current one, without adjusting the position. Optionally returns the next string by reference. */
-enum token_type tok_peek_next(tokenizer_t *tok, wcstring *out_next_string);
-
-/**
-   Returns the original string to tokenizer
- */
-const wchar_t *tok_string(tokenizer_t *tok);
+/** Returns the extent of the current token */
+size_t tok_get_extent(const tokenizer_t *tok);
 
 /**
    Returns only the first token from the specified string. This is a
@@ -184,6 +179,15 @@ const wchar_t *tok_get_desc(int type);
    Get tokenizer error type. Should only be called if tok_last_tope returns TOK_ERROR.
 */
 int tok_get_error(tokenizer_t *tok);
+
+/* Helper function to determine redirection type from a string, or TOK_NONE if the redirection is invalid. Also returns the fd by reference. */
+enum token_type redirection_type_for_string(const wcstring &str, int *out_fd = NULL);
+
+/* Helper function to determine which fd is redirected by a pipe */
+int fd_redirected_by_pipe(const wcstring &str);
+
+/* Helper function to return oflags (as in open(2)) for a redirection type */
+int oflags_for_redirection_type(enum token_type type);
 
 enum move_word_style_t
 {

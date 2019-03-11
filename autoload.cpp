@@ -19,7 +19,7 @@ static const int kAutoloadStalenessInterval = 15;
 file_access_attempt_t access_file(const wcstring &path, int mode)
 {
     //printf("Touch %ls\n", path.c_str());
-    file_access_attempt_t result = {0};
+    file_access_attempt_t result = {};
     struct stat statbuf;
     if (wstat(path, &statbuf))
     {
@@ -48,9 +48,7 @@ autoload_t::autoload_t(const wcstring &env_var_name_var, const builtin_script_t 
     lock(),
     env_var_name(env_var_name_var),
     builtin_scripts(scripts),
-    builtin_script_count(script_count),
-    last_path(),
-    is_loading_set()
+    builtin_script_count(script_count)
 {
     pthread_mutex_init(&lock, NULL);
 }
@@ -66,7 +64,7 @@ void autoload_t::node_was_evicted(autoload_function_t *node)
     ASSERT_IS_MAIN_THREAD();
 
     // Tell ourselves that the command was removed if it was loaded
-    if (! node->is_loaded)
+    if (node->is_loaded)
         this->command_removed(node->key);
     delete node;
 }
@@ -94,33 +92,34 @@ int autoload_t::load(const wcstring &cmd, bool reload)
     if (path_var != this->last_path)
     {
         this->last_path = path_var;
+        this->last_path_tokenized.clear();
+        tokenize_variable_array(this->last_path, this->last_path_tokenized);
+
         scoped_lock locker(lock);
         this->evict_all_nodes();
     }
 
+    /* Mark that we're loading this. Hang onto the iterator for fast erasing later. Note that std::set has guarantees about not invalidating iterators, so this is safe to do across the callouts below.  */
+    typedef std::set<wcstring>::iterator set_iterator_t;
+    std::pair<set_iterator_t, bool> insert_result = is_loading_set.insert(cmd);
+    set_iterator_t where = insert_result.first;
+    bool inserted = insert_result.second;
+
     /** Warn and fail on infinite recursion. It's OK to do this because this function is only called on the main thread. */
-    if (this->is_loading(cmd))
+    if (! inserted)
     {
+        /* We failed to insert */
         debug(0,
               _(L"Could not autoload item '%ls', it is already being autoloaded. "
                 L"This is a circular dependency in the autoloading scripts, please remove it."),
               cmd.c_str());
         return 1;
     }
-
-    /* Mark that we're loading this */
-    is_loading_set.insert(cmd);
-
-    /* Get the list of paths from which we will try to load */
-    std::vector<wcstring> path_list;
-    tokenize_variable_array(path_var, path_list);
-
     /* Try loading it */
-    res = this->locate_file_and_maybe_load_it(cmd, true, reload, path_list);
+    res = this->locate_file_and_maybe_load_it(cmd, true, reload, this->last_path_tokenized);
 
     /* Clean up */
-    bool erased = !! is_loading_set.erase(cmd);
-    assert(erased);
+    is_loading_set.erase(where);
 
     return res;
 }
@@ -195,7 +194,6 @@ autoload_function_t *autoload_t::get_autoloaded_function_with_creation(const wcs
 bool autoload_t::locate_file_and_maybe_load_it(const wcstring &cmd, bool really_load, bool reload, const wcstring_list_t &path_list)
 {
     /* Note that we are NOT locked in this function! */
-    size_t i;
     bool reloaded = 0;
 
     /* Try using a cached function. If we really want the function to be loaded, require that it be really loaded. If we're not reloading, allow stale functions. */
@@ -234,6 +232,7 @@ bool autoload_t::locate_file_and_maybe_load_it(const wcstring &cmd, bool really_
         /* If we can use this function, return whether we were able to access it */
         if (use_cached)
         {
+            assert(func != NULL);
             return func->is_internalized || func->access.accessible;
         }
     }
@@ -276,7 +275,7 @@ bool autoload_t::locate_file_and_maybe_load_it(const wcstring &cmd, bool really_
     if (! has_script_source)
     {
         /* Iterate over path searching for suitable completion files */
-        for (i=0; i<path_list.size(); i++)
+        for (size_t i=0; i<path_list.size(); i++)
         {
             wcstring next = path_list.at(i);
             wcstring path = next + L"/" + cmd + L".fish";
@@ -298,7 +297,7 @@ bool autoload_t::locate_file_and_maybe_load_it(const wcstring &cmd, bool really_
 
                     /* Generate the script source */
                     wcstring esc = escape_string(path, 1);
-                    script_source = L". " + esc;
+                    script_source = L"source " + esc;
                     has_script_source = true;
 
                     /* Remove any loaded command because we are going to reload it. Note that this will deadlock if command_removed calls back into us. */

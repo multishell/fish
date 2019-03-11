@@ -1,0 +1,99 @@
+# Test expansion of variables
+
+function show --description 'Prints argument count followed by arguments'
+    echo (count $argv) $argv
+end
+
+set -l foo
+show "$foo"
+show $foo
+show "prefix$foo"
+show prefix$foo
+
+show "$$foo"
+show $$foo
+show "prefix$$foo"
+show prefix$$foo
+
+set -l foo ''
+show "$foo"
+show $foo
+show "prefix$foo"
+show prefix$foo
+
+show "$$foo"
+show $$foo
+show "prefix$$foo"
+show prefix$$foo
+
+set -l foo bar
+set -l bar
+show "$$foo"
+show $$foo
+show "prefix$$foo"
+show prefix$$foo
+
+set -l bar baz
+show "$$foo"
+show $$foo
+show "prefix$$foo"
+show prefix$$foo
+
+set -l bar baz quux
+show "$$foo"
+show $$foo
+show "prefix$$foo"
+show prefix$$foo
+
+set -l foo bar fooer fooest
+set -l fooer
+set -l fooest
+show "$$foo"
+show $$foo
+show "prefix$$foo"
+show prefix$$foo
+
+set -l fooer ''
+show $$foo
+show prefix$$foo
+
+set -l foo bar '' fooest
+show "$$foo"
+show $$foo
+show "prefix$$foo"
+show prefix$$foo
+
+set -l foo
+show "$foo[1]"
+show $foo[1]
+show "$foo[-1]"
+show $foo[-1]
+show "$foo[2]"
+show $foo[2]
+show "$foo[1 2]"
+show $foo[1 2]
+show "$foo[2 1]"
+show $foo[2 1]
+
+echo "$foo[d]"
+echo $foo[d]
+
+echo ()[1]
+echo ()[d]
+
+# Test tilde expansion
+# On OS X, /tmp is symlinked to /private/tmp
+# $PWD is our best bet for resolving it
+set -l saved $PWD
+cd (mktemp -d)
+set tmpdir $PWD
+cd $saved
+mkdir $tmpdir/realhome
+ln -s $tmpdir/realhome $tmpdir/linkhome
+set expandedtilde (env HOME=$tmpdir/linkhome ../fish -c 'echo ~')
+if test $expandedtilde != $tmpdir/realhome
+	echo '~ expands to' $expandedtilde ' - expected ' $tmpdir/realhome
+end
+unlink $tmpdir/linkhome
+rmdir $tmpdir/realhome
+rmdir $tmpdir

@@ -14,7 +14,7 @@ segments.
 #include <wctype.h>
 #include <string.h>
 #include <unistd.h>
-
+#include <fcntl.h>
 
 #include "fallback.h"
 #include "util.h"
@@ -50,7 +50,7 @@ segments.
 /**
    Error string for when trying to pipe from fd 0
 */
-#define PIPE_ERROR _( L"Can not use fd 0 as pipe output" )
+#define PIPE_ERROR _( L"Cannot use stdin (fd 0) as pipe output" )
 
 /**
    Characters that separate tokens. They are ordered by frequency of occurrence to increase parsing speed.
@@ -64,7 +64,6 @@ static const wchar_t *tok_desc[] =
 {
     N_(L"Tokenizer not yet initialized"),
     N_(L"Tokenizer error"),
-    N_(L"Invalid token"),
     N_(L"String"),
     N_(L"Pipe"),
     N_(L"End of command"),
@@ -76,6 +75,8 @@ static const wchar_t *tok_desc[] =
     N_(L"Run job in background"),
     N_(L"Comment")
 };
+
+
 
 /**
    Set the latest tokens string to be the specified error message
@@ -93,21 +94,14 @@ int tok_get_error(tokenizer_t *tok)
 }
 
 
-tokenizer_t::tokenizer_t(const wchar_t *b, tok_flags_t flags) : buff(NULL), orig_buff(NULL), last_type(TOK_NONE), last_pos(0), has_next(false), accept_unfinished(false), show_comments(false), last_quote(0), error(0), squash_errors(false), cached_lineno_offset(0), cached_lineno_count(0)
+tokenizer_t::tokenizer_t(const wchar_t *b, tok_flags_t flags) : buff(NULL), orig_buff(NULL), last_type(TOK_NONE), last_pos(0), has_next(false), accept_unfinished(false), show_comments(false), last_quote(0), error(0), squash_errors(false), cached_lineno_offset(0), cached_lineno_count(0), continue_line_after_comment(false)
 {
-
-    /* We can only generate error messages on the main thread due to wgettext() thread safety issues. */
-    if (!(flags & TOK_SQUASH_ERRORS))
-    {
-        ASSERT_IS_MAIN_THREAD();
-    }
-
     CHECK(b,);
-
 
     this->accept_unfinished = !!(flags & TOK_ACCEPT_UNFINISHED);
     this->show_comments = !!(flags & TOK_SHOW_COMMENTS);
     this->squash_errors = !!(flags & TOK_SQUASH_ERRORS);
+    this->show_blank_lines = !!(flags & TOK_SHOW_BLANK_LINES);
 
     this->has_next = (*b != L'\0');
     this->orig_buff = this->buff = b;
@@ -143,44 +137,10 @@ int tok_has_next(tokenizer_t *tok)
     return   tok->has_next;
 }
 
-int tokenizer_t::line_number_of_character_at_offset(size_t offset)
-{
-    // we want to return (one plus) the number of newlines at offsets less than the given offset
-    // cached_lineno_count is the number of newlines at indexes less than cached_lineno_offset
-    const wchar_t *str = orig_buff;
-    if (! str)
-        return 0;
-
-    // easy hack to handle 0
-    if (offset == 0)
-        return 1;
-
-    size_t i;
-    if (offset > cached_lineno_offset)
-    {
-        for (i = cached_lineno_offset; str[i] && i<offset; i++)
-        {
-            /* Add one for every newline we find in the range [cached_lineno_offset, offset) */
-            if (str[i] == L'\n')
-                cached_lineno_count++;
-        }
-        cached_lineno_offset = i; //note: i, not offset, in case offset is beyond the length of the string
-    }
-    else if (offset < cached_lineno_offset)
-    {
-        /* Subtract one for every newline we find in the range [offset, cached_lineno_offset) */
-        for (i = offset; i < cached_lineno_offset; i++)
-        {
-            if (str[i] == L'\n')
-                cached_lineno_count--;
-        }
-        cached_lineno_offset = offset;
-    }
-    return cached_lineno_count + 1;
-}
-
 /**
    Tests if this character can be a part of a string. The redirect ^ is allowed unless it's the first character.
+   Hash (#) starts a comment if it's the first character in a token; otherwise it is considered a string character.
+   See #953.
 */
 bool tok_is_string_character(wchar_t c, bool is_first)
 {
@@ -193,7 +153,6 @@ bool tok_is_string_character(wchar_t c, bool is_first)
         case L'|':
         case L'\t':
         case L';':
-        case L'#':
         case L'\r':
         case L'<':
         case L'>':
@@ -435,73 +394,154 @@ static void read_comment(tokenizer_t *tok)
     tok->last_type = TOK_COMMENT;
 }
 
-/**
-   Read a FD redirection.
+
+
+/* Reads a redirection or an "fd pipe" (like 2>|) from a string. Returns how many characters were consumed. If zero, then this string was not a redirection.
+
+   Also returns by reference the redirection mode, and the fd to redirection. If there is overflow, *out_fd is set to -1.
 */
-static void read_redirect(tokenizer_t *tok, int fd)
+static size_t read_redirection_or_fd_pipe(const wchar_t *buff, enum token_type *out_redirection_mode, int *out_fd)
 {
+    bool errored = false;
+    int fd = 0;
     enum token_type redirection_mode = TOK_NONE;
 
-    if ((*tok->buff == L'>') ||
-            (*tok->buff == L'^'))
-    {
-        tok->buff++;
-        if (*tok->buff == *(tok->buff-1))
-        {
-            tok->buff++;
-            redirection_mode = TOK_REDIRECT_APPEND;
-        }
-        else
-        {
-            redirection_mode = TOK_REDIRECT_OUT;
-        }
+    size_t idx = 0;
 
-        if (*tok->buff == L'|')
+    /* Determine the fd. This may be specified as a prefix like '2>...' or it may be implicit like '>' or '^'. Try parsing out a number; if we did not get any digits then infer it from the first character. Watch out for overflow. */
+    long long big_fd = 0;
+    for (; iswdigit(buff[idx]); idx++)
+    {
+        /* Note that it's important we consume all the digits here, even if it overflows. */
+        if (big_fd <= INT_MAX)
+            big_fd = big_fd * 10 + (buff[idx] - L'0');
+    }
+
+    fd = (big_fd > INT_MAX ? -1 : static_cast<int>(big_fd));
+
+    if (idx == 0)
+    {
+        /* We did not find a leading digit, so there's no explicit fd. Infer it from the type */
+        switch (buff[idx])
         {
-            if (fd == 0)
-            {
-                TOK_CALL_ERROR(tok, TOK_OTHER, PIPE_ERROR);
-                return;
-            }
-            tok->buff++;
-            tok->last_token = to_string<int>(fd);
-            tok->last_type = TOK_PIPE;
-            return;
+            case L'>':
+                fd = STDOUT_FILENO;
+                break;
+            case L'<':
+                fd = STDIN_FILENO;
+                break;
+            case L'^':
+                fd = STDERR_FILENO;
+                break;
+            default:
+                errored = true;
+                break;
         }
     }
-    else if (*tok->buff == L'<')
+
+    /* Either way we should have ended on the redirection character itself like '>' */
+    wchar_t redirect_char = buff[idx++]; //note increment of idx
+    if (redirect_char == L'>' || redirect_char == L'^')
     {
-        tok->buff++;
+        redirection_mode = TOK_REDIRECT_OUT;
+        if (buff[idx] == redirect_char)
+        {
+            /* Doubled up like ^^ or >>. That means append */
+            redirection_mode = TOK_REDIRECT_APPEND;
+            idx++;
+        }
+    }
+    else if (redirect_char == L'<')
+    {
         redirection_mode = TOK_REDIRECT_IN;
     }
     else
     {
-        TOK_CALL_ERROR(tok, TOK_OTHER, REDIRECT_ERROR);
+        /* Something else */
+        errored = true;
     }
 
-    tok->last_token = to_string(fd);
+    /* Optional characters like & or ?, or the pipe char | */
+    wchar_t opt_char = buff[idx];
+    if (opt_char == L'&')
+    {
+        redirection_mode = TOK_REDIRECT_FD;
+        idx++;
+    }
+    else if (opt_char == L'?')
+    {
+        redirection_mode = TOK_REDIRECT_NOCLOB;
+        idx++;
+    }
+    else if (opt_char == L'|')
+    {
+        /* So the string looked like '2>|'. This is not a redirection - it's a pipe! That gets handled elsewhere. */
+        redirection_mode = TOK_PIPE;
+        idx++;
+    }
 
-    if (*tok->buff == L'&')
+    /* Don't return valid-looking stuff on error */
+    if (errored)
     {
-        tok->buff++;
-        tok->last_type = TOK_REDIRECT_FD;
+        idx = 0;
+        redirection_mode = TOK_NONE;
     }
-    else if (*tok->buff == L'?')
-    {
-        tok->buff++;
-        tok->last_type = TOK_REDIRECT_NOCLOB;
-    }
-    else
-    {
-        tok->last_type = redirection_mode;
-    }
+
+    /* Return stuff */
+    if (out_redirection_mode != NULL)
+        *out_redirection_mode = redirection_mode;
+    if (out_fd != NULL)
+        *out_fd = fd;
+
+    return idx;
 }
 
-wchar_t tok_last_quote(tokenizer_t *tok)
+enum token_type redirection_type_for_string(const wcstring &str, int *out_fd)
 {
-    CHECK(tok, 0);
+    enum token_type mode = TOK_NONE;
+    int fd = 0;
+    read_redirection_or_fd_pipe(str.c_str(), &mode, &fd);
+    /* Redirections only, no pipes */
+    if (mode == TOK_PIPE || fd < 0)
+        mode = TOK_NONE;
+    if (out_fd != NULL)
+        *out_fd = fd;
+    return mode;
+}
 
-    return tok->last_quote;
+int fd_redirected_by_pipe(const wcstring &str)
+{
+    /* Hack for the common case */
+    if (str == L"|")
+    {
+        return STDOUT_FILENO;
+    }
+
+    enum token_type mode = TOK_NONE;
+    int fd = 0;
+    read_redirection_or_fd_pipe(str.c_str(), &mode, &fd);
+    /* Pipes only */
+    if (mode != TOK_PIPE || fd < 0)
+        fd = -1;
+    return fd;
+}
+
+int oflags_for_redirection_type(enum token_type type)
+{
+    switch (type)
+    {
+        case TOK_REDIRECT_APPEND:
+            return O_CREAT | O_APPEND | O_WRONLY;
+        case TOK_REDIRECT_OUT:
+            return O_CREAT | O_WRONLY | O_TRUNC;
+        case TOK_REDIRECT_NOCLOB:
+            return O_CREAT | O_EXCL | O_WRONLY;
+        case TOK_REDIRECT_IN:
+            return O_RDONLY;
+
+        default:
+            return -1;
+    }
 }
 
 /**
@@ -516,13 +556,12 @@ static bool my_iswspace(wchar_t c)
 
 const wchar_t *tok_get_desc(int type)
 {
-    if (type < 0 || (size_t)type >= sizeof(tok_desc))
+    if (type < 0 || (size_t)type >= (sizeof tok_desc / sizeof *tok_desc))
     {
         return _(L"Invalid token type");
     }
     return _(tok_desc[type]);
 }
-
 
 void tok_next(tokenizer_t *tok)
 {
@@ -548,6 +587,7 @@ void tok_next(tokenizer_t *tok)
         if (tok->buff[0] == L'\\' && tok->buff[1] == L'\n')
         {
             tok->buff += 2;
+            tok->continue_line_after_comment = true;
         }
         else if (my_iswspace(tok->buff[0]))
         {
@@ -560,39 +600,58 @@ void tok_next(tokenizer_t *tok)
     }
 
 
-    if (*tok->buff == L'#')
+    while (*tok->buff == L'#')
     {
         if (tok->show_comments)
         {
             tok->last_pos = tok->buff - tok->orig_buff;
             read_comment(tok);
+
+            if (tok->buff[0] == L'\n' && tok->continue_line_after_comment)
+                tok->buff++;
+
             return;
         }
         else
         {
             while (*(tok->buff)!= L'\n' && *(tok->buff)!= L'\0')
                 tok->buff++;
+
+            if (tok->buff[0] == L'\n' && tok->continue_line_after_comment)
+                tok->buff++;
         }
 
-        while (my_iswspace(*(tok->buff)))
+        while (my_iswspace(*(tok->buff))) {
             tok->buff++;
+        }
     }
+
+    tok->continue_line_after_comment = false;
 
     tok->last_pos = tok->buff - tok->orig_buff;
 
     switch (*tok->buff)
     {
-
         case L'\0':
             tok->last_type = TOK_END;
             /*fwprintf( stderr, L"End of string\n" );*/
             tok->has_next = false;
             break;
-        case 13:
+        case 13: // carriage return
         case L'\n':
         case L';':
             tok->last_type = TOK_END;
             tok->buff++;
+            // Hack: when we get a newline, swallow as many as we can
+            // This compresses multiple subsequent newlines into a single one
+            if (! tok->show_blank_lines)
+            {
+                while (*tok->buff == L'\n' || *tok->buff == 13 /* CR */ || *tok->buff == ' ' || *tok->buff == '\t')
+                {
+                    tok->buff++;
+                }
+            }
+            tok->last_token.clear();
             break;
         case L'&':
             tok->last_type = TOK_BACKGROUND;
@@ -606,69 +665,59 @@ void tok_next(tokenizer_t *tok)
             break;
 
         case L'>':
-            read_redirect(tok, 1);
-            return;
         case L'<':
-            read_redirect(tok, 0);
-            return;
         case L'^':
-            read_redirect(tok, 2);
-            return;
+        {
+            /* There's some duplication with the code in the default case below. The key difference here is that we must never parse these as a string; a failed redirection is an error! */
+            enum token_type mode = TOK_NONE;
+            int fd = -1;
+            size_t consumed = read_redirection_or_fd_pipe(tok->buff, &mode, &fd);
+            if (consumed == 0 || fd < 0)
+            {
+                TOK_CALL_ERROR(tok, TOK_OTHER, REDIRECT_ERROR);
+            }
+            else
+            {
+                tok->buff += consumed;
+                tok->last_type = mode;
+                tok->last_token = to_string(fd);
+            }
+        }
+        break;
 
         default:
         {
+            /* Maybe a redirection like '2>&1', maybe a pipe like 2>|, maybe just a string */
+            size_t consumed = 0;
+            enum token_type mode = TOK_NONE;
+            int fd = -1;
             if (iswdigit(*tok->buff))
+                consumed = read_redirection_or_fd_pipe(tok->buff, &mode, &fd);
+
+            if (consumed > 0)
             {
-                const wchar_t *orig = tok->buff;
-                int fd = 0;
-                while (iswdigit(*tok->buff))
-                    fd = (fd*10) + (*(tok->buff++) - L'0');
-
-                switch (*(tok->buff))
+                /* It looks like a redirection or a pipe. But we don't support piping fd 0. Note that fd 0 may be -1, indicating overflow; but we don't treat that as a tokenizer error. */
+                if (mode == TOK_PIPE && fd == 0)
                 {
-                    case L'^':
-                    case L'>':
-                    case L'<':
-                        read_redirect(tok, fd);
-                        return;
+                    TOK_CALL_ERROR(tok, TOK_OTHER, PIPE_ERROR);
                 }
-                tok->buff = orig;
+                else
+                {
+                    tok->buff += consumed;
+                    tok->last_type = mode;
+                    tok->last_token = to_string(fd);
+                }
             }
-            read_string(tok);
+            else
+            {
+                /* Not a redirection or pipe, so just a string */
+                read_string(tok);
+            }
         }
+        break;
 
     }
 
-}
-
-enum token_type tok_peek_next(tokenizer_t *tok, wcstring *out_next_string)
-{
-    if (out_next_string != NULL)
-    {
-        out_next_string->clear();
-    }
-        
-    enum token_type result = TOK_END;
-    if (tok_has_next(tok))
-    {
-        int saved = tok_get_pos(tok);
-        tok_next(tok);
-        result = tok_last_type(tok);
-        
-        if (out_next_string != NULL)
-        {
-            const wchar_t *last = tok_last(tok);
-            out_next_string->assign(last ? last : L"");
-        }
-        
-        tok_set_pos(tok, saved);
-    }
-    return result;
-}
-
-const wchar_t *tok_string(tokenizer_t *tok)
-{
-    return tok?tok->orig_buff:0;
 }
 
 wcstring tok_first(const wchar_t *str)
@@ -693,11 +742,17 @@ wcstring tok_first(const wchar_t *str)
     return result;
 }
 
-int tok_get_pos(tokenizer_t *tok)
+int tok_get_pos(const tokenizer_t *tok)
 {
     CHECK(tok, 0);
-
     return (int)tok->last_pos;
+}
+
+size_t tok_get_extent(const tokenizer_t *tok)
+{
+    CHECK(tok, 0);
+    size_t current_pos = tok->buff - tok->orig_buff;
+    return current_pos > tok->last_pos ? current_pos - tok->last_pos : 0;
 }
 
 

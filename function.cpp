@@ -43,6 +43,11 @@
 typedef std::map<wcstring, function_info_t> function_map_t;
 static function_map_t loaded_functions;
 
+/**
+   Functions that shouldn't be autoloaded (anymore).
+*/
+static std::set<wcstring> function_tombstones;
+
 /* Lock for functions */
 static pthread_mutex_t functions_lock;
 
@@ -61,17 +66,13 @@ function_autoload_t::function_autoload_t() : autoload_t(L"fish_function_path", N
 {
 }
 
-/** Removes a function from our internal table, returning true if it was found and false if not */
-static bool function_remove_ignore_autoload(const wcstring &name);
+static bool function_remove_ignore_autoload(const wcstring &name, bool tombstone = true);
 
 /** Callback when an autoloaded function is removed */
 void function_autoload_t::command_removed(const wcstring &cmd)
 {
-    function_remove_ignore_autoload(cmd);
+    function_remove_ignore_autoload(cmd, false);
 }
-
-/* Helper macro for vomiting */
-#define VOMIT_ON_FAILURE(a) do { if (0 != (a)) { int err = errno; fprintf(stderr, "%s failed on line %d in file %s: %d (%s)\n", #a, __LINE__, __FILE__, err, strerror(err)); abort(); }} while (0)
 
 /**
    Kludgy flag set by the load function in order to tell function_add
@@ -90,6 +91,11 @@ static int load(const wcstring &name)
     scoped_lock lock(functions_lock);
     bool was_autoload = is_autoload;
     int res;
+
+    bool no_more_autoload = function_tombstones.count(name) > 0;
+    if (no_more_autoload)
+        return 0;
+
     function_map_t::iterator iter = loaded_functions.find(name);
     if (iter !=  loaded_functions.end() && !iter->second.is_autoload)
     {
@@ -156,12 +162,23 @@ void function_init()
     VOMIT_ON_FAILURE(pthread_mutexattr_destroy(&a));
 }
 
+static std::map<wcstring,env_var_t> snapshot_vars(const wcstring_list_t &vars)
+{
+    std::map<wcstring,env_var_t> result;
+    for (wcstring_list_t::const_iterator it = vars.begin(), end = vars.end(); it != end; ++it)
+    {
+        result.insert(std::make_pair(*it, env_get_string(*it)));
+    }
+    return result;
+}
+
 function_info_t::function_info_t(const function_data_t &data, const wchar_t *filename, int def_offset, bool autoload) :
     definition(data.definition),
     description(data.description),
     definition_file(intern(filename)),
     definition_offset(def_offset),
     named_arguments(data.named_arguments),
+    inherit_vars(snapshot_vars(data.inherit_vars)),
     is_autoload(autoload),
     shadows(data.shadows)
 {
@@ -173,12 +190,13 @@ function_info_t::function_info_t(const function_info_t &data, const wchar_t *fil
     definition_file(intern(filename)),
     definition_offset(def_offset),
     named_arguments(data.named_arguments),
+    inherit_vars(data.inherit_vars),
     is_autoload(autoload),
     shadows(data.shadows)
 {
 }
 
-void function_add(const function_data_t &data, const parser_t &parser)
+void function_add(const function_data_t &data, const parser_t &parser, int definition_line_offset)
 {
     ASSERT_IS_MAIN_THREAD();
 
@@ -189,11 +207,10 @@ void function_add(const function_data_t &data, const parser_t &parser)
     /* Remove the old function */
     function_remove(data.name);
 
-
     /* Create and store a new function */
     const wchar_t *filename = reader_current_filename();
-    int def_offset = parser.line_number_of_character_at_offset(parser.current_block->tok_pos) - 1;
-    const function_map_t::value_type new_pair(data.name, function_info_t(data, filename, def_offset, is_autoload));
+
+    const function_map_t::value_type new_pair(data.name, function_info_t(data, filename, definition_line_offset, is_autoload));
     loaded_functions.insert(new_pair);
 
     /* Add event handlers */
@@ -220,19 +237,29 @@ int function_exists_no_autoload(const wcstring &cmd, const env_vars_snapshot_t &
     return loaded_functions.find(cmd) != loaded_functions.end() || function_autoloader.can_load(cmd, vars);
 }
 
-static bool function_remove_ignore_autoload(const wcstring &name)
+static bool function_remove_ignore_autoload(const wcstring &name, bool tombstone)
 {
+    // Note: the lock may be held at this point, but is recursive
     scoped_lock lock(functions_lock);
-    bool erased = (loaded_functions.erase(name) > 0);
 
-    if (erased)
-    {
-        event_t ev(EVENT_ANY);
-        ev.function_name=name;
-        event_remove(ev);
-    }
-    return erased;
+    function_map_t::iterator iter = loaded_functions.find(name);
 
+    // not found.  not erasing.
+    if (iter == loaded_functions.end())
+        return false;
+
+    // removing an auto-loaded function.  prevent it from being
+    // auto-reloaded.
+    if (iter->second.is_autoload && tombstone)
+        function_tombstones.insert(name);
+
+    loaded_functions.erase(iter);
+
+    event_t ev(EVENT_ANY);
+    ev.function_name=name;
+    event_remove(ev);
+
+    return true;
 }
 
 void function_remove(const wcstring &name)
@@ -273,6 +300,13 @@ wcstring_list_t function_get_named_arguments(const wcstring &name)
     scoped_lock lock(functions_lock);
     const function_info_t *func = function_get(name);
     return func ? func->named_arguments : wcstring_list_t();
+}
+
+std::map<wcstring,env_var_t> function_get_inherit_vars(const wcstring &name)
+{
+    scoped_lock lock(functions_lock);
+    const function_info_t *func = function_get(name);
+    return func ? func->inherit_vars : std::map<wcstring,env_var_t>();
 }
 
 int function_get_shadows(const wcstring &name)

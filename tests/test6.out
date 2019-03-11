@@ -1,4 +1,35 @@
+AAAA:
+--abcd
+AAAA:
 --abcd
 --efgh
+BBBB:
 --abcd
---abcd
+BBBB:
+
+CCCC:
+--bar
+--baz
+-a
+-b
+-bar
+-foo
+CCCC:
+--baz
+-a
+-b
+-bar
+-foo
+CCCC:
+--baz
+-a
+-b
+-bar
+CCCC:
+--baz
+-b
+-bar
+CCCC:
+implicit cd complete works
+no implicit cd complete after 'command'
+PATH does not cause incorrect implicit cd

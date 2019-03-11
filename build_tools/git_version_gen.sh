@@ -5,17 +5,14 @@
 # Modified for fish by David Adam <zanchey@ucc.gu.uwa.edu.au>
 
 FBVF=FISH-BUILD-VERSION-FILE
-DEF_VER=2.0.GIT
+DEF_VER=unknown
 
 # First see if there is a version file (included in release tarballs),
 # then try git-describe, then default.
 if test -f version
 then
 	VN=$(cat version) || VN="$DEF_VER"
-elif test -d .git -o -f .git && type git >/dev/null
-then
-	VN=$(git describe --tags --dirty 2>/dev/null)
-else
+elif ! VN=$(git describe --always --dirty 2>/dev/null); then
 	VN="$DEF_VER"
 fi
 

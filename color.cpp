@@ -6,7 +6,7 @@
 
 bool rgb_color_t::try_parse_special(const wcstring &special)
 {
-    bzero(&data, sizeof data);
+    memset(&data, 0, sizeof data);
     const wchar_t *name = special.c_str();
     if (! wcscasecmp(name, L"normal"))
     {
@@ -102,7 +102,7 @@ static unsigned char convert_color(const unsigned char rgb[3], const uint32_t *c
 
 bool rgb_color_t::try_parse_rgb(const wcstring &name)
 {
-    bzero(&data, sizeof data);
+    memset(&data, 0, sizeof data);
     /* We support the following style of rgb formats (case insensitive):
         #FA3
         #F3A035
@@ -125,7 +125,7 @@ bool rgb_color_t::try_parse_rgb(const wcstring &name)
         {
             int val = parse_hex_digit(name.at(digit_idx++));
             if (val < 0) break;
-            data.rgb[i] = val*16+val;
+            data.color.rgb[i] = val*16+val;
         }
         success = (i == 3);
     }
@@ -137,7 +137,7 @@ bool rgb_color_t::try_parse_rgb(const wcstring &name)
             int hi = parse_hex_digit(name.at(digit_idx++));
             int lo = parse_hex_digit(name.at(digit_idx++));
             if (lo < 0 || hi < 0) break;
-            data.rgb[i] = hi*16+lo;
+            data.color.rgb[i] = hi*16+lo;
         }
         success = (i == 3);
     }
@@ -184,7 +184,7 @@ wcstring_list_t rgb_color_t::named_color_names(void)
 
 bool rgb_color_t::try_parse_named(const wcstring &str)
 {
-    bzero(&data, sizeof data);
+    memset(&data, 0, sizeof data);
     size_t max = sizeof named_colors / sizeof *named_colors;
     for (size_t idx=0; idx < max; idx++)
     {
@@ -298,7 +298,13 @@ static unsigned char term256_color_for_rgb(const unsigned char rgb[3])
 unsigned char rgb_color_t::to_term256_index() const
 {
     assert(type == type_rgb);
-    return term256_color_for_rgb(data.rgb);
+    return term256_color_for_rgb(data.color.rgb);
+}
+
+color24_t rgb_color_t::to_color24() const
+{
+    assert(type == type_rgb);
+    return data.color;
 }
 
 unsigned char rgb_color_t::to_name_index() const
@@ -310,7 +316,7 @@ unsigned char rgb_color_t::to_name_index() const
     }
     else if (type == type_rgb)
     {
-        return term8_color_for_rgb(data.rgb);
+        return term8_color_for_rgb(data.color.rgb);
     }
     else
     {
@@ -327,7 +333,7 @@ void rgb_color_t::parse(const wcstring &str)
     if (! success) success = try_parse_rgb(str);
     if (! success)
     {
-        bzero(this->data.rgb, sizeof this->data.rgb);
+        memset(&this->data, 0, sizeof this->data);
         this->type = type_none;
     }
 }
@@ -351,7 +357,7 @@ wcstring rgb_color_t::description() const
         case type_named:
             return format_string(L"named(%d: %ls)", (int)data.name_idx, name_for_color_idx(data.name_idx));
         case type_rgb:
-            return format_string(L"rgb(0x%02x%02x%02x)", data.rgb[0], data.rgb[1], data.rgb[2]);
+            return format_string(L"rgb(0x%02x%02x%02x)", data.color.rgb[0], data.color.rgb[1], data.color.rgb[2]);
         case type_reset:
             return L"reset";
         case type_normal:

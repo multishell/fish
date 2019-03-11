@@ -11,6 +11,8 @@ Functions used for implementing the set_color builtin.
 
 #if HAVE_NCURSES_H
 #include <ncurses.h>
+#elif HAVE_NCURSES_CURSES_H
+#include <ncurses/curses.h>
 #else
 #include <curses.h>
 #endif
@@ -81,6 +83,12 @@ static int builtin_set_color(parser_t &parser, wchar_t **argv)
 
     int argc = builtin_count_args(argv);
 
+    /* Some code passes variables to set_color that don't exist, like $fish_user_whatever. As a hack, quietly return failure. */
+    if (argc <= 1)
+    {
+        return EXIT_FAILURE;
+    }
+
     const wchar_t *bgcolor = NULL;
     bool bold = false, underline=false;
     int errret;
@@ -126,37 +134,31 @@ static int builtin_set_color(parser_t &parser, wchar_t **argv)
         }
     }
 
-    /* Remaining argument is foreground color */
-    const wchar_t *fgcolor = NULL;
-    if (woptind < argc)
+    /* Remaining arguments are foreground color */
+    std::vector<rgb_color_t> fgcolors;
+    for (; woptind < argc; woptind++)
     {
-        if (woptind + 1 == argc)
+        rgb_color_t fg = rgb_color_t(argv[woptind]);
+        if (fg.is_none() || fg.is_ignore())
         {
-            fgcolor = argv[woptind];
-        }
-        else
-        {
-            append_format(stderr_buffer,
-                          _(L"%ls: Too many arguments\n"),
-                          argv[0]);
+            append_format(stderr_buffer, _(L"%ls: Unknown color '%ls'\n"), argv[0], argv[woptind]);
             return STATUS_BUILTIN_ERROR;
         }
+        fgcolors.push_back(fg);
     }
 
-    if (fgcolor == NULL && bgcolor == NULL && !bold && !underline)
+    if (fgcolors.empty() && bgcolor == NULL && !bold && !underline)
     {
         append_format(stderr_buffer,
                       _(L"%ls: Expected an argument\n"),
                       argv[0]);
         return STATUS_BUILTIN_ERROR;
     }
-
-    const rgb_color_t fg = rgb_color_t(fgcolor ? fgcolor : L"");
-    if (fgcolor && (fg.is_none() || fg.is_ignore()))
-    {
-        append_format(stderr_buffer, _(L"%ls: Unknown color '%ls'\n"), argv[0], fgcolor);
-        return STATUS_BUILTIN_ERROR;
-    }
+    
+    // #1323: We may have multiple foreground colors. Choose the best one.
+    // If we had no foreground coor, we'll get none(); if we have at least one we expect not-none
+    const rgb_color_t fg = best_color(fgcolors, output_get_color_support());
+    assert(fgcolors.empty() || !(fg.is_none() || fg.is_ignore()));
 
     const rgb_color_t bg = rgb_color_t(bgcolor ? bgcolor : L"");
     if (bgcolor && (bg.is_none() || bg.is_ignore()))
@@ -181,7 +183,6 @@ static int builtin_set_color(parser_t &parser, wchar_t **argv)
         return STATUS_BUILTIN_ERROR;
     }
 
-
     /* Save old output function so we can restore it */
     int (* const saved_writer_func)(char) = output_get_writer();
 
@@ -205,21 +206,21 @@ static int builtin_set_color(parser_t &parser, wchar_t **argv)
     {
         if (bg.is_normal())
         {
-            write_background_color(0);
+            write_color(rgb_color_t::black(), false /* not is_fg */);
             writembs(tparm(exit_attribute_mode));
         }
     }
 
-    if (fgcolor != NULL)
+    if (! fg.is_none())
     {
         if (fg.is_normal() || fg.is_reset())
         {
-            write_foreground_color(0);
+            write_color(rgb_color_t::black(), true /* is_fg */);
             writembs(tparm(exit_attribute_mode));
         }
         else
         {
-            write_foreground_color(index_for_color(fg));
+            write_color(fg, true /* is_fg */);
         }
     }
 
@@ -227,7 +228,7 @@ static int builtin_set_color(parser_t &parser, wchar_t **argv)
     {
         if (! bg.is_normal() && ! bg.is_reset())
         {
-            write_background_color(index_for_color(bg));
+            write_color(bg, false /* not is_fg */);
         }
     }
 
@@ -235,9 +236,8 @@ static int builtin_set_color(parser_t &parser, wchar_t **argv)
     output_set_writer(saved_writer_func);
 
     /* Output the collected string */
-    std::string local_output;
-    std::swap(builtin_set_color_output, local_output);
-    stdout_buffer.append(str2wcstring(local_output));
+    stdout_buffer.append(str2wcstring(builtin_set_color_output));
+    builtin_set_color_output.clear();
 
     return STATUS_BUILTIN_OK;
 }

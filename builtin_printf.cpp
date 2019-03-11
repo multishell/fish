@@ -195,11 +195,6 @@ double C_STRTOD(wchar_t const *nptr, wchar_t **endptr)
     return r;
 }
 
-static inline unsigned wchar_t to_uwchar_t(wchar_t ch)
-{
-    return ch;
-}
-
 void builtin_printf_state_t::fatal_error(const wchar_t *fmt, ...)
 {
     // Don't error twice
@@ -292,7 +287,7 @@ static T string_to_scalar_type(const wchar_t *s, builtin_printf_state_t *state)
     T val;
     if (*s == L'\"' || *s == L'\'')
     {
-        unsigned wchar_t ch = *++s;
+        wchar_t ch = *++s;
         val = ch;
     }
     else
@@ -362,16 +357,17 @@ long builtin_printf_state_t::print_esc(const wchar_t *escstart, bool octal_0)
             esc_value = esc_value * 16 + hex_to_bin(*p);
         if (esc_length == 0)
             this->fatal_error(_(L"missing hexadecimal number in escape"));
-        this->append_output(esc_value);
+        this->append_output(ENCODE_DIRECT_BASE + esc_value % 256);
     }
     else if (is_octal_digit(*p))
     {
         /* Parse \0ooo (if octal_0 && *p == L'0') or \ooo (otherwise).
         Allow \ooo if octal_0 && *p != L'0'; this is an undocumented
         extension to POSIX that is compatible with Bash 2.05b.  */
+        /* Wrap mod 256, which matches historic behavior */
         for (esc_length = 0, p += octal_0 && *p == L'0'; esc_length < 3 && is_octal_digit(*p); ++esc_length, ++p)
             esc_value = esc_value * 8 + octal_to_bin(*p);
-        this->append_output(esc_value);
+        this->append_output(ENCODE_DIRECT_BASE + esc_value % 256);
     }
     else if (*p && wcschr(L"\"\\abcefnrtv", *p))
     {
@@ -472,6 +468,7 @@ void builtin_printf_state_t::print_direc(const wchar_t *start, size_t length, wc
             fmt.append(L"L");
             break;
         case L's':
+        case L'c':
             fmt.append(L"l");
             break;
         default:
@@ -632,7 +629,7 @@ int builtin_printf_state_t::print_formatted(const wchar_t *format, int argc, wch
                     }
                     break;
                 }
-                
+
                 modify_allowed_format_specifiers(ok, "aAcdeEfFgGiosuxX", true);
 
                 for (;; f++, direc_length++)
@@ -736,8 +733,8 @@ no_more_flag_characters:
                     ++f;
 
                 {
-                    unsigned wchar_t conversion = *f;
-                    if (! ok[conversion])
+                    wchar_t conversion = *f;
+                    if (conversion > 0xFF || ! ok[conversion])
                     {
                         this->fatal_error(_(L"%.*ls: invalid conversion specification"), (int)(f + 1 - direc_start), direc_start);
                         return 0;

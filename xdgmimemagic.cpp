@@ -21,8 +21,8 @@
  *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
+ * Boston, MA  02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -276,7 +276,10 @@ _xdg_mime_magic_parse_header(FILE *magic_file, XdgMimeMagicMatch *match)
 
     buffer = _xdg_mime_magic_read_to_newline(magic_file, &end_of_file);
     if (end_of_file)
+    {
+        free(buffer);
         return XDG_MIME_MAGIC_EOF;
+    }
 
     end_ptr = buffer;
     while (*end_ptr != ']' && *end_ptr != '\000' && *end_ptr != '\n')

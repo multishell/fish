@@ -36,6 +36,9 @@ public:
     /** Constructor */
     lru_node_t(const wcstring &pkey) : prev(NULL), next(NULL), key(pkey) { }
 
+    /** Virtual destructor that does nothing for classes that inherit lru_node_t */
+    virtual ~lru_node_t() {}
+
     /** operator< for std::set */
     bool operator<(const lru_node_t &other) const
     {
@@ -48,7 +51,7 @@ class lru_cache_t
 {
 private:
 
-    /** Max node count */
+    /** Max node count. This may be (transiently) exceeded by add_node_without_eviction, which is used from background threads. */
     const size_t max_node_count;
 
     /** Count of nodes */
@@ -189,13 +192,9 @@ public:
         node->prev = &mouth;
         mouth.next = node;
 
-        /* Update the count */
+        /* Update the count. This may push us over the maximum node count. */
         node_count++;
-
-        /* Evict */
-        while (node_count > max_node_count)
-            evict_last_node();
-
+        
         /* Success */
         return true;
     }

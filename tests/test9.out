@@ -2,3 +2,21 @@ Testing that builtins can truncate files
 abc
 before:test1
 received event test3 with args: foo bar
+Test break and continue
+Ping
+Foop
+Foop
+Foop
+Doop
+Testing for loop
+123
+1
+2
+3
+foo
+bar
+baz
+psub file was deleted
+bom_test
+not#a#comment
+is

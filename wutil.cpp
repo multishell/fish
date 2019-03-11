@@ -35,6 +35,8 @@
 
 typedef std::string cstring;
 
+const file_id_t kInvalidFileID = {(dev_t)-1LL, (ino_t)-1LL, (uint64_t)-1LL, -1, -1, (uint32_t)-1};
+
 /**
    Minimum length of the internal covnersion buffers
 */
@@ -75,14 +77,32 @@ bool wreaddir_resolving(DIR *dir, const std::wstring &dir_path, std::wstring &ou
     if (out_is_dir)
     {
         /* The caller cares if this is a directory, so check */
-        bool is_dir;
+        bool is_dir = false;
+        
+        /* We may be able to skip stat, if the readdir can tell us the file type directly */
+        bool check_with_stat = true;
+#ifdef HAVE_STRUCT_DIRENT_D_TYPE
         if (d->d_type == DT_DIR)
         {
+            /* Known directory */
             is_dir = true;
+            check_with_stat = false;
         }
         else if (d->d_type == DT_LNK || d->d_type == DT_UNKNOWN)
         {
             /* We want to treat symlinks to directories as directories. Use stat to resolve it. */
+            check_with_stat = true;
+        }
+        else
+        {
+            /* Regular file */
+            is_dir = false;
+            check_with_stat = false;
+        }
+#endif // HAVE_STRUCT_DIRENT_D_TYPE
+        if (check_with_stat)
+        {
+            /* We couldn't determine the file type from the dirent; check by stat'ing it */
             cstring fullpath = wcs2string(dir_path);
             fullpath.push_back('/');
             fullpath.append(d->d_name);
@@ -95,10 +115,6 @@ bool wreaddir_resolving(DIR *dir, const std::wstring &dir_path, std::wstring &ou
             {
                 is_dir = !!(S_ISDIR(buf.st_mode));
             }
-        }
-        else
-        {
-            is_dir = false;
         }
         *out_is_dir = is_dir;
     }
@@ -186,12 +202,6 @@ FILE *wfopen(const wcstring &path, const char *mode)
     return result;
 }
 
-FILE *wfreopen(const wcstring &path, const char *mode, FILE *stream)
-{
-    cstring tmp = wcs2string(path);
-    return freopen(tmp.c_str(), mode, stream);
-}
-
 bool set_cloexec(int fd)
 {
     int flags = fcntl(fd, F_GETFD, 0);
@@ -230,62 +240,48 @@ static int wopen_internal(const wcstring &pathname, int flags, mode_t mode, bool
     return fd;
 
 }
-int wopen(const wcstring &pathname, int flags, mode_t mode)
-{
-    // off the main thread, always use wopen_cloexec
-    ASSERT_IS_MAIN_THREAD();
-    ASSERT_IS_NOT_FORKED_CHILD();
-    return wopen_internal(pathname, flags, mode, false);
-}
 
 int wopen_cloexec(const wcstring &pathname, int flags, mode_t mode)
 {
     return wopen_internal(pathname, flags, mode, true);
 }
 
-
-int wcreat(const wcstring &pathname, mode_t mode)
-{
-    cstring tmp = wcs2string(pathname);
-    return creat(tmp.c_str(), mode);
-}
-
 DIR *wopendir(const wcstring &name)
 {
-    cstring tmp = wcs2string(name);
+    const cstring tmp = wcs2string(name);
     return opendir(tmp.c_str());
 }
 
 int wstat(const wcstring &file_name, struct stat *buf)
 {
-    cstring tmp = wcs2string(file_name);
+    const cstring tmp = wcs2string(file_name);
     return stat(tmp.c_str(), buf);
 }
 
 int lwstat(const wcstring &file_name, struct stat *buf)
 {
-    cstring tmp = wcs2string(file_name);
+    const cstring tmp = wcs2string(file_name);
     return lstat(tmp.c_str(), buf);
 }
 
 int waccess(const wcstring &file_name, int mode)
 {
-    cstring tmp = wcs2string(file_name);
+    const cstring tmp = wcs2string(file_name);
     return access(tmp.c_str(), mode);
 }
 
 int wunlink(const wcstring &file_name)
 {
-    cstring tmp = wcs2string(file_name);
+    const cstring tmp = wcs2string(file_name);
     return unlink(tmp.c_str());
 }
 
-void wperror(const wcstring &s)
+void wperror(const wchar_t *s)
 {
     int e = errno;
-    if (!s.empty())
+    if (s[0] != L'\0')
     {
-        fwprintf(stderr, L"%ls: ", s.c_str());
+        fwprintf(stderr, L"%ls: ", s);
     }
     fwprintf(stderr, L"%s\n", strerror(e));
 }
@@ -317,18 +313,33 @@ static inline void safe_append(char *buffer, const char *s, size_t buffsize)
     strncat(buffer, s, buffsize - strlen(buffer) - 1);
 }
 
+// In general, strerror is not async-safe, and therefore we cannot use it directly
+// So instead we have to grub through sys_nerr and sys_errlist directly
+// On GNU toolchain, this will produce a deprecation warning from the linker (!!),
+// which appears impossible to suppress!
 const char *safe_strerror(int err)
 {
 #if defined(__UCLIBC__)
     // uClibc does not have sys_errlist, however, its strerror is believed to be async-safe
     // See #808
     return strerror(err);
-#else
+#elif defined(HAVE__SYS__ERRS) || defined(HAVE_SYS_ERRLIST)
+#ifdef HAVE_SYS_ERRLIST
     if (err >= 0 && err < sys_nerr && sys_errlist[err] != NULL)
     {
         return sys_errlist[err];
     }
+#elif defined(HAVE__SYS__ERRS)
+    extern const char _sys_errs[];
+    extern const int _sys_index[];
+    extern int _sys_num_err;
+
+    if (err >= 0 && err < _sys_num_err) {
+		return &_sys_errs[_sys_index[err]];
+    }
+#endif // either HAVE__SYS__ERRS or HAVE_SYS_ERRLIST
     else
+#endif // defined(HAVE__SYS__ERRS) || defined(HAVE_SYS_ERRLIST)
     {
         int saved_err = errno;
 
@@ -345,7 +356,6 @@ const char *safe_strerror(int err)
         errno = saved_err;
         return buff;
     }
-#endif
 }
 
 void safe_perror(const char *message)
@@ -364,7 +374,7 @@ void safe_perror(const char *message)
     safe_append(buff, safe_strerror(err), sizeof buff);
     safe_append(buff, "\n", sizeof buff);
 
-    write(STDERR_FILENO, buff, strlen(buff));
+    write_ignore(STDERR_FILENO, buff, strlen(buff));
     errno = err;
 }
 
@@ -476,25 +486,10 @@ const wchar_t *wgettext(const wchar_t *in)
     {
         cstring mbs_in = wcs2string(key);
         char *out = fish_gettext(mbs_in.c_str());
-        val = new wcstring(format_string(L"%s", out));
+        val = new wcstring(format_string(L"%s", out)); //note that this writes into the map!
     }
     errno = err;
-    return val->c_str();
-}
-
-const wchar_t *wgetenv(const wcstring &name)
-{
-    ASSERT_IS_MAIN_THREAD();
-    cstring name_narrow = wcs2string(name);
-    char *res_narrow = getenv(name_narrow.c_str());
-    static wcstring out;
-
-    if (!res_narrow)
-        return 0;
-
-    out = format_string(L"%s", res_narrow);
-    return out.c_str();
-
+    return val->c_str(); //looks dangerous but is safe, since the string is stored in the map
 }
 
 int wmkdir(const wcstring &name, int mode)
@@ -524,4 +519,98 @@ int fish_wcstoi(const wchar_t *str, wchar_t ** endptr, int base)
         errno = ERANGE;
     }
     return (int)ret;
+}
+
+file_id_t file_id_t::file_id_from_stat(const struct stat *buf)
+{
+    assert(buf != NULL);
+    
+    file_id_t result = {};
+    result.device = buf->st_dev;
+    result.inode = buf->st_ino;
+    result.size = buf->st_size;
+    result.change_seconds = buf->st_ctime;
+    
+#if STAT_HAVE_NSEC
+    result.change_nanoseconds = buf->st_ctime_nsec;
+#elif defined(__APPLE__)
+    result.change_nanoseconds = buf->st_ctimespec.tv_nsec;
+#elif defined(_BSD_SOURCE) || defined(_SVID_SOURCE) || defined(_XOPEN_SOURCE)
+    result.change_nanoseconds = buf->st_ctim.tv_nsec;
+#else
+    result.change_nanoseconds = 0;
+#endif
+
+#if defined(__APPLE__) || defined(__DragonFly__) || defined(__FreeBSD__) ||  defined(__OpenBSD__) || defined(__NetBSD__)
+    result.generation = buf->st_gen;
+#else
+    result.generation = 0;
+#endif
+    return result;
+}
+
+
+file_id_t file_id_for_fd(int fd)
+{
+    file_id_t result = kInvalidFileID;
+    struct stat buf = {};
+    if (0 == fstat(fd, &buf))
+    {
+        result = file_id_t::file_id_from_stat(&buf);
+    }
+    return result;
+}
+
+file_id_t file_id_for_path(const wcstring &path)
+{
+    file_id_t result = kInvalidFileID;
+    struct stat buf = {};
+    if (0 == wstat(path, &buf))
+    {
+        result = file_id_t::file_id_from_stat(&buf);
+    }
+    return result;
+
+}
+
+bool file_id_t::operator==(const file_id_t &rhs) const
+{
+    return device == rhs.device &&
+           inode == rhs.inode &&
+           size == rhs.size &&
+           change_seconds == rhs.change_seconds &&
+           change_nanoseconds == rhs.change_nanoseconds &&
+           generation == rhs.generation;
+}
+
+bool file_id_t::operator!=(const file_id_t &rhs) const
+{
+    return ! (*this == rhs);
+}
+
+template<typename T>
+int compare(T a, T b)
+{
+    if (a < b)
+    {
+        return -1;
+    }
+    else if (a > b)
+    {
+        return 1;
+    }
+    return 0;
+}
+
+bool file_id_t::operator<(const file_id_t &rhs) const
+{
+    /* Compare each field, stopping when we get to a non-equal field */
+    int ret = 0;
+    if (! ret) ret = compare(device, rhs.device);
+    if (! ret) ret = compare(inode, rhs.inode);
+    if (! ret) ret = compare(size, rhs.size);
+    if (! ret) ret = compare(generation, rhs.generation);
+    if (! ret) ret = compare(change_seconds, rhs.change_seconds);
+    if (! ret) ret = compare(change_nanoseconds, rhs.change_nanoseconds);
+    return ret < 0;
 }

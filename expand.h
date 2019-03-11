@@ -19,6 +19,7 @@
 
 #include "util.h"
 #include "common.h"
+#include "parse_constants.h"
 #include <list>
 
 enum
@@ -49,17 +50,14 @@ enum
     /** Don't generate descriptions */
     EXPAND_NO_DESCRIPTIONS = 1 << 6,
 
-    /** Don't do process expansion */
-    EXPAND_SKIP_PROCESS = 1 << 7,
-
     /** Don't expand jobs (but you can still expand processes). This is because job expansion is not thread safe. */
-    EXPAND_SKIP_JOBS = 1 << 8,
+    EXPAND_SKIP_JOBS = 1 << 7,
 
     /** Don't expand home directories */
-    EXPAND_SKIP_HOME_DIRECTORIES = 1 << 9,
+    EXPAND_SKIP_HOME_DIRECTORIES = 1 << 8,
 
     /** Allow fuzzy matching */
-    EXPAND_FUZZY_MATCH = 1 << 10
+    EXPAND_FUZZY_MATCH = 1 << 9
 };
 typedef int expand_flags_t;
 
@@ -101,6 +99,11 @@ enum
     */
     INTERNAL_SEPARATOR,
 
+    /**
+       Character representing an empty variable expansion.
+       Only used transitively while expanding variables.
+    */
+    VARIABLE_EXPAND_EMPTY,
 }
 ;
 
@@ -146,9 +149,10 @@ class parser_t;
    \param input The parameter to expand
    \param output The list to which the result will be appended.
    \param flag Specifies if any expansion pass should be skipped. Legal values are any combination of EXPAND_SKIP_CMDSUBST EXPAND_SKIP_VARIABLES and EXPAND_SKIP_WILDCARDS
+   \param errors Resulting errors, or NULL to ignore
    \return One of EXPAND_OK, EXPAND_ERROR, EXPAND_WILDCARD_MATCH and EXPAND_WILDCARD_NO_MATCH. EXPAND_WILDCARD_NO_MATCH and EXPAND_WILDCARD_MATCH are normal exit conditions used only on strings containing wildcards to tell if the wildcard produced any matches.
 */
-__warn_unused int expand_string(const wcstring &input, std::vector<completion_t> &output, expand_flags_t flags);
+__warn_unused int expand_string(const wcstring &input, std::vector<completion_t> &output, expand_flags_t flags, parse_error_list_t *errors);
 
 
 /**
@@ -158,9 +162,10 @@ __warn_unused int expand_string(const wcstring &input, std::vector<completion_t>
 
    \param inout_str The parameter to expand in-place
    \param flag Specifies if any expansion pass should be skipped. Legal values are any combination of EXPAND_SKIP_CMDSUBST EXPAND_SKIP_VARIABLES and EXPAND_SKIP_WILDCARDS
+   \param errors Resulting errors, or NULL to ignore
    \return Whether expansion succeded
 */
-bool expand_one(wcstring &inout_str, expand_flags_t flags);
+bool expand_one(wcstring &inout_str, expand_flags_t flags, parse_error_list_t *errors = NULL);
 
 /**
    Convert the variable value to a human readable form, i.e. escape things, handle arrays, etc. Suitable for pretty-printing. The result must be free'd!
@@ -176,6 +181,9 @@ wcstring expand_escape_variable(const wcstring &in);
 */
 void expand_tilde(wcstring &input);
 
+/** Perform the opposite of tilde expansion on the string, which is modified in place */
+wcstring replace_home_directory_with_tilde(const wcstring &str);
+
 /**
    Test if the specified argument is clean, i.e. it does not contain
    any tokens which need to be expanded or otherwise altered. Clean
@@ -188,18 +196,6 @@ void expand_tilde(wcstring &input);
    \param in the string to test
 */
 int expand_is_clean(const wchar_t *in);
-
-/**
-   Perform error reporting for a syntax error related to the variable
-   expansion beginning at the specified character of the specified
-   token. This function will call the error function with an
-   explanatory string about what is wrong with the specified token.
-
-   \param token The token containing the error
-   \param token_pos The position where the expansion begins
-   \param error_pos The position on the line to report to the error function.
-*/
-void expand_variable_error(parser_t &parser, const wchar_t *token, size_t token_pos, int error_pos);
 
 /**
    Testing function for getting all process names.

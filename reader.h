@@ -16,10 +16,58 @@
 #include "io.h"
 #include "common.h"
 #include "complete.h"
+#include "highlight.h"
+#include "parse_constants.h"
 
 class parser_t;
 class completion_t;
 class history_t;
+
+/* Helper class for storing a command line */
+class editable_line_t
+{
+public:
+
+    /** The command line */
+    wcstring text;
+
+    /** The current position of the cursor in the command line */
+    size_t position;
+
+    const wcstring &get_text() const
+    {
+        return text;
+    }
+
+    /* Gets the length of the text */
+    size_t size() const
+    {
+        return text.size();
+    }
+
+    bool empty() const
+    {
+        return text.empty();
+    }
+
+    void clear()
+    {
+        text.clear();
+        position = 0;
+    }
+
+    wchar_t at(size_t idx)
+    {
+        return text.at(idx);
+    }
+
+    editable_line_t() : text(), position(0)
+    {
+    }
+
+    /* Inserts a substring of str given by start, len at the cursor position */
+    void insert_string(const wcstring &str, size_t start = 0, size_t len = wcstring::npos);
+};
 
 /**
   Read commands from \c fd until encountering EOF
@@ -46,6 +94,9 @@ void reader_init();
 */
 void reader_destroy();
 
+/** Restore the term mode at startup */
+void restore_term_mode();
+
 /**
    Returns the filename of the file currently read
 */
@@ -66,8 +117,10 @@ void reader_pop_current_filename();
    Write the title to the titlebar. This function is called just
    before a new application starts executing and just after it
    finishes.
+
+   \param cmd Command line string passed to \c fish_title if is defined.
 */
-void reader_write_title();
+void reader_write_title(const wcstring &cmd);
 
 /**
    Call this function to tell the reader that a repaint is needed, and
@@ -111,6 +164,13 @@ void reader_set_buffer(const wcstring &b, size_t p);
 */
 size_t reader_get_cursor_pos();
 
+
+/**
+   Get the current selection range in the command line.
+   Returns false if there is no active selection, true otherwise.
+*/
+bool reader_get_selection(size_t *start, size_t *len);
+
 /**
    Return the value of the interrupted flag, which is set by the sigint
    handler, and clear it if it was set.
@@ -141,11 +201,13 @@ int reader_reading_interrupted();
 bool reader_thread_job_is_stale();
 
 /**
-   Read one line of input. Before calling this function, reader_push()
-   must have been called in order to set up a valid reader
-   environment.
+   Read one line of input. Before calling this function, reader_push() must have
+   been called in order to set up a valid reader environment. If nchars > 0,
+   return after reading that many characters even if a full line has not yet
+   been read. Note: the returned value may be longer than nchars if a single
+   keypress resulted in multiple characters being inserted into the commandline.
 */
-const wchar_t *reader_readline();
+const wchar_t *reader_readline(int nchars);
 
 /**
    Push a new reader environment.
@@ -163,14 +225,14 @@ void reader_pop();
    - The command to be completed as a null terminated array of wchar_t
    - An array_list_t in which completions will be inserted.
 */
-typedef void (*complete_function_t)(const wcstring &, std::vector<completion_t> &, completion_request_flags_t, wcstring_list_t * lst);
+typedef void (*complete_function_t)(const wcstring &, std::vector<completion_t> &, completion_request_flags_t);
 void reader_set_complete_function(complete_function_t);
 
 /**
  The type of a highlight function.
  */
 class env_vars_snapshot_t;
-typedef void (*highlight_function_t)(const wcstring &, std::vector<int> &, size_t, wcstring_list_t *, const env_vars_snapshot_t &vars);
+typedef void (*highlight_function_t)(const wcstring &, std::vector<highlight_spec_t> &, size_t, wcstring_list_t *, const env_vars_snapshot_t &vars);
 
 /**
  Specify function for syntax highlighting. The function must take these arguments:
@@ -186,7 +248,7 @@ void reader_set_highlight_function(highlight_function_t);
    Specify function for testing if the command buffer contains syntax
    errors that must be corrected before returning.
 */
-void reader_set_test_function(int (*f)(const wchar_t *));
+void reader_set_test_function(parser_test_error_bits_t (*f)(const wchar_t *));
 
 /**
    Specify string of shell commands to be run in order to generate the
@@ -214,7 +276,7 @@ void reader_set_exit_on_interrupt(bool flag);
 /**
    Returns true if the shell is exiting, 0 otherwise.
 */
-int exit_status();
+bool shell_is_exiting();
 
 /**
    The readers interrupt signal handler. Cancels all currently running blocks.
@@ -230,14 +292,22 @@ int reader_exit_forced();
    Test if the given shell command contains errors. Uses parser_test
    for testing. Suitable for reader_set_test_function().
 */
-int reader_shell_test(const wchar_t *b);
+parser_test_error_bits_t reader_shell_test(const wchar_t *b);
 
 /**
    Test whether the interactive reader is in search mode.
 
-   \return o if not in search mode, 1 if in search mode and -1 if not in interactive mode
+   \return 0 if not in search mode, 1 if in search mode and -1 if not in interactive mode
  */
 int reader_search_mode();
+
+/**
+   Test whether the interactive reader has visible pager contents.
+
+   \return 0 if it has pager contents, 1 if it does not have pager contents, and -1 if not in interactive mode
+ */
+int reader_has_pager_contents();
+
 
 /* Given a command line and an autosuggestion, return the string that gets shown to the user. Exposed for testing purposes only. */
 wcstring combine_command_and_autosuggestion(const wcstring &cmdline, const wcstring &autosuggestion);
@@ -247,6 +317,5 @@ bool reader_expand_abbreviation_in_command(const wcstring &cmdline, size_t curso
 
 /* Apply a completion string. Exposed for testing only. */
 wcstring completion_apply_to_command_line(const wcstring &val_str, complete_flags_t flags, const wcstring &command_line, size_t *inout_cursor_pos, bool append_only);
-
 
 #endif

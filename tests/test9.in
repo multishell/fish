@@ -1,3 +1,4 @@
+# vim: set filetype=fish:
 # ensure that builtins that produce no output can still truncate files
 # (bug PCA almost reintroduced!)
 echo "Testing that builtins can truncate files"
@@ -35,3 +36,93 @@ emit test3 foo bar
 
 # test empty argument
 emit
+
+echo "Test break and continue"
+# This should output Ping once
+for i in a b c
+    if not contains $i c ; continue ; end
+    echo Ping
+end
+
+# This should output Pong not at all
+for i in a b c
+    if not contains $i c ; break ; end
+    echo Pong
+end
+
+# This should output Foop three times, and Boop not at all
+set i a a a
+while contains $i a
+    set -e i[-1]
+    echo Foop
+    continue
+    echo Boop
+end
+
+# This should output Doop once
+set i a a a
+while contains $i a
+    set -e i[-1]
+    echo Doop
+    break
+    echo Darp
+end
+
+# Test implicit cd. This should do nothing.
+./
+
+# Test special for loop expansion
+# Here we the name of the variable is derived from another variable
+echo "Testing for loop"
+set var1 var2
+for $var1 in 1 2 3
+    echo -n $var2
+end
+echo
+
+# Test status -n
+eval 'status -n
+status -n
+status -n'
+
+# Test psub
+cat (echo foo | psub)
+cat (echo bar | psub)
+cat (echo baz | psub)
+
+set -l filename (echo foo | psub)
+if test -e $filename
+    echo 'psub file was not deleted'
+else
+    echo 'psub file was deleted'
+end
+
+# Test support for unbalanced blocks
+function try_unbalanced_block
+    ../fish -c "echo $argv | source " 2>&1 | grep "Missing end" 1>&2
+end
+try_unbalanced_block 'begin'
+try_unbalanced_block 'while true'
+try_unbalanced_block 'for x in 1 2 3'
+try_unbalanced_block 'switch abc'
+try_unbalanced_block 'function anything'
+try_unbalanced_block 'if false'
+
+# Ensure that quoted keywords work
+'while' false; end
+"while" false; end
+"wh"'ile' false; "e"nd
+
+# BOM checking (see #1518)
+# But only in UTF8
+if locale | sgrep -q -i utf-8
+    echo \uFEFF"echo bom_test" | source
+else
+    echo "echo bom_test" | source
+end
+
+# Comments abutting text (#953)
+echo not#a#comment
+echo is # a # comment
+
+false

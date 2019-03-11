@@ -19,7 +19,11 @@ function __fish_git_remotes
 end
 
 function __fish_git_modified_files
-    command git status -s | grep -e "^ M" | sed "s/^ M //"
+  command git ls-files -m --exclude-standard ^/dev/null
+end
+
+function __fish_git_add_files
+  command git ls-files -mo --exclude-standard ^/dev/null
 end
 
 function __fish_git_ranges
@@ -59,6 +63,60 @@ function __fish_git_using_command
     end
   end
   return 1
+end
+
+function __fish_git_stash_using_command
+  set cmd (commandline -opc)
+  if [ (count $cmd) -gt 2 ]
+    if [ $cmd[2] = 'stash' -a $argv[1] = $cmd[3] ]
+      return 0
+    end
+  end
+  return 1
+end
+
+function __fish_git_stash_not_using_subcommand
+  set cmd (commandline -opc)
+  if [ (count $cmd) -gt 2 -a $cmd[2] = 'stash' ]
+    return 1
+  end
+  return 0
+end
+
+function __fish_git_complete_stashes
+    set -l IFS ':'
+    command git stash list --format=%gd:%gs | while read -l name desc
+        echo $name\t$desc
+    end
+end
+
+function __fish_git_aliases
+    set -l IFS \n
+    command git config -z --get-regexp '^alias\.' | while read -lz key value
+        begin
+            set -l IFS "."
+            echo -n $key | read -l _ name
+            echo $name
+        end
+    end
+end
+
+function __fish_git_custom_commands
+    # complete all commands starting with git-
+    # however, a few builtin commands are placed into $PATH by git because
+    # they're used by the ssh transport. We could filter them out by checking
+    # if any of these completion results match the name of the builtin git commands,
+    # but it's simpler just to blacklist these names. They're unlikely to change,
+    # and the failure mode is we accidentally complete a plumbing command.
+    set -l IFS \n
+    for name in (builtin complete -Cgit- | sed 's/^git-\([^[:space:]]*\).*/\1/')
+        switch $name
+            case cvsserver receive-pack shell upload-archive upload-pack
+                # skip these
+            case \*
+                echo $name
+        end
+    end
 end
 
 # general options
@@ -110,12 +168,14 @@ complete -c git -n '__fish_git_using_command add' -l refresh -d "Don't add the f
 complete -c git -n '__fish_git_using_command add' -l ignore-errors -d 'Ignore errors'
 complete -c git -n '__fish_git_using_command add' -l ignore-missing -d 'Check if any of the given files would be ignored'
 complete -f -c git -n '__fish_git_using_command add; and __fish_contains_opt -s p patch' -a '(__fish_git_modified_files)'
+complete -f -c git -n '__fish_git_using_command add' -a '(__fish_git_add_files)'
 # TODO options
 
 ### checkout
 complete -f -c git -n '__fish_git_needs_command'    -a checkout -d 'Checkout and switch to a branch'
 complete -f -c git -n '__fish_git_using_command checkout'  -a '(__fish_git_branches)' --description 'Branch'
 complete -f -c git -n '__fish_git_using_command checkout'  -a '(__fish_git_tags)' --description 'Tag'
+complete -f -c git -n '__fish_git_using_command checkout' -a '(__fish_git_modified_files)' --description 'File'
 complete -f -c git -n '__fish_git_using_command checkout' -s b -d 'Create a new branch'
 complete -f -c git -n '__fish_git_using_command checkout' -s t -l track -d 'Track a new branch'
 # TODO options
@@ -143,6 +203,8 @@ complete -f -c git -n '__fish_git_using_command branch' -s a -d 'Lists both loca
 complete -f -c git -n '__fish_git_using_command branch' -s t -l track -d 'Track remote branch'
 complete -f -c git -n '__fish_git_using_command branch' -l no-track -d 'Do not track remote branch'
 complete -f -c git -n '__fish_git_using_command branch' -l set-upstream -d 'Set remote branch to track'
+complete -f -c git -n '__fish_git_using_command branch' -l merged -d 'List branches that have been merged'
+complete -f -c git -n '__fish_git_using_command branch' -l no-merged -d 'List branches that have not been merged'
 
 ### cherry-pick
 complete -f -c git -n '__fish_git_needs_command' -a cherry-pick -d 'Apply the change introduced by an existing commit'
@@ -321,16 +383,21 @@ complete -f -c git -n '__fish_contains_opt -s v' -a '(__fish_git_tags)' -d 'Tag'
 
 ### stash
 complete -c git -n '__fish_git_needs_command' -a stash -d 'Stash away changes'
-complete -f -c git -n '__fish_git_using_command stash' -a list -d 'List stashes'
-complete -f -c git -n '__fish_git_using_command stash' -a show -d 'Show the changes recorded in the stash'
-complete -f -c git -n '__fish_git_using_command stash' -a pop -d 'Apply and remove a single stashed state'
-complete -f -c git -n '__fish_git_using_command stash' -a apply -d 'Apply a single stashed state'
-complete -f -c git -n '__fish_git_using_command stash' -a clear -d 'Remove all stashed states'
-complete -f -c git -n '__fish_git_using_command stash' -a drop -d 'Remove a single stashed state from the stash list'
-complete -f -c git -n '__fish_git_using_command stash' -a create -d 'Create a stash'
-complete -f -c git -n '__fish_git_using_command stash' -a save -d 'Save a new stash'
-complete -f -c git -n '__fish_git_using_command stash' -a branch -d 'Create a new branch from a stash'
-# TODO other options
+complete -f -c git -n '__fish_git_using_command stash; and __fish_git_stash_not_using_subcommand' -a list -d 'List stashes'
+complete -f -c git -n '__fish_git_using_command stash; and __fish_git_stash_not_using_subcommand' -a show -d 'Show the changes recorded in the stash'
+complete -f -c git -n '__fish_git_using_command stash; and __fish_git_stash_not_using_subcommand' -a pop -d 'Apply and remove a single stashed state'
+complete -f -c git -n '__fish_git_using_command stash; and __fish_git_stash_not_using_subcommand' -a apply -d 'Apply a single stashed state'
+complete -f -c git -n '__fish_git_using_command stash; and __fish_git_stash_not_using_subcommand' -a clear -d 'Remove all stashed states'
+complete -f -c git -n '__fish_git_using_command stash; and __fish_git_stash_not_using_subcommand' -a drop -d 'Remove a single stashed state from the stash list'
+complete -f -c git -n '__fish_git_using_command stash; and __fish_git_stash_not_using_subcommand' -a create -d 'Create a stash'
+complete -f -c git -n '__fish_git_using_command stash; and __fish_git_stash_not_using_subcommand' -a save -d 'Save a new stash'
+complete -f -c git -n '__fish_git_using_command stash; and __fish_git_stash_not_using_subcommand' -a branch -d 'Create a new branch from a stash'
+
+complete -f -c git -n '__fish_git_stash_using_command apply' -a '(__fish_git_complete_stashes)'
+complete -f -c git -n '__fish_git_stash_using_command branch' -a '(__fish_git_complete_stashes)'
+complete -f -c git -n '__fish_git_stash_using_command drop' -a '(__fish_git_complete_stashes)'
+complete -f -c git -n '__fish_git_stash_using_command pop' -a '(__fish_git_complete_stashes)'
+complete -f -c git -n '__fish_git_stash_using_command show' -a '(__fish_git_complete_stashes)'
 
 ### config
 complete -f -c git -n '__fish_git_needs_command' -a config -d 'Set and read git configuration variables'
@@ -354,4 +421,18 @@ complete -f -c git -n '__fish_git_using_command submodule' -a 'sync' -d 'Sync su
 complete -f -c git -n '__fish_git_needs_command' -a whatchanged -d 'Show logs with difference each commit introduces'
 
 ## Aliases (custom user-defined commands)
-complete -c git -n '__fish_git_needs_command' -a '(command git config --get-regexp alias | sed "s/^alias\.\([^ ]*\).*/\1/")' -d 'Alias (user-defined command)'
+complete -c git -n '__fish_git_needs_command' -a '(__fish_git_aliases)' -d 'Alias (user-defined command)'
+
+### git clean
+complete -f -c git -n '__fish_git_needs_command' -a clean -d 'Remove untracked files from the working tree'
+complete -f -c git -n '__fish_git_using_command clean' -s f -l force -d 'Force run'
+complete -f -c git -n '__fish_git_using_command clean' -s i -l interactive -d 'Show what would be done and clean files interactively'
+complete -f -c git -n '__fish_git_using_command clean' -s n -l dry-run -d 'Don\'t actually remove anything, just show what would be done'
+complete -f -c git -n '__fish_git_using_command clean' -s q -l quite -d 'Be quiet, only report errors'
+complete -f -c git -n '__fish_git_using_command clean' -s d -d 'Remove untracked directories in addition to untracked files'
+complete -f -c git -n '__fish_git_using_command clean' -s x -d 'Remove ignored files, as well'
+complete -f -c git -n '__fish_git_using_command clean' -s X -d 'Remove only ignored files'
+# TODO -e option
+
+## Custom commands (git-* commands installed in the PATH)
+complete -c git -n '__fish_git_needs_command' -a '(__fish_git_custom_commands)' -d 'Custom command'

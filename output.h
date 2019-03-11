@@ -9,6 +9,7 @@
 #define FISH_OUTPUT_H
 
 #include <wchar.h>
+#include "fallback.h"
 #include "screen.h"
 #include "color.h"
 
@@ -78,33 +79,8 @@ void set_color(rgb_color_t c, rgb_color_t c2);
 /**
    Write specified multibyte string
  */
-#define writembs( mbs )                         \
-        {                                       \
-                char *tmp = mbs;                \
-                if( tmp )        \
-                {          \
-                        writembs_internal( tmp );      \
-                }              \
-                else              \
-                {              \
-                        debug( 0,          \
-             _(L"Tried to use terminfo string %s on line %d of %s, which is undefined in terminal of type \"%ls\". Please report this error to %s"), \
-             #mbs,          \
-             __LINE__,        \
-             __FILE__,        \
-             output_get_term(),      \
-             PACKAGE_BUGREPORT);      \
-    }                                                       \
-  }
-
-
-/**
-   Write a char * narrow string to FD 1, needed for the terminfo
-   strings. This is usually just a wrapper aound tputs, using writeb
-   as the sending function. But a weird bug on PPC Linux means that on
-   this platform, write is instead used directly.
-*/
-int writembs_internal(char *str);
+void writembs_check(char *mbs, const char *mbs_name, const char *file, long line);
+#define writembs(mbs) writembs_check((mbs), #mbs, __FILE__, __LINE__)
 
 /**
    Write a wide character using the output method specified using output_set_writer().
@@ -117,20 +93,8 @@ int writech(wint_t ch);
 void writestr(const wchar_t *str);
 
 /**
-   Write a wide character string to FD 1. If the string is wider than
-   the specified maximum, truncate and ellipsize it.
-*/
-void writestr_ellipsis(const wchar_t *str, int max_width);
-
-/**
-   Escape and write a string to fd 1
-*/
-int write_escaped_str(const wchar_t *str, int max_len);
-
-/**
    Return the internal color code representing the specified color
 */
-int output_color_code(const wcstring &val, bool is_background);
 rgb_color_t parse_color(const wcstring &val, bool is_background);
 
 /**
@@ -159,13 +123,21 @@ void output_set_term(const wcstring &term);
 /** Return the terminal name */
 const wchar_t *output_get_term();
 
-/** Sets whether term256 colors are supported */
-bool output_get_supports_term256();
-void output_set_supports_term256(bool val);
+/** Sets what colors are supported */
+enum
+{
+    color_support_term256 = 1 << 0,
+    color_support_term24bit = 1 << 1
+};
+typedef unsigned int color_support_t;
+color_support_t output_get_color_support();
+void output_set_color_support(color_support_t support);
+
+/** Given a list of rgb_color_t, pick the "best" one, as determined by the color support. Returns rgb_color_t::none() if empty */
+rgb_color_t best_color(const std::vector<rgb_color_t> &colors, color_support_t support);
 
 /* Exported for builtin_set_color's usage only */
-bool write_foreground_color(unsigned char idx);
-bool write_background_color(unsigned char idx);
+void write_color(rgb_color_t color, bool is_fg);
 unsigned char index_for_color(rgb_color_t c);
 
 #endif

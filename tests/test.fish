@@ -1,85 +1,74 @@
 #!/usr/local/bin/fish
 #
-# Main loop of the test suite. I wrote this
-# instad of using autotest to provide additional
-# testing for fish. :-)
+# Fishscript tests
 
+# Change to directory containing this script
+cd (dirname (status -f))
 
-if [ "$argv" != '-n' ]
-  # begin...end has bug in error redirecting...
-  begin
-    ../fish -n ./test.fish ^top.tmp.err
-    ../fish -n ./test.fish -n ^^top.tmp.err
-    ../fish ./test.fish -n ^^top.tmp.err
-  end | tee top.tmp.out
-  echo $status >top.tmp.status
-  set res ok
-  if diff top.tmp.out top.out >/dev/null
-  else
-	set res fail
-	echo Output differs for file test.fish
-  end
-
-  if diff top.tmp.err top.err >/dev/null
-  else
-	set res fail
-	echo Error output differs for file test.fish
-  end
-
-  if test (cat top.tmp.status) = (cat top.status)
-  else
-	set res fail
-	echo Exit status differs for file test.fish
-  end
-
-  ../fish -p /dev/null -c 'echo testing' >/dev/null
-  if test $status -ne 0
-	set res fail
-	echo Profiling fails
-  end
-
-  if test $res = ok;
-	echo File test.fish tested ok
-  else
-	echo File test.fish failed tests
-  end;
-
-  exit
+# Test files specified on commandline, or all *.in files
+set -q argv[1]
+if set -q argv[1]
+    set files_to_test $argv.in
+else
+    set files_to_test *.in
 end
 
-echo Testing high level script functionality
+source test_util.fish (status -f) $argv; or exit
 
-for i in *.in
-  set template_out (basename $i .in).out
-  set template_err (basename $i .in).err
-  set template_status (basename $i .in).status
+say -o cyan "Testing high level script functionality"
 
-  ../fish <$i >tmp.out ^tmp.err
-  echo $status >tmp.status
-  set res ok
-  if diff tmp.out $template_out >/dev/null
-  else
-	set res fail
-	echo Output differs for file $i
-  end
+function test_file
+    set -l file $argv[1]
+    set -l base (basename $file .in)
 
-  if diff tmp.err $template_err >/dev/null
-  else
-	set res fail
-	echo Error output differs for file $i
-  end
+    echo -n "Testing file $file ... "
 
-  if test (cat tmp.status) = (cat $template_status)
-  else
-	set res fail
-	echo Exit status differs for file $i
-  end
+    ../fish <$file >$base.tmp.out ^$base.tmp.err
+    set -l tmp_status $status
+    set -l res ok
 
-  if test $res = ok;
-	echo File $i tested ok
-  else
-	echo File $i failed tests
-  end;
+    diff $base.tmp.out $base.out >/dev/null
+    set -l out_status $status
+    diff $base.tmp.err $base.err >/dev/null
+    set -l err_status $status
+    set -l exp_status (cat $base.status)[1]
 
+    if test $out_status -eq 0 -a $err_status -eq 0 -a $exp_status -eq $tmp_status
+        say green "ok"
+        # clean up tmp files
+        rm -f $base.tmp.{err,out}
+        return 0
+    else
+        say red "fail"
+        if test $out_status -ne 0
+            say yellow "Output differs for file $file. Diff follows:"
+            colordiff -u $base.tmp.out $base.out
+        end
+        if test $err_status -ne 0
+            say yellow "Error output differs for file $file. Diff follows:"
+            colordiff -u $base.tmp.err $base.err
+        end
+        if test $exp_status -ne $tmp_status
+            say yellow "Exit status differs for file $file."
+            echo "Expected $exp_status, got $tmp_status."
+        end
+        return 1
+    end
 end
 
+set -l failed
+for i in $files_to_test
+    if not test_file $i
+        set failed $failed $i
+    end
+end
+
+set failed (count $failed)
+if test $failed -eq 0
+    say green "All tests completed successfully"
+    exit 0
+else
+    set plural (test $failed -eq 1; or echo s)
+    say red "$failed test$plural failed"
+    exit 1
+end

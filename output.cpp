@@ -22,6 +22,8 @@
 
 #if HAVE_NCURSES_H
 #include <ncurses.h>
+#elif HAVE_NCURSES_CURSES_H
+#include <ncurses/curses.h>
 #else
 #include <curses.h>
 #endif
@@ -52,49 +54,10 @@
 /**
  Number of color names in the col array
  */
-#define COLORS (sizeof(col)/sizeof(wchar_t *))
+#define FISH_COLORS (sizeof(col)/sizeof(wchar_t *))
 
 static int writeb_internal(char c);
 
-/**
- Names of different colors.
- */
-static const wchar_t *col[]=
-{
-    L"black",
-    L"red",
-    L"green",
-    L"brown",
-    L"yellow",
-    L"blue",
-    L"magenta",
-    L"purple",
-    L"cyan",
-    L"white"
-    L"normal"
-}
-;
-
-/**
- Mapping from color name (the 'col' array) to color index as used in
- ANSI color terminals, and also the fish_color_* constants defined
- in highlight.h. Non-ANSI terminals will display the wrong colors,
- since they use a different mapping.
- */
-static const int col_idx[]=
-{
-    0,
-    1,
-    2,
-    3,
-    3,
-    4,
-    5,
-    5,
-    6,
-    7,
-    FISH_COLOR_NORMAL,
-};
 
 /**
  The function used for output
@@ -107,8 +70,8 @@ static int (*out)(char c) = &writeb_internal;
  */
 static wcstring current_term;
 
-/* Whether term256 is supported */
-static bool support_term256 = false;
+/* Whether term256 and term24bit are supported */
+static color_support_t color_support = 0;
 
 
 void output_set_writer(int (*writer)(char))
@@ -125,22 +88,22 @@ int (*output_get_writer())(char)
 static bool term256_support_is_native(void)
 {
     /* Return YES if we think the term256 support is "native" as opposed to forced. */
-    return max_colors == 256;
+    return max_colors >= 256;
 }
 
-bool output_get_supports_term256(void)
+color_support_t output_get_color_support(void)
 {
-    return support_term256;
+    return color_support;
 }
 
-void output_set_supports_term256(bool val)
+void output_set_color_support(color_support_t val)
 {
-    support_term256 = val;
+    color_support = val;
 }
 
 unsigned char index_for_color(rgb_color_t c)
 {
-    if (c.is_named() || ! output_get_supports_term256())
+    if (c.is_named() || ! (output_get_color_support() & color_support_term256))
     {
         return c.to_name_index();
     }
@@ -151,7 +114,7 @@ unsigned char index_for_color(rgb_color_t c)
 }
 
 
-static bool write_color(char *todo, unsigned char idx, bool is_fg)
+static bool write_color_escape(char *todo, unsigned char idx, bool is_fg)
 {
     bool result = false;
     if (idx < 16 || term256_support_is_native())
@@ -184,15 +147,15 @@ static bool write_color(char *todo, unsigned char idx, bool is_fg)
     return result;
 }
 
-bool write_foreground_color(unsigned char idx)
+static bool write_foreground_color(unsigned char idx)
 {
     if (set_a_foreground && set_a_foreground[0])
     {
-        return write_color(set_a_foreground, idx, true);
+        return write_color_escape(set_a_foreground, idx, true);
     }
     else if (set_foreground && set_foreground[0])
     {
-        return write_color(set_foreground, idx, true);
+        return write_color_escape(set_foreground, idx, true);
     }
     else
     {
@@ -200,15 +163,15 @@ bool write_foreground_color(unsigned char idx)
     }
 }
 
-bool write_background_color(unsigned char idx)
+static bool write_background_color(unsigned char idx)
 {
     if (set_a_background && set_a_background[0])
     {
-        return write_color(set_a_background, idx, false);
+        return write_color_escape(set_a_background, idx, false);
     }
     else if (set_background && set_background[0])
     {
-        return write_color(set_background, idx, false);
+        return write_color_escape(set_background, idx, false);
     }
     else
     {
@@ -216,6 +179,34 @@ bool write_background_color(unsigned char idx)
     }
 }
 
+void write_color(rgb_color_t color, bool is_fg)
+{
+    bool supports_term24bit = !! (output_get_color_support() & color_support_term24bit);
+    if (! supports_term24bit || ! color.is_rgb())
+    {
+        /* Indexed or non-24 bit color */
+        unsigned char idx = index_for_color(color);
+        (is_fg ? write_foreground_color : write_background_color)(idx);
+    }
+    else
+    {
+        /* 24 bit! No tparm here, just ANSI escape sequences.
+           Foreground: ^[38;2;<r>;<g>;<b>m
+           Background: ^[48;2;<r>;<g>;<b>m
+        */
+        color24_t rgb = color.to_color24();
+        char buff[128];
+        snprintf(buff, sizeof buff, "\x1b[%u;2;%u;%u;%um", is_fg ? 38 : 48, rgb.rgb[0], rgb.rgb[1], rgb.rgb[2]);
+        int (*writer)(char) = output_get_writer();
+        if (writer)
+        {
+            for (size_t i=0; buff[i]; i++)
+            {
+                writer(buff[i]);
+            }
+        }
+    }
+}
 
 void set_color(rgb_color_t c, rgb_color_t c2)
 {
@@ -345,7 +336,7 @@ void set_color(rgb_color_t c, rgb_color_t c2)
         }
         else if (! c.is_special())
         {
-            write_foreground_color(index_for_color(c));
+            write_color(c, true /* foreground */);
         }
     }
 
@@ -360,7 +351,7 @@ void set_color(rgb_color_t c, rgb_color_t c2)
             writembs(exit_attribute_mode);
             if (! last_color.is_normal())
             {
-                write_foreground_color(index_for_color(last_color));
+                write_color(last_color, true /* foreground */);
             }
 
 
@@ -370,7 +361,7 @@ void set_color(rgb_color_t c, rgb_color_t c2)
         }
         else if (! c2.is_special())
         {
-            write_background_color(index_for_color(c2));
+            write_color(c2, false /* not foreground */);
             last_color2 = c2;
         }
     }
@@ -416,13 +407,6 @@ int writeb(tputs_arg_t b)
 {
     out(b);
     return 0;
-}
-
-int writembs_internal(char *str)
-{
-    CHECK(str, 1);
-
-    return tputs(str,1,&writeb)==ERR?1:0;
 }
 
 int writech(wint_t ch)
@@ -506,137 +490,45 @@ void writestr(const wchar_t *str)
         delete[] buffer;
 }
 
-
-void writestr_ellipsis(const wchar_t *str, int max_width)
+rgb_color_t best_color(const std::vector<rgb_color_t> &candidates, color_support_t support)
 {
-    int written=0;
-    int tot;
-
-    CHECK(str,);
-
-    tot = my_wcswidth(str);
-
-    if (tot <= max_width)
+    if (candidates.empty())
     {
-        writestr(str);
-        return;
+        return rgb_color_t::none();
     }
-
-    while (*str != 0)
+    
+    rgb_color_t first_rgb = rgb_color_t::none(), first_named = rgb_color_t::none();
+    for (size_t i=0; i < candidates.size(); i++)
     {
-        int w = fish_wcwidth(*str);
-        if (written+w+fish_wcwidth(ellipsis_char)>max_width)
+        const rgb_color_t &color = candidates.at(i);
+        if (first_rgb.is_none() && color.is_rgb())
         {
-            break;
+            first_rgb = color;
         }
-        written+=w;
-        writech(*(str++));
+        if (first_named.is_none() && color.is_named())
+        {
+            first_named = color;
+        }
     }
-
-    written += fish_wcwidth(ellipsis_char);
-    writech(ellipsis_char);
-
-    while (written < max_width)
+    // If we have both RGB and named colors, then prefer rgb if term256 is supported
+    rgb_color_t result = rgb_color_t::none();
+    bool has_term256 = !! (support & color_support_term256);
+    if ((!first_rgb.is_none() && has_term256) || first_named.is_none())
     {
-        written++;
-        writestr(L" ");
-    }
-}
-
-int write_escaped_str(const wchar_t *str, int max_len)
-{
-
-    wchar_t *out;
-    int i;
-    int len;
-    int written=0;
-
-    CHECK(str, 0);
-
-    out = escape(str, 1);
-    len = my_wcswidth(out);
-
-    if (max_len && (max_len < len))
-    {
-        for (i=0; (written+fish_wcwidth(out[i]))<=(max_len-1); i++)
-        {
-            writech(out[i]);
-            written += fish_wcwidth(out[i]);
-        }
-        writech(ellipsis_char);
-        written += fish_wcwidth(ellipsis_char);
-
-        for (i=written; i<max_len; i++)
-        {
-            writech(L' ');
-            written++;
-        }
+        result = first_rgb;
     }
     else
     {
-        written = len;
-        writestr(out);
+        result = first_named;
     }
-
-    free(out);
-    return written;
-}
-
-
-int output_color_code(const wcstring &val, bool is_background)
-{
-    size_t i;
-    int color=FISH_COLOR_NORMAL;
-    int is_bold=0;
-    int is_underline=0;
-
-    if (val.empty())
-        return FISH_COLOR_NORMAL;
-
-    wcstring_list_t el;
-    tokenize_variable_array(val, el);
-
-    for (size_t j=0; j < el.size(); j++)
+    if (result.is_none())
     {
-        const wcstring &next = el.at(j);
-        wcstring color_name;
-        if (is_background)
-        {
-            // look for something like "--background=red"
-            const wcstring prefix = L"--background=";
-            if (string_prefixes_string(prefix, next))
-            {
-                color_name = wcstring(next, prefix.size());
-            }
-
-        }
-        else
-        {
-            if (next == L"--bold" || next == L"-o")
-                is_bold = true;
-            else if (next == L"--underline" || next == L"-u")
-                is_underline = true;
-            else
-                color_name = next;
-        }
-
-        if (! color_name.empty())
-        {
-            for (i=0; i<COLORS; i++)
-            {
-                if (wcscasecmp(col[i], color_name.c_str()) == 0)
-                {
-                    color = col_idx[i];
-                    break;
-                }
-            }
-        }
-
+        result = candidates.at(0);
     }
-
-    return color | (is_bold?FISH_COLOR_BOLD:0) | (is_underline?FISH_COLOR_UNDERLINE:0);
+    return result;
 }
 
+/* This code should be refactored to enable sharing with builtin_set_color */
 rgb_color_t parse_color(const wcstring &val, bool is_background)
 {
     int is_bold=0;
@@ -679,29 +571,8 @@ rgb_color_t parse_color(const wcstring &val, bool is_background)
             }
         }
     }
-
-    // Pick the best candidate
-    rgb_color_t first_rgb = rgb_color_t::none(), first_named = rgb_color_t::none();
-    for (size_t i=0; i < candidates.size(); i++)
-    {
-        const rgb_color_t &color = candidates.at(i);
-        if (color.is_rgb() && first_rgb.is_none())
-            first_rgb = color;
-        if (color.is_named() && first_named.is_none())
-            first_named = color;
-    }
-
-    // If we have both RGB and named colors, then prefer rgb if term256 is supported
-    rgb_color_t result;
-    if ((!first_rgb.is_none() && output_get_supports_term256()) || first_named.is_none())
-    {
-        result = first_rgb;
-    }
-    else
-    {
-        result = first_named;
-    }
-
+    rgb_color_t result = best_color(candidates, output_get_color_support());
+    
     if (result.is_none())
         result = rgb_color_t::normal();
 
@@ -724,4 +595,21 @@ void output_set_term(const wcstring &term)
 const wchar_t *output_get_term()
 {
     return current_term.empty() ? L"<unknown>" : current_term.c_str();
+}
+
+void writembs_check(char *mbs, const char *mbs_name, const char *file, long line)
+{
+    if (mbs != NULL)
+    {
+        tputs(mbs, 1, &writeb);
+    }
+    else
+    {
+        debug( 0, _(L"Tried to use terminfo string %s on line %ld of %s, which is undefined in terminal of type \"%ls\". Please report this error to %s"),
+              mbs_name,
+              line,
+              file,
+              output_get_term(),
+              PACKAGE_BUGREPORT);
+    }
 }

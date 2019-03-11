@@ -1,8 +1,8 @@
 # name: Terlar
 # author: terlar - https://github.com/terlar
 
-set -xg fish_color_user magenta
-set -xg fish_color_host yellow
+set -g fish_color_user magenta
+set -g fish_color_host yellow
 
 function fish_prompt --description 'Write out the prompt'
   set -l last_status $status
@@ -27,6 +27,7 @@ function fish_prompt --description 'Write out the prompt'
   set_color normal
 
   __terlar_git_prompt
+  __fish_hg_prompt
   echo
 
   if not test $last_status -eq 0

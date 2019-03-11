@@ -79,6 +79,51 @@ static size_t get_cursor_pos()
     return current_cursor_pos;
 }
 
+static pthread_mutex_t transient_commandline_lock = PTHREAD_MUTEX_INITIALIZER;
+static wcstring_list_t *get_transient_stack()
+{
+    ASSERT_IS_MAIN_THREAD();
+    ASSERT_IS_LOCKED(transient_commandline_lock);
+    // A pointer is a little more efficient than an object as a static because we can elide the thread-safe initialization
+    static wcstring_list_t *result = NULL;
+    if (! result)
+    {
+        result = new wcstring_list_t();
+    }
+    return result;
+}
+
+static bool get_top_transient(wcstring *out_result)
+{
+    ASSERT_IS_MAIN_THREAD();
+    bool result = false;
+    scoped_lock locker(transient_commandline_lock);
+    const wcstring_list_t *stack = get_transient_stack();
+    if (! stack->empty())
+    {
+        out_result->assign(stack->back());
+        result = true;
+    }
+    return result;
+}
+
+builtin_commandline_scoped_transient_t::builtin_commandline_scoped_transient_t(const wcstring &cmd)
+{
+    ASSERT_IS_MAIN_THREAD();
+    scoped_lock locker(transient_commandline_lock);
+    wcstring_list_t *stack = get_transient_stack();
+    stack->push_back(cmd);
+    this->token = stack->size();
+}
+
+builtin_commandline_scoped_transient_t::~builtin_commandline_scoped_transient_t()
+{
+    ASSERT_IS_MAIN_THREAD();
+    scoped_lock locker(transient_commandline_lock);
+    wcstring_list_t *stack = get_transient_stack();
+    assert(this->token == stack->size());
+    stack->pop_back();
+}
 
 /**
    Replace/append/insert the selection with/at/after the specified string.
@@ -143,17 +188,13 @@ static void write_part(const wchar_t *begin,
                        int cut_at_cursor,
                        int tokenize)
 {
-    wcstring out;
-    wchar_t *buff;
-    size_t pos;
-
-    pos = get_cursor_pos()-(begin-get_buffer());
+    size_t pos = get_cursor_pos()-(begin-get_buffer());
 
     if (tokenize)
     {
-        buff = wcsndup(begin, end-begin);
+        wchar_t *buff = wcsndup(begin, end-begin);
 //    fwprintf( stderr, L"Subshell: %ls, end char %lc\n", buff, *end );
-        out.clear();
+        wcstring out;
         tokenizer_t tok(buff, TOK_ACCEPT_UNFINISHED);
         for (; tok_has_next(&tok); tok_next(&tok))
         {
@@ -169,7 +210,7 @@ static void write_part(const wchar_t *begin,
                     out.push_back(L'\n');
                     break;
                 }
-                
+
                 default:
                 {
                     break;
@@ -211,18 +252,24 @@ static int builtin_commandline(parser_t &parser, wchar_t **argv)
     int append_mode=0;
 
     int function_mode = 0;
+    int selection_mode = 0;
 
     int tokenize = 0;
 
     int cursor_mode = 0;
     int line_mode = 0;
     int search_mode = 0;
-    const wchar_t *begin, *end;
-
-    current_buffer = (wchar_t *)builtin_complete_get_temporary_buffer();
-    if (current_buffer)
+    int paging_mode = 0;
+    const wchar_t *begin = NULL, *end = NULL;
+    
+    scoped_push<const wchar_t *> saved_current_buffer(&current_buffer);
+    scoped_push<size_t> saved_current_cursor_pos(&current_cursor_pos);
+    
+    wcstring transient_commandline;
+    if (get_top_transient(&transient_commandline))
     {
-        current_cursor_pos = wcslen(current_buffer);
+        current_buffer = transient_commandline.c_str();
+        current_cursor_pos = transient_commandline.size();
     }
     else
     {
@@ -255,77 +302,31 @@ static int builtin_commandline(parser_t &parser, wchar_t **argv)
         static const struct woption
                 long_options[] =
         {
-            {
-                L"append", no_argument, 0, 'a'
-            }
-            ,
-            {
-                L"insert", no_argument, 0, 'i'
-            }
-            ,
-            {
-                L"replace", no_argument, 0, 'r'
-            }
-            ,
-            {
-                L"current-job", no_argument, 0, 'j'
-            }
-            ,
-            {
-                L"current-process", no_argument, 0, 'p'
-            }
-            ,
-            {
-                L"current-token", no_argument, 0, 't'
-            }
-            ,
-            {
-                L"current-buffer", no_argument, 0, 'b'
-            }
-            ,
-            {
-                L"cut-at-cursor", no_argument, 0, 'c'
-            }
-            ,
-            {
-                L"function", no_argument, 0, 'f'
-            }
-            ,
-            {
-                L"tokenize", no_argument, 0, 'o'
-            }
-            ,
-            {
-                L"help", no_argument, 0, 'h'
-            }
-            ,
-            {
-                L"input", required_argument, 0, 'I'
-            }
-            ,
-            {
-                L"cursor", no_argument, 0, 'C'
-            }
-            ,
-            {
-                L"line", no_argument, 0, 'L'
-            }
-            ,
-            {
-                L"search-mode", no_argument, 0, 'S'
-            }
-            ,
-            {
-                0, 0, 0, 0
-            }
-        }
-        ;
+            { L"append", no_argument, 0, 'a' },
+            { L"insert", no_argument, 0, 'i' },
+            { L"replace", no_argument, 0, 'r' },
+            { L"current-job", no_argument, 0, 'j' },
+            { L"current-process", no_argument, 0, 'p' },
+            { L"current-token", no_argument, 0, 't' },
+            { L"current-buffer", no_argument, 0, 'b' },
+            { L"cut-at-cursor", no_argument, 0, 'c' },
+            { L"function", no_argument, 0, 'f' },
+            { L"tokenize", no_argument, 0, 'o' },
+            { L"help", no_argument, 0, 'h' },
+            { L"input", required_argument, 0, 'I' },
+            { L"cursor", no_argument, 0, 'C' },
+            { L"line", no_argument, 0, 'L' },
+            { L"search-mode", no_argument, 0, 'S' },
+            { L"selection", no_argument, 0, 's' },
+            { L"paging-mode", no_argument, 0, 'P' },
+            { 0, 0, 0, 0 }
+        };
 
         int opt_index = 0;
 
         int opt = wgetopt_long(argc,
                                argv,
-                               L"abijpctwforhI:CLS",
+                               L"abijpctwforhI:CLSsP",
                                long_options,
                                &opt_index);
         if (opt == -1)
@@ -402,6 +403,14 @@ static int builtin_commandline(parser_t &parser, wchar_t **argv)
                 search_mode = 1;
                 break;
 
+            case 's':
+                selection_mode = 1;
+                break;
+
+            case 'P':
+                paging_mode = 1;
+                break;
+
             case 'h':
                 builtin_print_help(parser, argv[0], stdout_buffer);
                 return 0;
@@ -419,7 +428,7 @@ static int builtin_commandline(parser_t &parser, wchar_t **argv)
         /*
           Check for invalid switch combinations
         */
-        if (buffer_part || cut_at_cursor || append_mode || tokenize || cursor_mode || line_mode || search_mode)
+        if (buffer_part || cut_at_cursor || append_mode || tokenize || cursor_mode || line_mode || search_mode || paging_mode)
         {
             append_format(stderr_buffer,
                           BUILTIN_ERR_COMBO,
@@ -446,10 +455,10 @@ static int builtin_commandline(parser_t &parser, wchar_t **argv)
             {
                 /*
                   input_unreadch inserts the specified keypress or
-                  readline function at the top of the stack of unused
+                  readline function at the back of the queue of unused
                   keypresses
                 */
-                input_unreadch(c);
+                input_queue_ch(c);
             }
             else
             {
@@ -465,10 +474,21 @@ static int builtin_commandline(parser_t &parser, wchar_t **argv)
         return 0;
     }
 
+    if (selection_mode)
+    {
+        size_t start, len;
+        const wchar_t *buffer = reader_get_buffer();
+        if (reader_get_selection(&start, &len))
+        {
+            stdout_buffer.append(buffer + start, len);
+        }
+        return 0;
+    }
+
     /*
       Check for invalid switch combinations
     */
-    if ((search_mode || line_mode || cursor_mode) && (argc-woptind > 1))
+    if ((search_mode || line_mode || cursor_mode || paging_mode) && (argc-woptind > 1))
     {
 
         append_format(stderr_buffer,
@@ -479,7 +499,7 @@ static int builtin_commandline(parser_t &parser, wchar_t **argv)
         return 1;
     }
 
-    if ((buffer_part || tokenize || cut_at_cursor) && (cursor_mode || line_mode || search_mode))
+    if ((buffer_part || tokenize || cut_at_cursor) && (cursor_mode || line_mode || search_mode || paging_mode))
     {
         append_format(stderr_buffer,
                       BUILTIN_ERR_COMBO,
@@ -568,7 +588,12 @@ static int builtin_commandline(parser_t &parser, wchar_t **argv)
 
     if (search_mode)
     {
-        return !reader_search_mode();
+        return ! reader_search_mode();
+    }
+
+    if (paging_mode)
+    {
+        return ! reader_has_pager_contents();
     }
 
 

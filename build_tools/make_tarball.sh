@@ -20,7 +20,7 @@ wd="$PWD"
 prefix="fish"
 
 # Get the version from git-describe
-VERSION=`git describe --tags --dirty 2>/dev/null`
+VERSION=`git describe --dirty 2>/dev/null`
 prefix="$prefix-$VERSION"
 
 # The path where we will output the tar file
@@ -30,7 +30,7 @@ path=~/fish_built/$prefix.tar
 rm -f "$path" "$path".gz
 
 # git starts the archive
-git archive --format=tar --prefix="$prefix"/ master > "$path"
+git archive --format=tar --prefix="$prefix"/ HEAD > "$path"
 
 # tarball out the documentation, generate a configure script and version file
 # Don't use autoreconf since it invokes commands that may not be installed, like aclocal

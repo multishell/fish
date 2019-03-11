@@ -11,10 +11,12 @@
 #define FISH_FUNCTION_H
 
 #include <wchar.h>
+#include <map>
 
 #include "util.h"
 #include "common.h"
 #include "event.h"
+#include "env.h"
 
 class parser_t;
 class env_vars_snapshot_t;
@@ -39,7 +41,7 @@ struct function_data_t
     /**
        Function definition
      */
-    wchar_t *definition;
+    const wchar_t *definition;
     /**
        List of all event handlers for this function
      */
@@ -48,6 +50,11 @@ struct function_data_t
        List of all named arguments for this function
      */
     wcstring_list_t named_arguments;
+    /**
+       List of all variables that are inherited from the function definition scope.
+       The variable values are snapshotted when function_add() is called.
+      */
+    wcstring_list_t inherit_vars;
     /**
        Set to non-zero if invoking this function shadows the variables
        of the underlying function.
@@ -79,6 +86,9 @@ public:
     /** List of all named arguments for this function */
     const wcstring_list_t named_arguments;
 
+    /** Mapping of all variables that were inherited from the function definition scope to their values */
+    const std::map<wcstring,env_var_t> inherit_vars;
+
     /** Flag for specifying that this function was automatically loaded */
     const bool is_autoload;
 
@@ -92,8 +102,8 @@ public:
 */
 void function_init();
 
-/** Add a function. */
-void function_add(const function_data_t &data, const parser_t &parser);
+/** Add a function. definition_line_offset is the line number of the function's definition within its source file */
+void function_add(const function_data_t &data, const parser_t &parser, int definition_line_offset = 0);
 
 /**
    Remove the function with the specified name.
@@ -158,6 +168,12 @@ int function_get_definition_offset(const wcstring &name);
    Returns a list of all named arguments of the specified function.
 */
 wcstring_list_t function_get_named_arguments(const wcstring &name);
+
+/**
+   Returns a mapping of all variables of the specified function that were inherited
+   from the scope of the function definition to their values.
+ */
+std::map<wcstring,env_var_t> function_get_inherit_vars(const wcstring &name);
 
 /**
    Creates a new function using the same definition as the specified function.

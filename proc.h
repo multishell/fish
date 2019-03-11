@@ -20,6 +20,7 @@
 #include "util.h"
 #include "io.h"
 #include "common.h"
+#include "parse_tree.h"
 
 /**
    The status code use when a command was not found
@@ -54,7 +55,7 @@
 /**
    Types of processes
 */
-enum
+enum process_type_t
 {
     /**
        A regular external command
@@ -68,21 +69,15 @@ enum
        A shellscript function
     */
     INTERNAL_FUNCTION,
-    /**
-       A block of commands
-    */
-    INTERNAL_BLOCK,
+
+    /** A block of commands, represented as a node */
+    INTERNAL_BLOCK_NODE,
+
     /**
        The exec builtin
     */
-    INTERNAL_EXEC,
-    /**
-       A buffer
-    */
-    INTERNAL_BUFFER,
-
-}
-;
+    INTERNAL_EXEC
+};
 
 enum
 {
@@ -101,8 +96,7 @@ enum
   commands to be evaluated by calling eval. Lastly, this process can
   be the result of an exec command. The role of this process_t is
   determined by the type field, which can be one of EXTERNAL,
-  INTERNAL_BUILTIN, INTERNAL_FUNCTION, INTERNAL_BLOCK, INTERNAL_EXEC,
-  and INTERNAL_BUFFER.
+  INTERNAL_BUILTIN, INTERNAL_FUNCTION, INTERNAL_EXEC.
 
   The process_t contains information on how the process should be
   started, such as command name and arguments, as well as runtime
@@ -120,9 +114,6 @@ enum
 
   If the process is of type INTERNAL_FUNCTION, argv is the argument
   vector, and argv[0] is the name of the shellscript function.
-
-  If the process is of type INTERNAL_BLOCK, argv has exactly one
-  element, which is the block of commands to execute.
 
 */
 class process_t
@@ -148,11 +139,12 @@ public:
 
     /**
       Type of process. Can be one of \c EXTERNAL, \c
-      INTERNAL_BUILTIN, \c INTERNAL_FUNCTION, \c INTERNAL_BLOCK,
-      INTERNAL_EXEC, or INTERNAL_BUFFER
+      INTERNAL_BUILTIN, \c INTERNAL_FUNCTION, \c INTERNAL_EXEC
     */
-    int type;
+    enum process_type_t type;
 
+    /* For internal block processes only, the node offset of the block */
+    node_offset_t internal_block_node;
 
     /** Sets argv */
     void set_argv(const wcstring_list_t &argv)
@@ -261,20 +253,11 @@ enum
     /** Whether the exit status should be negated. This flag can only be set by the not builtin. */
     JOB_NEGATE = 1 << 4,
 
-    /** Whether the exit status should be used to re-evaluate the condition in an if block? This is only used by elseif and is a big hack. */
-    JOB_ELSEIF = 1 << 5,
-
-    /** This flag is set to one on wildcard expansion errors. It means that the current command should not be executed */
-    JOB_WILDCARD_ERROR = 1 << 6,
-
-    /** Whether to skip executing this job. This flag is set by the short-circuit builtins, i.e. and and or  */
-    JOB_SKIP = 1 << 7,
-
     /** Whether the job is under job control  */
-    JOB_CONTROL = 1 << 8,
+    JOB_CONTROL = 1 << 5,
 
     /** Whether the job wants to own the terminal when in the foreground  */
-    JOB_TERMINAL = 1 << 9
+    JOB_TERMINAL = 1 << 6
 };
 
 typedef int job_id_t;
@@ -373,7 +356,10 @@ public:
     unsigned int flags;
 
     /* Returns the block IO redirections associated with the job. These are things like the IO redirections associated with the begin...end statement. */
-    const io_chain_t &block_io_chain() const { return this->block_io; }
+    const io_chain_t &block_io_chain() const
+    {
+        return this->block_io;
+    }
 
     /* Fetch all the IO redirections associated with the job */
     io_chain_t all_io_redirections() const;
@@ -438,6 +424,7 @@ public:
 
     job_iterator_t(job_list_t &jobs);
     job_iterator_t();
+    size_t count() const;
 };
 
 /**
@@ -503,16 +490,10 @@ void job_free(job_t* j);
 void job_promote(job_t *job);
 
 /**
-   Create a new job.
-*/
-job_t *job_create();
-
-/**
   Return the job with the specified job id.
   If id is 0 or less, return the last job used.
 */
 job_t *job_get(job_id_t id);
-
 
 /**
   Return the job with the specified pid.
@@ -618,6 +599,5 @@ void proc_pop_interactive();
    Format an exit status code as returned by e.g. wait into a fish exit code number as accepted by proc_set_last_status.
  */
 int proc_format_status(int status);
-
 
 #endif

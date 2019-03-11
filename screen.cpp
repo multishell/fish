@@ -20,6 +20,8 @@ efficient way for transforming that to the desired screen content.
 
 #if HAVE_NCURSES_H
 #include <ncurses.h>
+#elif HAVE_NCURSES_CURSES_H
+#include <ncurses/curses.h>
 #else
 #include <curses.h>
 #endif
@@ -45,9 +47,10 @@ efficient way for transforming that to the desired screen content.
 #include "highlight.h"
 #include "screen.h"
 #include "env.h"
+#include "pager.h"
 
 /** The number of characters to indent new blocks */
-#define INDENT_STEP 4
+#define INDENT_STEP 4u
 
 /** The initial screen width */
 #define SCREEN_WIDTH_UNINITIALIZED -1
@@ -137,14 +140,14 @@ static bool allow_soft_wrap(void)
 size_t escape_code_length(const wchar_t *code)
 {
     assert(code != NULL);
-    
+
     /* The only escape codes we recognize start with \x1b */
     if (code[0] != L'\x1b')
         return 0;
-    
+
     size_t resulting_length = 0;
     bool found = false;
-    
+
     if (cur_term != NULL)
     {
         /*
@@ -158,12 +161,12 @@ size_t escape_code_length(const wchar_t *code)
             set_foreground,
             set_background,
         };
-    
+
         for (size_t p=0; p < sizeof esc / sizeof *esc && !found; p++)
         {
             if (!esc[p])
                 continue;
-            
+
             for (size_t k=0; k<8; k++)
             {
                 size_t len = try_sequence(tparm(esc[p],k), code);
@@ -176,7 +179,7 @@ size_t escape_code_length(const wchar_t *code)
             }
         }
     }
-    
+
     if (cur_term != NULL)
     {
         /*
@@ -206,9 +209,9 @@ size_t escape_code_length(const wchar_t *code)
             exit_standout_mode,
             enter_secure_mode
         };
-        
-    
-    
+
+
+
         for (size_t p=0; p < sizeof esc2 / sizeof *esc2 && !found; p++)
         {
             if (!esc2[p])
@@ -226,7 +229,7 @@ size_t escape_code_length(const wchar_t *code)
             }
         }
     }
-    
+
     if (!found)
     {
         if (code[1] == L'k')
@@ -254,6 +257,29 @@ size_t escape_code_length(const wchar_t *code)
     
     if (! found)
     {
+        /* iTerm2 escape codes: CSI followed by ], terminated by either BEL or escape + backslash. See https://code.google.com/p/iterm2/wiki/ProprietaryEscapeCodes */
+        if (code[1] == ']')
+        {
+            // Start at 2 to skip over <esc>]
+            size_t cursor = 2;
+            for (; code[cursor] != L'\0'; cursor++)
+            {
+                /* Consume a sequence of characters up to <esc>\ or <bel> */
+                if (code[cursor] == '\x07' || (code[cursor] == '\\' && code[cursor - 1] == '\x1b'))
+                {
+                    found = true;
+                    break;
+                }
+            }
+            if (found)
+            {
+                resulting_length = cursor + 1;
+            }
+        }
+    }
+
+    if (! found)
+    {
         /* Generic VT100 one byte sequence: CSI followed by something in the range @ through _ */
         if (code[1] == L'[' && (code[2] >= L'@' && code[2] <= L'_'))
         {
@@ -261,7 +287,7 @@ size_t escape_code_length(const wchar_t *code)
             found = true;
         }
     }
-    
+
     if (! found)
     {
         /* Generic VT100 CSI-style sequence. <esc>, followed by zero or more ASCII characters NOT in the range [@,_], followed by one character in that range */
@@ -273,11 +299,11 @@ size_t escape_code_length(const wchar_t *code)
             {
                 /* Consume a sequence of ASCII characters not in the range [@, ~] */
                 wchar_t c = code[cursor];
-                
+
                 /* If we're not in ASCII, just stop */
                 if (c > 127)
                     break;
-                
+
                 /* If we're the end character, then consume it and then stop */
                 if (c >= L'@' && c <= L'~')
                 {
@@ -290,7 +316,6 @@ size_t escape_code_length(const wchar_t *code)
             resulting_length = cursor;
         }
     }
-    
     if (! found)
     {
         /* Generic VT100 two byte sequence: <esc> followed by something in the range @ through _ */
@@ -300,7 +325,7 @@ size_t escape_code_length(const wchar_t *code)
             found = true;
         }
     }
-    
+
     return resulting_length;
 }
 
@@ -378,17 +403,6 @@ static size_t calc_prompt_lines(const wcstring &prompt)
     }
     return result;
 }
-/**
-   Test if there is space between the time fields of struct stat to
-   use for sub second information. If so, we assume this space
-   contains the desired information.
-*/
-static int room_for_usec(struct stat *st)
-{
-    int res = ((&(st->st_atime) + 2) == &(st->st_mtime) &&
-               (&(st->st_atime) + 4) == &(st->st_ctime));
-    return res;
-}
 
 /**
    Stat stdout and stderr and save result.
@@ -455,11 +469,13 @@ static void s_check_status(screen_t *s)
     int changed = (s->prev_buff_1.st_mtime != s->post_buff_1.st_mtime) ||
                   (s->prev_buff_2.st_mtime != s->post_buff_2.st_mtime);
 
-    if (room_for_usec(&s->post_buff_1))
-    {
-        changed = changed || ((&s->prev_buff_1.st_mtime)[1] != (&s->post_buff_1.st_mtime)[1]) ||
-                  ((&s->prev_buff_2.st_mtime)[1] != (&s->post_buff_2.st_mtime)[1]);
-    }
+    #if defined HAVE_STRUCT_STAT_ST_MTIMESPEC_TV_NSEC
+        changed = changed || s->prev_buff_1.st_mtimespec.tv_nsec != s->post_buff_1.st_mtimespec.tv_nsec ||
+                    s->prev_buff_2.st_mtimespec.tv_nsec != s->post_buff_2.st_mtimespec.tv_nsec;
+    #elif defined HAVE_STRUCT_STAT_ST_MTIM_TV_NSEC
+        changed = changed || s->prev_buff_1.st_mtim.tv_nsec != s->post_buff_1.st_mtim.tv_nsec ||
+                    s->prev_buff_2.st_mtim.tv_nsec != s->post_buff_2.st_mtim.tv_nsec;
+    #endif
 
     if (changed)
     {
@@ -537,10 +553,6 @@ static void s_desired_append_char(screen_t *s,
                 s->desired.add_line();
                 s->desired.cursor.y++;
                 s->desired.cursor.x=0;
-                for (size_t i=0; i < prompt_width; i++)
-                {
-                    s_desired_append_char(s, L' ', 0, indent, prompt_width);
-                }
             }
 
             line_t &line = s->desired.line(line_no);
@@ -650,18 +662,32 @@ static void s_move(screen_t *s, data_buffer_t *b, int new_x, int new_y)
         x_steps = 0;
     }
 
+    char *multi_str = NULL;
     if (x_steps < 0)
     {
         str = cursor_left;
+        multi_str = parm_left_cursor;
     }
     else
     {
         str = cursor_right;
+        multi_str = parm_right_cursor;
     }
-
-    for (i=0; i<abs(x_steps); i++)
+    
+    // Use the bulk ('multi') output for cursor movement if it is supported and it would be shorter
+    // Note that this is required to avoid some visual glitches in iTerm (#1448)
+    bool use_multi = (multi_str != NULL && multi_str[0] != '\0' && abs(x_steps) * strlen(str) > strlen(multi_str));
+    if (use_multi)
     {
-        writembs(str);
+        char *multi_param = tparm(multi_str, abs(x_steps));
+        writembs(multi_param);
+    }
+    else
+    {
+        for (i=0; i<abs(x_steps); i++)
+        {
+            writembs(str);
+        }
     }
 
 
@@ -672,7 +698,7 @@ static void s_move(screen_t *s, data_buffer_t *b, int new_x, int new_y)
 /**
    Set the pen color for the terminal
 */
-static void s_set_color(screen_t *s, data_buffer_t *b, int c)
+static void s_set_color(screen_t *s, data_buffer_t *b, highlight_spec_t c)
 {
     scoped_buffer_t scoped_buffer(b);
 
@@ -1031,7 +1057,7 @@ static void s_update(screen_t *scr, const wchar_t *left_prompt, const wchar_t *r
 
     if (! output.empty())
     {
-        write_loop(1, &output.at(0), output.size());
+        write_loop(STDOUT_FILENO, &output.at(0), output.size());
     }
 
     /* We have now synced our actual screen against our desired screen. Note that this is a big assignment! */
@@ -1060,7 +1086,7 @@ struct screen_layout_t
     wcstring autosuggestion;
 
     /* Whether the prompts get their own line or not */
-    bool prompts_get_own_line;    
+    bool prompts_get_own_line;
 };
 
 /* Given a vector whose indexes are offsets and whose values are the widths of the string if truncated at that offset, return the offset that fits in the given width. Returns width_by_offset.size() - 1 if they all fit. The first value in width_by_offset is assumed to be 0. */
@@ -1098,7 +1124,7 @@ static screen_layout_t compute_layout(screen_t *s,
     size_t left_prompt_width = left_prompt_layout.last_line_width;
     size_t right_prompt_width = right_prompt_layout.last_line_width;
 
-    if (left_prompt_layout.max_line_width >= screen_width)
+    if (left_prompt_layout.max_line_width > screen_width)
     {
         /* If we have a multi-line prompt, see if the longest line fits; if not neuter the whole left prompt */
         left_prompt = L"> ";
@@ -1215,7 +1241,15 @@ static screen_layout_t compute_layout(screen_t *s,
         result.left_prompt_space = left_prompt_width;
         // See remark about for why we can't use the right prompt here
         //result.right_prompt = right_prompt;
-        result.prompts_get_own_line = true;
+
+        // If the command wraps, and the prompt is not short, place the command on its own line.
+        // A short prompt is 33% or less of the terminal's width.
+        const size_t prompt_percent_width = (100 * left_prompt_width) / screen_width;
+        if (left_prompt_width + first_command_line_width + 1 > screen_width && prompt_percent_width > 33)
+        {
+            result.prompts_get_own_line = true;
+        }
+
         done = true;
     }
 
@@ -1229,9 +1263,13 @@ void s_write(screen_t *s,
              const wcstring &right_prompt,
              const wcstring &commandline,
              size_t explicit_len,
-             const int *colors,
+             const highlight_spec_t *colors,
              const int *indent,
-             size_t cursor_pos)
+             size_t cursor_pos,
+             size_t sel_start_pos,
+             size_t sel_stop_pos,
+             const page_rendering_t &pager,
+             bool cursor_position_is_within_pager)
 {
     screen_data_t::cursor_t cursor_arr;
 
@@ -1298,26 +1336,32 @@ void s_write(screen_t *s,
     size_t i;
     for (i=0; i < effective_commandline.size(); i++)
     {
-        int color = colors[i];
-
-        if (i == cursor_pos)
-        {
-            color = 0;
-        }
-
-        if (i == cursor_pos)
+        /* Grab the current cursor's x,y position if this character matches the cursor's offset */
+        if (! cursor_position_is_within_pager && i == cursor_pos)
         {
             cursor_arr = s->desired.cursor;
         }
-
-        s_desired_append_char(s, effective_commandline.at(i), color, indent[i], first_line_prompt_space);
+        s_desired_append_char(s, effective_commandline.at(i), colors[i], indent[i], first_line_prompt_space);
     }
-    if (i == cursor_pos)
+    
+    /* Cursor may have been at the end too */
+    if (! cursor_position_is_within_pager && i == cursor_pos)
     {
         cursor_arr = s->desired.cursor;
     }
-
+    
+    /* Now that we've output everything, set the cursor to the position that we saved in the loop above */
     s->desired.cursor = cursor_arr;
+
+    if (cursor_position_is_within_pager)
+    {
+        s->desired.cursor.x = (int)cursor_pos;
+        s->desired.cursor.y = (int)s->desired.line_count();
+    }
+
+    /* Append pager_data (none if empty) */
+    s->desired.append_lines(pager.screen_data);
+
     s_update(s, layout.left_prompt.c_str(), layout.right_prompt.c_str());
     s_save_status(s);
 }
@@ -1386,7 +1430,7 @@ void s_reset(screen_t *s, screen_reset_mode_t mode)
         int non_space_width = wcwidth(omitted_newline_char);
         if (screen_width >= non_space_width)
         {
-            if (output_get_supports_term256())
+            if (output_get_color_support() & color_support_term256)
             {
                 // draw the string in term256 gray
                 abandon_line_string.append(L"\x1b[38;5;245m");
@@ -1421,6 +1465,22 @@ void s_reset(screen_t *s, screen_reset_mode_t mode)
 
     fstat(1, &s->prev_buff_1);
     fstat(2, &s->prev_buff_2);
+}
+
+bool screen_force_clear_to_end()
+{
+    bool result = false;
+    if (clr_eos)
+    {
+        data_buffer_t output;
+        s_write_mbs(&output, clr_eos);
+        if (! output.empty())
+        {
+            write_loop(STDOUT_FILENO, &output.at(0), output.size());
+            result = true;
+        }
+    }
+    return result;
 }
 
 screen_t::screen_t() :

@@ -21,18 +21,9 @@ conf_arg=$@
 # List of output variables produced by this configure script
 #
 
-AC_SUBST(docdir)
 AC_SUBST(HAVE_GETTEXT)
 AC_SUBST(HAVE_DOXYGEN)
 AC_SUBST(LDFLAGS_FISH)
-AC_SUBST(LIBS_FISH)
-AC_SUBST(LIBS_FISH_INDENT)
-AC_SUBST(LIBS_FISH_PAGER)
-AC_SUBST(LIBS_FISHD)
-AC_SUBST(LIBS_MIMEDB)
-AC_SUBST(localedir)
-AC_SUBST(optbindirs)
-AC_SUBST(prefix)
 
 
 #
@@ -99,48 +90,10 @@ fi
 
 AC_PROG_CXX([g++ c++])
 AC_PROG_INSTALL
+AC_PROG_SED
 AC_LANG(C++)
 
 echo "CXXFLAGS: $CXXFLAGS"
-
-#
-# Detect directories which may contain additional headers, libraries
-# and commands. This needs to be done early - before Autoconf starts
-# to mess with CXXFLAGS and all the other environemnt variables.
-#
-# This mostly helps OS X users, since fink usually installs out of
-# tree and doesn't update CXXFLAGS.
-#
-# It also helps FreeBSD which puts libiconv in /usr/local/lib
-
-for i in /usr/pkg /sw /opt /opt/local /usr/local; do
-
-  AC_MSG_CHECKING([for $i/include include directory])
-  if test -d $i/include; then
-    AC_MSG_RESULT(yes)
-    CXXFLAGS="$CXXFLAGS -I$i/include/"
-  else
-  AC_MSG_RESULT(no)
-  fi
-
-  AC_MSG_CHECKING([for $i/lib library directory])
-  if test -d $i/lib; then
-    AC_MSG_RESULT(yes)
-    LDFLAGS="$LDFLAGS -L$i/lib/"
-  else
-    AC_MSG_RESULT(no)
-  fi
-
-  AC_MSG_CHECKING([for $i/bin command directory])
-  if test -d $i/bin; then
-    AC_MSG_RESULT(yes)
-    optbindirs="$optbindirs $i/bin"
-  else
-    AC_MSG_RESULT(no)
-  fi
-
-done
-
 
 #
 # Tell autoconf to create config.h header
@@ -156,9 +109,11 @@ AC_CONFIG_HEADERS(config.h)
 AH_BOTTOM([#if __GNUC__ >= 3
 #define __warn_unused __attribute__ ((warn_unused_result))
 #define __sentinel __attribute__ ((sentinel))
+#define __packed __attribute__ ((packed))
 #else
 #define __warn_unused
 #define __sentinel
+#define __packed
 #endif])
 
 
@@ -192,7 +147,7 @@ AS_IF([test x$local_gettext != xno],
 # Build/clean the documentation only if Doxygen is available
 #
 
-doxygen_minimum=1.5
+doxygen_minimum=1.8.7
 
 AC_ARG_WITH(
   doxygen,
@@ -238,58 +193,37 @@ AS_IF([test "$use_doxygen" != "no"],
 
 CXXFLAGS="$CXXFLAGS -D_LARGEFILE_SOURCE=1 -D_FILE_OFFSET_BITS=64"
 
+
+# fish does not use exceptions
+# Disabling exceptions saves about 20% (!) of the compiled code size
+CXXFLAGS="$CXXFLAGS -fno-exceptions"
+
+
 #
-# If we are using gcc, set some flags that increase the odds of the
-# compiler producing a working binary...
+# -Wall is there to keep me on my toes
+# But signed comparison warnings are way too aggressive
 #
 
-if test "$GCC" = yes; then
+CXXFLAGS="$CXXFLAGS -Wall -Wno-sign-compare"
 
-  #
-  # -fno-optimize-sibling-calls seems to work around a bug where
-  # sending a SIGWINCH to fish on NetBSD 3.0 causes fish to exit when
-  # compiled with GCC 3.3.3. This is probably either a compiler bug
-  # or a libc bug, but adding this flag seems to fix things for
-  # now. Long term, the real problem should be tracked down and
-  # truly fixed, at which point we can remove this silly flag. This
-  # bug has been verified to not exist on Linux using GCC 3.3.3.
-  #
+#
+# This is needed in order to get the really cool backtraces on Linux
+#
 
-  GCC_VERSION=$($CC -dumpversion)
-  GCC_VERSION_MAJOR=$(echo $GCC_VERSION | cut -d'.' -f1)
-  GCC_VERSION_MINOR=$(echo $GCC_VERSION | cut -d'.' -f2)
-  GCC_VERSION_PATCH=$(echo $GCC_VERSION | cut -d'.' -f3)
-
-  if test "$GCC_VERSION_MAJOR" -le 3; then
-    if test 0"$GCC_VERSION_MINOR" -le 3; then
-      if test 0"$GCC_VERSION_PATCH" -le 3; then
-        CXXFLAGS="$CXXFLAGS -fno-optimize-sibling-calls"
-      fi
-    fi
-  fi
-
-  # fish does not use exceptions
-  # Disabling exceptions saves about 20% (!) of the compiled code size
-  CXXFLAGS="$CXXFLAGS -fno-exceptions"
-
-
-  #
-  # -Wall is there to keep me on my toes
-  #
-
-  # Some day...
-  CXXFLAGS="$CXXFLAGS -Wall"
-
-  #
-  # This is needed in order to get the really cool backtraces on Linux
-  #
-
-  if test `uname` != "Darwin"; then
-    LDFLAGS_FISH="$LDFLAGS_FISH -rdynamic"
-  fi
-
+if test `uname` != "Darwin"; then
+   LDFLAGS_FISH="$LDFLAGS_FISH -rdynamic"
 fi
 
+#
+# On Cygwin, we need to add some flags for ncurses.
+#
+case `uname` in
+    CYGWIN*)
+        echo "adding flags for ncurses on Cygwin"
+        CXXFLAGS="$CXXFLAGS -I/usr/include -I/usr/include/ncursesw"
+        LDFLAGS_FISH="$LDFLAGS_FISH -L/usr/lib/ncursesw"
+    ;;
+esac
 
 #
 # If we are compiling against glibc, set some flags to work around
@@ -367,35 +301,6 @@ case $target_os in
     ;;
 esac
 
-# Check for Solaris curses tputs having fixed length parameter list.
-AC_MSG_CHECKING([if we are using non varargs tparm.])
-AC_COMPILE_IFELSE(
-  [
-    AC_LANG_PROGRAM(
-      [
-        #include <curses.h>
-        #include <term.h>
-      ],
-      [
-        tparm( "" );
-      ]
-    )
-  ],
-  [tparm_solaris_kludge=no],
-  [tparm_solaris_kludge=yes]
-)
-if test "x$tparm_solaris_kludge" = "xyes"; then
-  AC_MSG_RESULT(yes)
-  AC_DEFINE(
-    [TPARM_SOLARIS_KLUDGE],
-    [1],
-    [Define to 1 if tparm accepts a fixed amount of paramters.]
-  )
-else
-  AC_MSG_RESULT(no)
-fi
-
-
 #
 # BSD-specific flags go here
 #
@@ -411,40 +316,6 @@ case $target_os in
     AC_MSG_RESULT(no)
     ;;
 esac
-
-
-#
-# Set up PREFIX and related preprocessor symbols. Fish needs to know
-# where it will be installed. One of the reasons for this is so that
-# it can make sure the fish installation directory is in the path
-# during startup.
-#
-
-if [[ "$prefix" = NONE ]]; then
-  prefix=/usr/local
-fi
-
-
-#
-# Set up the directory where the documentation files should be
-# installed
-#
-
-AC_ARG_VAR( [docdir], [Documentation direcotry] )
-
-if test -z $docdir; then
-  docdir=$datadir/doc/fish
-else
-  docdir=$docdir
-fi
-
-
-#
-# Set up locale directory. This is where the .po files will be
-# installed.
-#
-
-localedir=$datadir/locale
 
 
 #
@@ -466,6 +337,9 @@ AC_DEFINE(
   [Define to 1 if the wgettext function should be used for translating strings.]
 )
 
+# Disable curses macros that conflict with the STL
+AC_DEFINE([NCURSES_NOMACROS], [1], [Define to 1 to disable ncurses macros that conflict with the STL])
+AC_DEFINE([NOMACROS], [1], [Define to 1 to disable curses macros that conflict with the STL])
 
 #
 # Check presense of various libraries. This is done on a per-binary
@@ -475,89 +349,22 @@ AC_DEFINE(
 #
 
 # Check for os dependant libraries for all binaries.
-LIBS_COMMON=$LIBS
-LIBS=""
 AC_SEARCH_LIBS( connect, socket, , [AC_MSG_ERROR([Cannot find the socket library, needed to build this package.] )] )
 AC_SEARCH_LIBS( nanosleep, rt, , [AC_MSG_ERROR([Cannot find the rt library, needed to build this package.] )] )
+AC_SEARCH_LIBS( shm_open, rt, , [AC_MSG_ERROR([Cannot find the rt library, needed to build this package.] )] )
 AC_SEARCH_LIBS( pthread_create, pthread, , [AC_MSG_ERROR([Cannot find the pthread library, needed to build this package.] )] )
-AC_SEARCH_LIBS( setupterm, [ncurses curses], , [AC_MSG_ERROR([Could not find a curses implementation, needed to build fish. If this is Linux, try running 'sudo apt-get install libncurses5-dev' or 'sudo yum install ncurses-devel'])] )
+AC_SEARCH_LIBS( setupterm, [ncurses tinfo curses], , [AC_MSG_ERROR([Could not find a curses implementation, needed to build fish. If this is Linux, try running 'sudo apt-get install libncurses5-dev' or 'sudo yum install ncurses-devel'])] )
 AC_SEARCH_LIBS( [nan], [m], [AC_DEFINE( [HAVE_NAN], [1], [Define to 1 if you have the nan function])] )
-LIBS_SHARED=$LIBS
-LIBS=$LIBS_COMMON
 
-#
-# Check for libraries needed by fish.
-#
-
-LIBS_COMMON=$LIBS
-LIBS="$LIBS_SHARED"
 if test x$local_gettext != xno; then
   AC_SEARCH_LIBS( gettext, intl,,)
 fi
-
-# Check for libiconv_open if we can't find iconv_open. Silly OS X does
-# weird macro magic for the sole purpose of amusing me.
-AC_SEARCH_LIBS( iconv_open, iconv, , [AC_SEARCH_LIBS( libiconv_open, iconv, , [AC_MSG_ERROR([Could not find an iconv implementation, needed to build fish])] )] )
-
-LIBS_FISH=$LIBS
-LIBS=$LIBS_COMMON
-
-#
-# Check for libraries needed by fish_indent.
-#
-
-LIBS_COMMON=$LIBS
-LIBS="$LIBS_SHARED"
-if test x$local_gettext != xno; then
-  AC_SEARCH_LIBS( gettext, intl,,)
-fi
-LIBS_FISH_INDENT=$LIBS
-LIBS=$LIBS_COMMON
-
-#
-# Check for libraries needed by fish_pager.
-#
-
-LIBS_COMMON=$LIBS
-LIBS="$LIBS_SHARED"
-if test x$local_gettext != xno; then
-  AC_SEARCH_LIBS( gettext, intl,,)
-fi
-AC_SEARCH_LIBS( iconv_open, iconv, , [AC_SEARCH_LIBS( libiconv_open, iconv, , [AC_MSG_ERROR([Could not find an iconv implementation, needed to build fish])] )] )
-LIBS_FISH_PAGER=$LIBS
-LIBS=$LIBS_COMMON
-
-#
-# Check for libraries needed by fishd.
-#
-
-LIBS_COMMON=$LIBS
-LIBS="$LIBS_SHARED"
-if test x$local_gettext != xno; then
-  AC_SEARCH_LIBS( gettext, intl,,)
-fi
-AC_SEARCH_LIBS( iconv_open, iconv, , [AC_SEARCH_LIBS( libiconv_open, iconv, , [AC_MSG_ERROR([Could not find an iconv implementation, needed to build fish])] )] )
-LIBS_FISHD=$LIBS
-LIBS=$LIBS_COMMON
-
-#
-# Check for libraries needed by mimedb.
-#
-
-LIBS_COMMON=$LIBS
-LIBS="$LIBS_SHARED"
-if test x$local_gettext != xno; then
-  AC_SEARCH_LIBS( gettext, intl,,)
-fi
-LIBS_MIMEDB=$LIBS
-LIBS=$LIBS_COMMON
-
 
 #
 # Check presense of various header files
 #
 
-AC_CHECK_HEADERS([getopt.h termios.h sys/resource.h term.h ncurses/term.h ncurses.h curses.h stropts.h siginfo.h sys/select.h sys/ioctl.h execinfo.h spawn.h sys/sysctl.h])
+AC_CHECK_HEADERS([getopt.h termios.h sys/resource.h term.h ncurses/term.h ncurses.h ncurses/curses.h curses.h stropts.h siginfo.h sys/select.h sys/ioctl.h execinfo.h spawn.h sys/sysctl.h])
 
 if test x$local_gettext != xno; then
   AC_CHECK_HEADERS([libintl.h])
@@ -574,7 +381,6 @@ AC_CHECK_HEADER(
   ],
   [AC_MSG_ERROR([Could not find the header regex.h, needed to build fish])]
 )
-
 
 #
 # On some platforms (Solaris 10) adding -std=c99 in turn requires that
@@ -644,6 +450,10 @@ for i in "" "-D_POSIX_C_SOURCE=200112L" "-D_XOPEN_SOURCE=600 -D_POSIX_C_SOURCE=2
       /* As above (under at least Linux and FreeBSD). */
       #include <sys/ioctl.h>
       #endif
+
+      #ifdef HAVE_TERMIOS_H
+      #include <termios.h>
+      #endif
     ],
     [
       /* Avert high-level optimisation, by making the program's
@@ -690,6 +500,16 @@ if test ! x$local_found_posix_switch = xyes; then
   CXXFLAGS="$XCXXFLAGS"
 fi
 
+#
+# Detect nanoseconds fields in struct stat
+#
+AC_CHECK_MEMBERS([struct stat.st_mtimespec.tv_nsec])
+AC_CHECK_MEMBERS([struct stat.st_mtim.tv_nsec])
+
+#
+# Check for D_TYPE in dirent, only on BSD and Linux
+#
+AC_STRUCT_DIRENT_D_TYPE
 
 #
 # Check for presense of various functions used by fish
@@ -697,7 +517,7 @@ fi
 
 AC_CHECK_FUNCS( wcsdup wcsndup wcslen wcscasecmp wcsncasecmp fwprintf )
 AC_CHECK_FUNCS( futimes wcwidth wcswidth wcstok fputwc fgetwc )
-AC_CHECK_FUNCS( wcstol wcslcat wcslcpy lrand48_r killpg )
+AC_CHECK_FUNCS( wcstol wcslcat wcslcpy lrand48_r killpg mkostemp )
 AC_CHECK_FUNCS( backtrace backtrace_symbols sysconf getifaddrs )
 
 if test x$local_gettext != xno; then
@@ -789,7 +609,7 @@ AC_LINK_IFELSE(
 
 #
 # If we have a fwprintf in libc, test that it actually works. As of
-# March 2006, it is broken under Dragonfly BSD.
+# March 2006, it is broken under DragonFly BSD.
 #
 
 if test "$ac_cv_func_fwprintf" = yes; then
@@ -874,6 +694,56 @@ else
   AC_MSG_RESULT(no)
 fi
 
+# Check for sys_errlist
+AC_MSG_CHECKING([for sys_errlist array])
+AC_TRY_LINK(
+  [
+   #include <stdio.h>
+  ],
+  [
+    const char *p;
+    p = sys_errlist[sys_nerr];
+  ],
+  have_sys_errlist=yes,
+  have_sys_errlist=no
+)
+if test "$have_sys_errlist" = yes; then
+  AC_MSG_RESULT(yes)
+  AC_DEFINE(
+    [HAVE_SYS_ERRLIST],
+    [1],
+    [Define to 1 if the sys_errlist array is available.]
+  )
+else
+  AC_MSG_RESULT(no)
+fi
+
+# Check for _sys_errs
+AC_MSG_CHECKING([for _sys_errs array])
+AC_TRY_LINK(
+  [
+   #include <string>
+  ],
+  [
+    std::string p;
+    extern const char _sys_errs[];
+    extern const int _sys_index[];
+    p = _sys_errs[_sys_index[0]];
+  ],
+  have__sys__errs=yes,
+  have__sys__errs=no
+)
+if test "$have__sys__errs" = yes; then
+  AC_MSG_RESULT(yes)
+  AC_DEFINE(
+    [HAVE__SYS__ERRS],
+    [1],
+    [Define to 1 if the _sys_errs array is available.]
+  )
+else
+  AC_MSG_RESULT(no)
+fi
+
 # Check if getopt_long exists and works
 AC_MSG_CHECKING([if getopt_long exists and works])
 AC_TRY_LINK(
@@ -910,26 +780,45 @@ else
   AC_MSG_RESULT(no)
 fi
 
-# Check if del_curterm is broken - in that case we redefine
-# del_curterm as a no-op, to avoid a double-free
+# Check for Solaris curses tputs having fixed length parameter list.
+AC_MSG_CHECKING([if we are using non varargs tparm.])
+AC_COMPILE_IFELSE(
+  [
+    AC_LANG_PROGRAM(
+      [
+	#if HAVE_NCURSES_H
+	#include <ncurses.h>
+	#else
+	#include <curses.h>
+	#endif
 
-AC_MSG_CHECKING([If del_curterm is broken])
-case $target_os in
-  *bsd*)
-    AC_MSG_RESULT(yes)
-    AC_DEFINE(
-      [HAVE_BROKEN_DEL_CURTERM],
-      [1],
-      [del_curterm is broken, redefine it to a no-op to avoid a double-free bug]
+	#if HAVE_TERM_H
+	#include <term.h>
+	#elif HAVE_NCURSES_TERM_H
+	#include <ncurses/term.h>
+	#endif
+      ],
+      [
+        tparm( "" );
+      ]
     )
-    ;;
-  *)
-    AC_MSG_RESULT(no)
-    ;;
-esac
+  ],
+  [tparm_solaris_kludge=no],
+  [tparm_solaris_kludge=yes]
+)
+if test "x$tparm_solaris_kludge" = "xyes"; then
+  AC_MSG_RESULT(yes)
+  AC_DEFINE(
+    [TPARM_SOLARIS_KLUDGE],
+    [1],
+    [Define to 1 if tparm accepts a fixed amount of paramters.]
+  )
+else
+  AC_MSG_RESULT(no)
+fi
 
 # Tell the world what we know
-AC_CONFIG_FILES([Makefile fish.spec])
+AC_CONFIG_FILES([Makefile])
 AC_OUTPUT
 
 if test ! x$local_found_posix_switch = xyes; then

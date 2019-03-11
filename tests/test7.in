@@ -20,15 +20,6 @@ case one
 	echo $status
 end
 
-# Test that non-case tokens inside `switch` don't blow away status
-# (why are these even allowed?)
-false
-switch one
-true
-case one
-	echo $status
-end
-
 #test contains -i
 echo test contains -i
 contains -i string a b c string d
@@ -119,6 +110,6 @@ function fish_test_type_zzz
 	true
 end
 # Should succeed
-type fish_test_type_zzz >/dev/null ; echo $status
+type -q fish_test_type_zzz ; echo $status
 # Should fail
-type -f fish_test_type_zzz >/dev/null ; echo $status
+type -q -f fish_test_type_zzz ; echo $status

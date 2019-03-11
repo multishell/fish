@@ -1,11 +1,14 @@
 *.o
 *~
 *.exe
+*.xccheckout
 
+.DS_Store
 Makefile
 autom4te.cache/
 build/
 command_list.txt
+command_list_toc.txt
 confdefs.h
 config.h
 config.h.in
@@ -18,11 +21,9 @@ doc_src/commands.hdr
 doc_src/index.hdr
 po/*.gmo
 fish
-fish.spec
 fish_indent
-fish_pager
 fish_tests
-fishd
+fish.pc
 mimedb
 seq
 set_color
@@ -35,3 +36,8 @@ tests/*tmp.*
 tests/foo.txt
 FISH-BUILD-VERSION-FILE
 version
+messages.pot
+lexicon.txt
+lexicon_filter
+lexicon.log
+

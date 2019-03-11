@@ -107,53 +107,6 @@ int set_child_group(job_t *j, process_t *p, int print_errors)
     return res;
 }
 
-/** Make sure the fd used by each redirection is not used by a pipe. Note that while this does not modify the vector, it does modify the IO redirections within (gulp) */
-static void free_redirected_fds_from_pipes(const io_chain_t &io_chain)
-{
-    size_t max = io_chain.size();
-    for (size_t i = 0; i < max; i++)
-    {
-        int fd_to_free = io_chain.at(i)->fd;
-
-        /* We only have to worry about fds beyond the three standard ones */
-        if (fd_to_free <= 2)
-            continue;
-
-        /* Make sure the fd is not used by a pipe */
-        for (size_t j = 0; j < max; j++)
-        {
-            /* We're only interested in pipes */
-            io_data_t *io = io_chain.at(j).get();
-            if (io->io_mode != IO_PIPE && io->io_mode != IO_BUFFER)
-                continue;
-
-            CAST_INIT(io_pipe_t *, possible_conflict, io);
-            /* If the pipe is a conflict, dup it to some other value */
-            for (int k=0; k<2; k++)
-            {
-                /* If it's not a conflict, we don't care */
-                if (possible_conflict->pipe_fd[k] != fd_to_free)
-                    continue;
-
-                /* Repeat until we have a replacement fd */
-                int replacement_fd = -1;
-                while (replacement_fd < 0)
-                {
-                    replacement_fd = dup(fd_to_free);
-                    if (replacement_fd == -1 && errno != EINTR)
-                    {
-                        debug_safe_int(1, FD_ERROR, fd_to_free);
-                        safe_perror("dup");
-                        FATAL_EXIT();
-                    }
-                }
-                possible_conflict->pipe_fd[k] = replacement_fd;
-            }
-        }
-    }
-}
-
-
 /**
    Set up a childs io redirections. Should only be called by
    setup_child_process(). Does the following: First it closes any open
@@ -168,15 +121,12 @@ static void free_redirected_fds_from_pipes(const io_chain_t &io_chain)
 */
 static int handle_child_io(const io_chain_t &io_chain)
 {
-    //fprintf(stderr, "child IO for %d\n", getpid());
-    close_unused_internal_pipes(io_chain);
-    free_redirected_fds_from_pipes(io_chain);
     for (size_t idx = 0; idx < io_chain.size(); idx++)
     {
-        io_data_t *io = io_chain.at(idx).get();
+        const io_data_t *io = io_chain.at(idx).get();
         int tmp;
 
-        if (io->io_mode == IO_FD && io->fd == static_cast<io_fd_t*>(io)->old_fd)
+        if (io->io_mode == IO_FD && io->fd == static_cast<const io_fd_t*>(io)->old_fd)
         {
             continue;
         }
@@ -197,7 +147,7 @@ static int handle_child_io(const io_chain_t &io_chain)
             case IO_FILE:
             {
                 // Here we definitely do not want to set CLO_EXEC because our child needs access
-                CAST_INIT(io_file_t *, io_file, io);
+                CAST_INIT(const io_file_t *, io_file, io);
                 if ((tmp=open(io_file->filename_cstr,
                               io_file->flags, OPEN_MASK))==-1)
                 {
@@ -257,7 +207,7 @@ static int handle_child_io(const io_chain_t &io_chain)
             case IO_BUFFER:
             case IO_PIPE:
             {
-                CAST_INIT(io_pipe_t *, io_pipe, io);
+                CAST_INIT(const io_pipe_t *, io_pipe, io);
                 /* If write_pipe_idx is 0, it means we're connecting to the read end (first pipe fd). If it's 1, we're connecting to the write end (second pipe fd). */
                 unsigned int write_pipe_idx = (io_pipe->is_input ? 0 : 1);
                 /*
@@ -442,18 +392,7 @@ bool fork_actions_make_spawn_properties(posix_spawnattr_t *attr, posix_spawn_fil
     sigemptyset(&sigmask);
     if (! err && reset_sigmask)
         err = posix_spawnattr_setsigmask(attr, &sigmask);
-
-    /* Make sure that our pipes don't use an fd that the redirection itself wants to use */
-    free_redirected_fds_from_pipes(io_chain);
-
-    /* Close unused internal pipes */
-    std::vector<int> files_to_close;
-    get_unused_internal_pipes(files_to_close, io_chain);
-    for (size_t i = 0; ! err && i < files_to_close.size(); i++)
-    {
-        err = posix_spawn_file_actions_addclose(actions, files_to_close.at(i));
-    }
-
+    
     for (size_t idx = 0; idx < io_chain.size(); idx++)
     {
         const shared_ptr<const io_data_t> io = io_chain.at(idx);
@@ -465,12 +404,6 @@ bool fork_actions_make_spawn_properties(posix_spawnattr_t *attr, posix_spawn_fil
                 continue;
         }
 
-        if (io->fd > 2)
-        {
-            /* Make sure the fd used by this redirection is not used by e.g. a pipe. */
-            // free_fd(io_chain, io->fd );
-            // PCA I don't think we need to worry about this. fd redirection is pretty uncommon anyways.
-        }
         switch (io->io_mode)
         {
             case IO_CLOSE:

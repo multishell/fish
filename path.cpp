@@ -141,85 +141,6 @@ bool path_get_path(const wcstring &cmd, wcstring *out_path)
     return path_get_path_core(cmd, out_path, env_get_string(L"PATH"));
 }
 
-bool path_get_cdpath_string(const wcstring &dir_str, wcstring &result, const env_var_t &cdpath)
-{
-    wchar_t *res = 0;
-    int err = ENOENT;
-    bool success = false;
-
-    const wchar_t *const dir = dir_str.c_str();
-    if (dir[0] == L'/'|| (wcsncmp(dir, L"./", 2)==0))
-    {
-        struct stat buf;
-        if (wstat(dir, &buf) == 0)
-        {
-            if (S_ISDIR(buf.st_mode))
-            {
-                result = dir_str;
-                success = true;
-            }
-            else
-            {
-                err = ENOTDIR;
-            }
-
-        }
-    }
-    else
-    {
-
-        wcstring path = L".";
-
-        // Respect CDPATH
-        env_var_t cdpath = env_get_string(L"CDPATH");
-        if (! cdpath.missing_or_empty())
-        {
-            path = cdpath.c_str();
-        }
-
-        wcstokenizer tokenizer(path, ARRAY_SEP_STR);
-        wcstring next_path;
-        while (tokenizer.next(next_path))
-        {
-            expand_tilde(next_path);
-            if (next_path.size() == 0) continue;
-
-            wcstring whole_path = next_path;
-            append_path_component(whole_path, dir);
-
-            struct stat buf;
-            if (wstat(whole_path, &buf) == 0)
-            {
-                if (S_ISDIR(buf.st_mode))
-                {
-                    result = whole_path;
-                    success = true;
-                    break;
-                }
-                else
-                {
-                    err = ENOTDIR;
-                }
-            }
-            else
-            {
-                if (lwstat(whole_path, &buf) == 0)
-                {
-                    err = EROTTEN;
-                }
-            }
-        }
-    }
-
-
-    if (!success)
-    {
-        errno = err;
-    }
-
-    return res;
-}
-
 bool path_get_cdpath(const wcstring &dir, wcstring *out, const wchar_t *wd, const env_vars_snapshot_t &env_vars)
 {
     int err = ENOENT;
@@ -400,7 +321,7 @@ void path_make_canonical(wcstring &path)
             path.at(trailing++) = c;
         }
         prev_was_slash = is_slash;
-    }    
+    }
     assert(trailing <= len);
     if (trailing < len)
         path.resize(trailing);
@@ -410,32 +331,32 @@ bool paths_are_equivalent(const wcstring &p1, const wcstring &p2)
 {
     if (p1 == p2)
         return true;
-    
+
     size_t len1 = p1.size(), len2 = p2.size();
-    
+
     // Ignore trailing slashes after the first character
     while (len1 > 1 && p1.at(len1 - 1) == L'/') len1--;
     while (len2 > 1 && p2.at(len2 - 1) == L'/') len2--;
-    
+
     // Start walking
     size_t idx1 = 0, idx2 = 0;
     while (idx1 < len1 && idx2 < len2)
     {
         wchar_t c1 = p1.at(idx1), c2 = p2.at(idx2);
-        
+
         // If the characters are different, the strings are not equivalent
         if (c1 != c2)
             break;
-        
+
         idx1++;
         idx2++;
-        
+
         // If the character was a slash, walk forwards until we hit the end of the string, or a non-slash
         // Note the first condition is invariant within the loop
         while (c1 == L'/' && idx1 < len1 && p1.at(idx1) == L'/') idx1++;
         while (c2 == L'/' && idx2 < len2 && p2.at(idx2) == L'/') idx2++;
     }
-    
+
     // We matched if we consumed all of the characters in both strings
     return idx1 == len1 && idx2 == len2;
 }

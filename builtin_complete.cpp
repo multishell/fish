@@ -24,12 +24,6 @@ Functions used for implementing the complete builtin.
 #include "parser.h"
 #include "reader.h"
 
-
-/**
-   Internal storage for the builtin_complete_get_temporary_buffer() function.
-*/
-static const wchar_t *temporary_buffer;
-
 /*
   builtin_complete_* are a set of rather silly looping functions that
   make sure that all the proper combinations of complete_add or
@@ -179,14 +173,16 @@ static void  builtin_complete_add(const wcstring_list_t &cmd,
 static void builtin_complete_remove3(const wchar_t *cmd,
                                      int cmd_type,
                                      wchar_t short_opt,
-                                     const wcstring_list_t &long_opt)
+                                     const wcstring_list_t &long_opt,
+                                     int long_mode)
 {
     for (size_t i=0; i<long_opt.size(); i++)
     {
         complete_remove(cmd,
                         cmd_type,
                         short_opt,
-                        long_opt.at(i).c_str());
+                        long_opt.at(i).c_str(),
+                        long_mode);
     }
 }
 
@@ -209,6 +205,7 @@ static void  builtin_complete_remove2(const wchar_t *cmd,
                 complete_remove(cmd,
                                 cmd_type,
                                 *s,
+                                0,
                                 0);
 
             }
@@ -217,24 +214,36 @@ static void  builtin_complete_remove2(const wchar_t *cmd,
                 builtin_complete_remove3(cmd,
                                          cmd_type,
                                          *s,
-                                         gnu_opt);
+                                         gnu_opt,
+                                         0);
                 builtin_complete_remove3(cmd,
                                          cmd_type,
                                          *s,
-                                         old_opt);
+                                         old_opt,
+                                         1);
             }
         }
+    }
+    else if (gnu_opt.empty() && old_opt.empty())
+    {
+        complete_remove(cmd,
+                        cmd_type,
+                        0,
+                        0,
+                        0);
     }
     else
     {
         builtin_complete_remove3(cmd,
                                  cmd_type,
                                  0,
-                                 gnu_opt);
+                                 gnu_opt,
+                                 0);
         builtin_complete_remove3(cmd,
                                  cmd_type,
                                  0,
-                                 old_opt);
+                                 old_opt,
+                                 1);
 
     }
 
@@ -270,13 +279,6 @@ static void  builtin_complete_remove(const wcstring_list_t &cmd,
 
 }
 
-
-const wchar_t *builtin_complete_get_temporary_buffer()
-{
-    ASSERT_IS_MAIN_THREAD();
-    return temporary_buffer;
-}
-
 /**
    The complete builtin. Used for specifying programmable
    tab-completions. Calls the functions in complete.c for any heavy
@@ -290,7 +292,6 @@ static int builtin_complete(parser_t &parser, wchar_t **argv)
     int result_mode=SHARED;
     int remove = 0;
     int authoritative = -1;
-    int flags = COMPLETE_AUTO_SPACE;
 
     wcstring short_opt;
     wcstring_list_t gnu_opt, old_opt;
@@ -301,6 +302,7 @@ static int builtin_complete(parser_t &parser, wchar_t **argv)
 
     wcstring_list_t cmd;
     wcstring_list_t path;
+    wcstring_list_t wrap_targets;
 
     static int recursion_level=0;
 
@@ -313,81 +315,31 @@ static int builtin_complete(parser_t &parser, wchar_t **argv)
         static const struct woption
                 long_options[] =
         {
-            {
-                L"exclusive", no_argument, 0, 'x'
-            }
-            ,
-            {
-                L"no-files", no_argument, 0, 'f'
-            }
-            ,
-            {
-                L"require-parameter", no_argument, 0, 'r'
-            }
-            ,
-            {
-                L"path", required_argument, 0, 'p'
-            }
-            ,
-            {
-                L"command", required_argument, 0, 'c'
-            }
-            ,
-            {
-                L"short-option", required_argument, 0, 's'
-            }
-            ,
-            {
-                L"long-option", required_argument, 0, 'l'
-            }
-            ,
-            {
-                L"old-option", required_argument, 0, 'o'
-            }
-            ,
-            {
-                L"description", required_argument, 0, 'd'
-            }
-            ,
-            {
-                L"arguments", required_argument, 0, 'a'
-            }
-            ,
-            {
-                L"erase", no_argument, 0, 'e'
-            }
-            ,
-            {
-                L"unauthoritative", no_argument, 0, 'u'
-            }
-            ,
-            {
-                L"authoritative", no_argument, 0, 'A'
-            }
-            ,
-            {
-                L"condition", required_argument, 0, 'n'
-            }
-            ,
-            {
-                L"do-complete", optional_argument, 0, 'C'
-            }
-            ,
-            {
-                L"help", no_argument, 0, 'h'
-            }
-            ,
-            {
-                0, 0, 0, 0
-            }
-        }
-        ;
+            { L"exclusive", no_argument, 0, 'x' },
+            { L"no-files", no_argument, 0, 'f' },
+            { L"require-parameter", no_argument, 0, 'r' },
+            { L"path", required_argument, 0, 'p' },
+            { L"command", required_argument, 0, 'c' },
+            { L"short-option", required_argument, 0, 's' },
+            { L"long-option", required_argument, 0, 'l' },
+            { L"old-option", required_argument, 0, 'o' },
+            { L"description", required_argument, 0, 'd' },
+            { L"arguments", required_argument, 0, 'a' },
+            { L"erase", no_argument, 0, 'e' },
+            { L"unauthoritative", no_argument, 0, 'u' },
+            { L"authoritative", no_argument, 0, 'A' },
+            { L"condition", required_argument, 0, 'n' },
+            { L"wraps", required_argument, 0, 'w' },
+            { L"do-complete", optional_argument, 0, 'C' },
+            { L"help", no_argument, 0, 'h' },
+            { 0, 0, 0, 0 }
+        };
 
         int opt_index = 0;
 
         int opt = wgetopt_long(argc,
                                argv,
-                               L"a:c:p:s:l:o:d:frxeuAn:C::h",
+                               L"a:c:p:s:l:o:d:frxeuAn:C::w:h",
                                long_options,
                                &opt_index);
         if (opt == -1)
@@ -423,8 +375,8 @@ static int builtin_complete(parser_t &parser, wchar_t **argv)
             case 'p':
             case 'c':
             {
-                wcstring tmp = woptarg;
-                if (unescape_string(tmp, 1))
+                wcstring tmp;
+                if (unescape_string(woptarg, &tmp, UNESCAPE_SPECIAL))
                 {
                     if (opt=='p')
                         path.push_back(tmp);
@@ -474,6 +426,10 @@ static int builtin_complete(parser_t &parser, wchar_t **argv)
             case 'n':
                 condition = woptarg;
                 break;
+                
+            case 'w':
+                wrap_targets.push_back(woptarg);
+                break;
 
             case 'C':
                 do_complete = true;
@@ -497,15 +453,19 @@ static int builtin_complete(parser_t &parser, wchar_t **argv)
     {
         if (condition && wcslen(condition))
         {
-            if (parser.test(condition))
+            const wcstring condition_string = condition;
+            parse_error_list_t errors;
+            if (parse_util_detect_errors(condition_string, &errors, false /* do not accept incomplete */))
             {
                 append_format(stderr_buffer,
-                              L"%ls: Condition '%ls' contained a syntax error\n",
+                              L"%ls: Condition '%ls' contained a syntax error",
                               argv[0],
                               condition);
-
-                parser.test(condition, NULL, &stderr_buffer, argv[0]);
-
+                for (size_t i=0; i < errors.size(); i++)
+                {
+                    append_format(stderr_buffer, L"\n%s: ", argv[0]);
+                    stderr_buffer.append(errors.at(i).describe(condition_string));
+                }
                 res = true;
             }
         }
@@ -515,15 +475,22 @@ static int builtin_complete(parser_t &parser, wchar_t **argv)
     {
         if (comp && wcslen(comp))
         {
-            if (parser.test_args(comp, 0, 0))
+            wcstring prefix;
+            if (argv[0])
+            {
+                prefix.append(argv[0]);
+                prefix.append(L": ");
+            }
+
+            wcstring err_text;
+            if (parser.detect_errors_in_argument_list(comp, &err_text, prefix.c_str()))
             {
                 append_format(stderr_buffer,
                               L"%ls: Completion '%ls' contained a syntax error\n",
                               argv[0],
                               comp);
-
-                parser.test_args(comp, &stderr_buffer, argv[0]);
-
+                stderr_buffer.append(err_text);
+                stderr_buffer.push_back(L'\n');
                 res = true;
             }
         }
@@ -536,9 +503,9 @@ static int builtin_complete(parser_t &parser, wchar_t **argv)
             const wchar_t *token;
 
             parse_util_token_extent(do_complete_param.c_str(), do_complete_param.size(), &token, 0, 0, 0);
-
-            const wchar_t *prev_temporary_buffer = temporary_buffer;
-            temporary_buffer = do_complete_param.c_str();
+            
+            /* Create a scoped transient command line, so that bulitin_commandline will see our argument, not the reader buffer */
+            builtin_commandline_scoped_transient_t temp_buffer(do_complete_param);
 
             if (recursion_level < 1)
             {
@@ -551,33 +518,32 @@ static int builtin_complete(parser_t &parser, wchar_t **argv)
                 {
                     const completion_t &next =  comp.at(i);
 
-                    const wchar_t *prepend;
+                    /* Make a fake commandline, and then apply the completion to it.  */
+                    const wcstring faux_cmdline = token;
+                    size_t tmp_cursor = faux_cmdline.size();
+                    wcstring faux_cmdline_with_completion = completion_apply_to_command_line(next.completion, next.flags, faux_cmdline, &tmp_cursor, false);
 
-                    if (next.flags & COMPLETE_REPLACES_TOKEN)
+                    /* completion_apply_to_command_line will append a space unless COMPLETE_NO_SPACE is set. We don't want to set COMPLETE_NO_SPACE because that won't close quotes. What we want is to close the quote, but not append the space. So we just look for the space and clear it. */
+                    if (!(next.flags & COMPLETE_NO_SPACE) && string_suffixes_string(L" ", faux_cmdline_with_completion))
                     {
-                        prepend = L"";
-                    }
-                    else
-                    {
-                        prepend = token;
+                        faux_cmdline_with_completion.resize(faux_cmdline_with_completion.size() - 1);
                     }
 
+                    /* The input data is meant to be something like you would have on the command line, e.g. includes backslashes. The output should be raw, i.e. unescaped. So we need to unescape the command line. See #1127 */
+                    unescape_string_in_place(&faux_cmdline_with_completion, UNESCAPE_DEFAULT);
+                    stdout_buffer.append(faux_cmdline_with_completion);
 
-                    if (!(next.description).empty())
+                    /* Append any description */
+                    if (! next.description.empty())
                     {
-                        append_format(stdout_buffer, L"%ls%ls\t%ls\n", prepend, next.completion.c_str(), next.description.c_str());
+                        stdout_buffer.push_back(L'\t');
+                        stdout_buffer.append(next.description);
                     }
-                    else
-                    {
-                        append_format(stdout_buffer, L"%ls%ls\n", prepend, next.completion.c_str());
-                    }
+                    stdout_buffer.push_back(L'\n');
                 }
 
                 recursion_level--;
             }
-
-            temporary_buffer = prev_temporary_buffer;
-
         }
         else if (woptind != argc)
         {
@@ -596,6 +562,8 @@ static int builtin_complete(parser_t &parser, wchar_t **argv)
         }
         else
         {
+            int flags = COMPLETE_AUTO_SPACE;
+        
             if (remove)
             {
                 builtin_complete_remove(cmd,
@@ -603,6 +571,7 @@ static int builtin_complete(parser_t &parser, wchar_t **argv)
                                         short_opt.c_str(),
                                         gnu_opt,
                                         old_opt);
+                
             }
             else
             {
@@ -618,7 +587,18 @@ static int builtin_complete(parser_t &parser, wchar_t **argv)
                                      desc,
                                      flags);
             }
-
+            
+            // Handle wrap targets (probably empty)
+            // We only wrap commands, not paths
+            for (size_t w=0; w < wrap_targets.size(); w++)
+            {
+                const wcstring &wrap_target = wrap_targets.at(w);
+                for (size_t i=0; i < cmd.size(); i++)
+                {
+                    
+                    (remove ? complete_remove_wrapper : complete_add_wrapper)(cmd.at(i), wrap_target);
+                }
+            }
         }
     }
 

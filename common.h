@@ -59,15 +59,22 @@ typedef std::vector<wcstring> wcstring_list_t;
 */
 #define BYTE_MAX 0xffu
 
-/**
-  Escape special fish syntax characters like the semicolon
- */
-#define UNESCAPE_SPECIAL 1
+/** BOM value */
+#define UTF8_BOM_WCHAR 0xFEFFu
 
-/**
-  Allow incomplete escape sequences
- */
-#define UNESCAPE_INCOMPLETE 2
+/* Flags for unescape_string functions */
+enum
+{
+    /* Default behavior */
+    UNESCAPE_DEFAULT = 0,
+
+    /* Escape special fish syntax characters like the semicolon */
+    UNESCAPE_SPECIAL = 1 << 0,
+
+    /* Allow incomplete escape sequences */
+    UNESCAPE_INCOMPLETE = 1 << 1
+};
+typedef unsigned int unescape_flags_t;
 
 /* Flags for the escape() and escape_string() functions */
 enum
@@ -83,10 +90,47 @@ enum
 };
 typedef unsigned int escape_flags_t;
 
+/* Directions */
+enum selection_direction_t
+{
+    /* visual directions */
+    direction_north,
+    direction_east,
+    direction_south,
+    direction_west,
+    direction_page_north,
+    direction_page_south,
+
+    /* logical directions */
+    direction_next,
+    direction_prev,
+
+    /* special value that means deselect */
+    direction_deselect
+};
+
+inline bool selection_direction_is_cardinal(selection_direction_t dir)
+{
+    switch (dir)
+    {
+        case direction_north:
+        case direction_page_north:
+        case direction_east:
+        case direction_page_south:
+        case direction_south:
+        case direction_west:
+            return true;
+        default:
+            return false;
+    }
+}
+
 /**
  Helper macro for errors
  */
-#define VOMIT_ON_FAILURE(a) do { if (0 != (a)) { int err = errno; fprintf(stderr, "%s failed on line %d in file %s: %d (%s)\n", #a, __LINE__, __FILE__, err, strerror(err)); abort(); }} while (0)
+#define VOMIT_ON_FAILURE(a) do { if (0 != (a)) { VOMIT_ABORT(errno, #a); } } while (0)
+#define VOMIT_ON_FAILURE_NO_ERRNO(a) do { int err = (a); if (0 != err) { VOMIT_ABORT(err, #a); } } while (0)
+#define VOMIT_ABORT(err, str) do { int code = (err); fprintf(stderr, "%s failed on line %d in file %s: %d (%s)\n", str, __LINE__, __FILE__, code, strerror(code)); abort(); } while(0)
 
 /** Exits without invoking destructors (via _exit), useful for code after fork. */
 void exit_without_destructors(int code) __attribute__((noreturn));
@@ -114,13 +158,17 @@ extern int debug_level;
 /**
    Profiling flag. True if commands should be profiled.
 */
-extern char *profile;
+extern bool g_profiling_active;
 
 /**
    Name of the current program. Should be set at startup. Used by the
    debug function.
 */
 extern const wchar_t *program_name;
+
+/* Variants of read() and write() that ignores return values, defeating a warning */
+void read_ignore(int fd, void *buff, size_t count);
+void write_ignore(int fd, const void *buff, size_t count);
 
 /**
    This macro is used to check that an input argument is not null. It
@@ -145,10 +193,10 @@ extern const wchar_t *program_name;
 */
 #define FATAL_EXIT()											\
 	{															\
-		char exit_read_buff;			\
-		show_stackframe();										\
-		read( 0, &exit_read_buff, 1 );			\
-		exit_without_destructors( 1 );												\
+        char exit_read_buff;                                    \
+        show_stackframe();										\
+        read_ignore( 0, &exit_read_buff, 1 );                   \
+        exit_without_destructors( 1 );                          \
 	}															\
  
 
@@ -193,7 +241,7 @@ extern const wchar_t *program_name;
 /**
    Check if the specified string element is a part of the specified string list
  */
-#define contains( str,... ) contains_internal( str, __VA_ARGS__, NULL )
+#define contains( str, ... ) contains_internal( str, 0, __VA_ARGS__, NULL )
 
 /**
   Print a stack trace to stderr
@@ -344,8 +392,8 @@ void format_size_safe(char buff[128], unsigned long long sz);
 void debug_safe(int level, const char *msg, const char *param1 = NULL, const char *param2 = NULL, const char *param3 = NULL, const char *param4 = NULL, const char *param5 = NULL, const char *param6 = NULL, const char *param7 = NULL, const char *param8 = NULL, const char *param9 = NULL, const char *param10 = NULL, const char *param11 = NULL, const char *param12 = NULL);
 
 /** Writes out a long safely */
-void format_long_safe(char buff[128], long val);
-void format_long_safe(wchar_t buff[128], long val);
+void format_long_safe(char buff[64], long val);
+void format_long_safe(wchar_t buff[64], long val);
 
 
 template<typename T>
@@ -498,6 +546,22 @@ public:
 
 bool is_forked_child();
 
+
+class mutex_lock_t
+{
+    public:
+    pthread_mutex_t mutex;
+    mutex_lock_t()
+    {
+        VOMIT_ON_FAILURE_NO_ERRNO(pthread_mutex_init(&mutex, NULL));
+    }
+    
+    ~mutex_lock_t()
+    {
+        VOMIT_ON_FAILURE_NO_ERRNO(pthread_mutex_destroy(&mutex));
+    }
+};
+
 /* Basic scoped lock class */
 class scoped_lock
 {
@@ -512,9 +576,52 @@ public:
     void lock(void);
     void unlock(void);
     scoped_lock(pthread_mutex_t &mutex);
+    scoped_lock(mutex_lock_t &lock);
     ~scoped_lock();
 };
 
+class rwlock_t
+{
+public:
+    pthread_rwlock_t rwlock;
+    rwlock_t()
+    {
+        VOMIT_ON_FAILURE_NO_ERRNO(pthread_rwlock_init(&rwlock, NULL));
+    }
+
+    ~rwlock_t()
+    {
+        VOMIT_ON_FAILURE_NO_ERRNO(pthread_rwlock_destroy(&rwlock));
+    }
+};
+
+/*
+   Scoped lock class for rwlocks
+ */
+class scoped_rwlock
+{
+    pthread_rwlock_t *rwlock_obj;
+    bool locked;
+    bool locked_shared;
+
+    /* No copying */
+    scoped_rwlock &operator=(const scoped_lock &);
+    scoped_rwlock(const scoped_lock &);
+
+public:
+    void lock(void);
+    void unlock(void);
+    void lock_shared(void);
+    void unlock_shared(void);
+    /*
+       upgrade shared lock to exclusive.
+       equivalent to `lock.unlock_shared(); lock.lock();`
+     */
+    void upgrade(void);
+    scoped_rwlock(pthread_rwlock_t &rwlock, bool shared = false);
+    scoped_rwlock(rwlock_t &rwlock, bool shared = false);
+    ~scoped_rwlock();
+};
 
 /**
    A scoped manager to save the current value of some variable, and optionally
@@ -583,18 +690,12 @@ void append_format(wcstring &str, const wchar_t *format, ...);
 void append_formatv(wcstring &str, const wchar_t *format, va_list ap);
 
 /**
-   Returns a newly allocated wide character string array equivalent of
-   the specified multibyte character string array
-*/
-char **wcsv2strv(const wchar_t * const *in);
-
-/**
    Test if the given string is a valid variable name.
 
    \return null if this is a valid name, and a pointer to the first invalid character otherwise
 */
 
-wchar_t *wcsvarname(const wchar_t *str);
+const wchar_t *wcsvarname(const wchar_t *str);
 
 
 /**
@@ -608,16 +709,18 @@ const wchar_t *wcsfuncname(const wchar_t *str);
 /**
    Test if the given string is valid in a variable name
 
-   \return 1 if this is a valid name, 0 otherwise
+   \return true if this is a valid name, false otherwise
 */
 
-int wcsvarchr(wchar_t chr);
-
+bool wcsvarchr(wchar_t chr);
 
 /**
-   A wcswidth workalike. Fish uses this since the regular wcswidth seems flaky.
+   Convenience variants on fish_wcwswidth().
+
+   See fallback.h for the normal definitions.
 */
-int my_wcswidth(const wchar_t *c);
+int fish_wcswidth(const wchar_t *str);
+int fish_wcswidth(const wcstring& str);
 
 /**
    This functions returns the end of the quoted substring beginning at
@@ -653,8 +756,8 @@ wcstring wsetlocale(int category, const wchar_t *locale);
 
    \return zero if needle is not found, of if needle is null, non-zero otherwise
 */
-__sentinel bool contains_internal(const wchar_t *needle, ...);
-__sentinel bool contains_internal(const wcstring &needle, ...);
+__sentinel bool contains_internal(const wchar_t *needle, int vararg_handle, ...);
+__sentinel bool contains_internal(const wcstring &needle, int vararg_handle, ...);
 
 /**
    Call read while blocking the SIGCHLD signal. Should only be called
@@ -697,16 +800,19 @@ ssize_t read_loop(int fd, void *buff, size_t count);
 void debug(int level, const char *msg, ...);
 void debug(int level, const wchar_t *msg, ...);
 
+/** Writes a string to stderr, followed by a newline */
+void print_stderr(const wcstring &str);
+
 /**
    Replace special characters with backslash escape sequences. Newline is
    replaced with \n, etc.
 
    \param in The string to be escaped
-   \param escape_all Whether all characters wich hold special meaning in fish (Pipe, semicolon, etc,) should be escaped, or only unprintable characters
-   \return The escaped string, or 0 if there is not enough memory
+   \param flags Flags to control the escaping
+   \return The escaped string
 */
 
-wchar_t *escape(const wchar_t *in, escape_flags_t flags);
+wcstring escape(const wchar_t *in, escape_flags_t flags);
 wcstring escape_string(const wcstring &in, escape_flags_t flags);
 
 /**
@@ -715,16 +821,14 @@ wcstring escape_string(const wcstring &in, escape_flags_t flags);
    character and a few more into constants which are defined in a
    private use area of Unicode. This assumes wchar_t is a unicode
    character set.
-
-   The result must be free()d. The original string is not modified. If
-   an invalid sequence is specified, 0 is returned.
-
 */
-wchar_t *unescape(const wchar_t * in,
-                  int escape_special);
 
-bool unescape_string(wcstring &str,
-                     int escape_special);
+/** Unescapes a string in-place. A true result indicates the string was unescaped, a false result indicates the string was unmodified. */
+bool unescape_string_in_place(wcstring *str, unescape_flags_t escape_special);
+
+/** Unescapes a string, returning the unescaped value by reference. On failure, the output is set to an empty string. */
+bool unescape_string(const wchar_t *input, wcstring *output, unescape_flags_t escape_special);
+bool unescape_string(const wcstring &input, wcstring *output, unescape_flags_t escape_special);
 
 
 /**
@@ -809,11 +913,12 @@ void assert_is_not_forked_child(const char *who);
 #define ASSERT_IS_NOT_FORKED_CHILD_TRAMPOLINE(x) assert_is_not_forked_child(x)
 #define ASSERT_IS_NOT_FORKED_CHILD() ASSERT_IS_NOT_FORKED_CHILD_TRAMPOLINE(__FUNCTION__)
 
+/** Macro to help suppress potentially unused variable warnings */
+#define USE(var) (void)(var)
+
 extern "C" {
     __attribute__((noinline)) void debug_thread_error(void);
 }
 
-/** Return the path of an appropriate runtime data directory */
-std::string common_get_runtime_path();
 
 #endif

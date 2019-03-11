@@ -12,7 +12,7 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with this program; if not, write to the Free Software
-Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 */
 
 
@@ -33,6 +33,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include <termios.h>
 #include <fcntl.h>
 #include <sys/param.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/types.h>
+#include <pwd.h>
 
 #ifdef HAVE_GETOPT_H
 #include <getopt.h>
@@ -62,6 +66,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "history.h"
 #include "path.h"
 #include "input.h"
+#include "fish_version.h"
 
 /* PATH_MAX may not exist */
 #ifndef PATH_MAX
@@ -72,6 +77,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
    The string describing the single-character options accepted by the main fish binary
 */
 #define GETOPT_STRING "+hilnvc:p:d:"
+
+/* If we are doing profiling, the filename to output to */
+static const char *s_profiling_output_filename = NULL;
 
 static bool has_suffix(const std::string &path, const char *suffix, bool ignore_case)
 {
@@ -188,9 +196,15 @@ static struct config_paths_t determine_config_directory_paths(const char *argv0)
                 paths.doc = base_path + L"/share/doc/fish";
                 paths.bin = base_path + L"/bin";
 
+                /* Check only that the data and sysconf directories exist. Handle the doc directories separately */
                 struct stat buf;
                 if (0 == wstat(paths.data, &buf) && 0 == wstat(paths.sysconf, &buf))
                 {
+                    /* The docs dir may not exist; in that case fall back to the compiled in path */
+                    if (0 != wstat(paths.doc, &buf))
+                    {
+                        paths.doc = L"" DOCDIR;
+                    }
                     done = true;
                 }
             }
@@ -202,7 +216,7 @@ static struct config_paths_t determine_config_directory_paths(const char *argv0)
         /* Fall back to what got compiled in. */
         paths.data = L"" DATADIR "/fish";
         paths.sysconf = L"" SYSCONFDIR "/fish";
-        paths.doc = L"" DATADIR "/doc/fish";
+        paths.doc = L"" DOCDIR;
         paths.bin = L"" BINDIR;
 
         done = true;
@@ -218,7 +232,104 @@ static void source_config_in_directory(const wcstring &dir)
     const wcstring escaped_dir = escape_string(dir, ESCAPE_ALL);
     const wcstring cmd = L"builtin source " + escaped_dir + L"/config.fish 2>/dev/null";
     parser_t &parser = parser_t::principal_parser();
+    parser.set_is_within_fish_initialization(true);
     parser.eval(cmd, io_chain_t(), TOP);
+    parser.set_is_within_fish_initialization(false);
+}
+
+static int try_connect_socket(std::string &name)
+{
+    int s, r, ret = -1;
+
+    /** Connect to a DGRAM socket rather than the expected STREAM.
+      This avoids any notification to a remote socket that we have connected,
+      preventing any surprising behaviour.
+      If the connection fails with EPROTOTYPE, the connection is probably a
+      STREAM; if it succeeds or fails any other way, there is no cause for
+      alarm.
+      With thanks to Andrew Lutomirski <github.com/amluto>
+    */
+
+    if ((s = socket(AF_UNIX, SOCK_DGRAM, 0)) == -1)
+    {
+        wperror(L"socket");
+        return -1;
+    }
+
+    debug(3, L"Connect to socket %s at fd %d", name.c_str(), s);
+
+    struct sockaddr_un local = {};
+    local.sun_family = AF_UNIX;
+    strncpy(local.sun_path, name.c_str(), (sizeof local.sun_path) - 1);
+
+    r = connect(s, (struct sockaddr *)&local, sizeof local);
+
+    if (r == -1 && errno == EPROTOTYPE)
+    {
+        ret = 0;
+    }
+
+    close(s);
+    return ret;
+}
+
+/**
+   Check for a running fishd from old versions and warn about not being able
+   to share variables.
+   https://github.com/fish-shell/fish-shell/issues/1730
+*/
+static void check_running_fishd()
+{
+    /* There are two paths to check:
+       $FISHD_SOCKET_DIR/fishd.socket.$USER or /tmp/fishd.socket.$USER
+         - referred to as the "old socket"
+       $XDG_RUNTIME_DIR/fishd.socket or /tmp/fish.$USER/fishd.socket
+         - referred to as the "new socket"
+       All existing versions of fish attempt to create the old socket, but
+       failure in newer versions is not treated as critical, so both need
+       to be checked. */
+    const char *uname = getenv("USER");
+    if (uname == NULL)
+    {
+        const struct passwd *pw = getpwuid(getuid());
+        uname = pw->pw_name;
+    }
+
+    const char *dir_old_socket = getenv("FISHD_SOCKET_DIR");
+    std::string path_old_socket;
+
+    if (dir_old_socket == NULL)
+    {
+        path_old_socket = "/tmp/";
+    }
+    else
+    {
+        path_old_socket.append(dir_old_socket);
+    }
+
+    path_old_socket.append("fishd.socket.");
+    path_old_socket.append(uname);
+
+    const char *dir_new_socket = getenv("XDG_RUNTIME_DIR");
+    std::string path_new_socket;
+    if (dir_new_socket == NULL)
+    {
+        path_new_socket = "/tmp/fish.";
+        path_new_socket.append(uname);
+        path_new_socket.push_back('/');
+    }
+    else
+    {
+        path_new_socket.append(dir_new_socket);
+    }
+
+    path_new_socket.append("fishd.socket");
+
+    if (try_connect_socket(path_old_socket) == 0 || try_connect_socket(path_new_socket) == 0)
+    {
+        debug(1, _(L"Old versions of fish appear to be running. You will not be able to share variable values between old and new fish sessions. For best results, restart all running instances of fish."));
+    }
+
 }
 
 /**
@@ -238,7 +349,6 @@ static int read_init(const struct config_paths_t &paths)
 
     return 1;
 }
-
 
 /**
   Parse the argument list, return the index of the first non-switch
@@ -340,7 +450,8 @@ static int fish_parse_opt(int argc, char **argv, std::vector<std::string> *out_c
 
             case 'p':
             {
-                profile = optarg;
+                s_profiling_output_filename = optarg;
+                g_profiling_active = true;
                 break;
             }
 
@@ -349,7 +460,7 @@ static int fish_parse_opt(int argc, char **argv, std::vector<std::string> *out_c
                 fwprintf(stderr,
                          _(L"%s, version %s\n"),
                          PACKAGE_NAME,
-                         FISH_BUILD_VERSION);
+                         get_fish_version());
                 exit_without_destructors(0);
             }
 
@@ -365,18 +476,15 @@ static int fish_parse_opt(int argc, char **argv, std::vector<std::string> *out_c
 
     is_login |= (strcmp(argv[0], "-fish") == 0);
 
-    /*
-      We are an interactive session if we have not been given an
-      explicit command to execute, _and_ stdin is a tty.
-     */
-    is_interactive_session &= ! has_cmd;
-    is_interactive_session &= (my_optind == argc);
-    is_interactive_session &= isatty(STDIN_FILENO);
-
-    /*
-      We are also an interactive session if we have are forced-
-     */
-    is_interactive_session |= force_interactive;
+    /* We are an interactive session if we are either forced, or have not been given an explicit command to execute and stdin is a tty. */
+    if (force_interactive)
+    {
+        is_interactive_session = true;
+    }
+    else if (is_interactive_session)
+    {
+        is_interactive_session = ! has_cmd && (my_optind == argc) && isatty(STDIN_FILENO);
+    }
 
     return my_optind;
 }
@@ -389,7 +497,6 @@ int main(int argc, char **argv)
 
     set_main_thread();
     setup_fork_guards();
-    save_term_foreground_process_group();
 
     wsetlocale(LC_ALL, L"");
     is_interactive_session=1;
@@ -410,6 +517,12 @@ int main(int argc, char **argv)
         no_exec = 0;
     }
 
+    /* Only save (and therefore restore) the fg process group if we are interactive. See #197, #1002 */
+    if (is_interactive_session)
+    {
+        save_term_foreground_process_group();
+    }
+
     const struct config_paths_t paths = determine_config_directory_paths(argv[0]);
 
     proc_init();
@@ -421,7 +534,7 @@ int main(int argc, char **argv)
     reader_init();
     history_init();
     /* For setcolor to support term256 in config.fish (#1022) */
-    update_fish_term256();
+    update_fish_color_support();
 
     parser_t &parser = parser_t::principal_parser();
 
@@ -453,6 +566,8 @@ int main(int argc, char **argv)
         {
             if (my_optind == argc)
             {
+                // Interactive mode
+                check_running_fishd();
                 res = reader_read(STDIN_FILENO, empty_ios);
             }
             else
@@ -509,22 +624,28 @@ int main(int argc, char **argv)
         }
     }
 
-    proc_fire_event(L"PROCESS_EXIT", EVENT_EXIT, getpid(), res);
+    int exit_status = res ? STATUS_UNKNOWN_COMMAND : proc_get_last_status();
 
+    proc_fire_event(L"PROCESS_EXIT", EVENT_EXIT, getpid(), exit_status);
+
+    restore_term_mode();
     restore_term_foreground_process_group();
+
+    if (g_profiling_active)
+    {
+        parser.emit_profiling(s_profiling_output_filename);
+    }
+
     history_destroy();
     proc_destroy();
     builtin_destroy();
     reader_destroy();
-    parser.destroy();
     wutil_destroy();
     event_destroy();
-
-    env_destroy();
 
     if (g_log_forks)
         printf("%d: g_fork_count: %d\n", __LINE__, g_fork_count);
 
-    exit_without_destructors(res ? STATUS_UNKNOWN_COMMAND : proc_get_last_status());
+    exit_without_destructors(exit_status);
     return EXIT_FAILURE; //above line should always exit
 }

@@ -270,7 +270,7 @@ exchange(wchar_t **argv)
         {
             /* Bottom segment is the short one.  */
             int len = middle - bottom;
-            register int i;
+            int i;
 
             /* Swap it with the top part of the top segment.  */
             for (i = 0; i < len; i++)
@@ -286,7 +286,7 @@ exchange(wchar_t **argv)
         {
             /* Top segment is the short one.  */
             int len = top - middle;
-            register int i;
+            int i;
 
             /* Swap it with the bottom part of the bottom segment.  */
             for (i = 0; i < len; i++)
@@ -638,7 +638,10 @@ _wgetopt_internal(int argc, wchar_t *const *argv, const wchar_t *optstring, cons
                     fwprintf(stderr, _(L"%ls: Invalid option -- %lc\n"), argv[0], c);
             }
             woptopt = c;
-            woptind++;
+
+            if (*nextchar != '\0')
+                woptind++;
+
             return '?';
         }
         if (temp[1] == ':')

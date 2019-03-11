@@ -13,4 +13,23 @@ Test 12 pass
 Test 13 pass
 Test 14 pass
 Test 15 pass
+Foo change detected
+Foo change detected
 Test 16 pass
+Testing Universal Startup
+1
+1
+2
+2
+Missing:
+Missing:
+SHLVL: 1
+SHLVL: 2
+SHLVL: 1
+SHLVL: 1
+SHLVL: 1
+SHLVL: 4
+SHLVL: 4
+Elements in DISPLAY: 1
+Elements in FOO: 4
+MANPATH=man1:man2:man3
