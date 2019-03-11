@@ -153,6 +153,16 @@ void set_color( int c, int c2 )
 	int is_bold = 0;
 	int is_underline = 0;
 
+	/*
+	  Test if we have at least basic support for setting fonts, colors
+	  and related bits - otherwise just give up...
+	*/
+	if( !exit_attribute_mode )
+	{
+		return;
+	}
+	
+
 	is_bold |= (c&FISH_COLOR_BOLD)!=0;
 	is_bold |= (c2&FISH_COLOR_BOLD)!=0;
 
@@ -367,7 +377,7 @@ int writech( wint_t ch )
 {
 	mbstate_t state;
 	int i;
-	char buff[MB_CUR_MAX+1];
+	char buff[MB_LEN_MAX+1];
 	size_t bytes;
 
 	if( ( ch >= ENCODE_DIRECT_BASE) &&

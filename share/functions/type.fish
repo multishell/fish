@@ -1,5 +1,5 @@
 
-function type -d (N_ "Print the type of a command")
+function type --description "Print the type of a command"
 
 	# Initialize
 	set -l res 1
@@ -43,7 +43,7 @@ function type -d (N_ "Print the type of a command")
 				set selection files
 
 			case -h --help
-				 help type
+				 __fish_print_help type
 				 return 0
 
 			case --

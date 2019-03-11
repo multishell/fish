@@ -195,8 +195,12 @@ static int fish_parse_opt( int argc, char **argv, char **cmd_ptr )
 			case 'd':		
 			{
 				char *end;
-				int tmp = strtol(optarg, &end, 10);
-				if( tmp >= 0 && tmp <=10 && !*end )
+				int tmp;
+
+				errno = 0;
+				tmp = strtol(optarg, &end, 10);
+				
+				if( tmp >= 0 && tmp <=10 && !*end && !errno )
 				{
 					debug_level=tmp;
 				}
@@ -210,7 +214,7 @@ static int fish_parse_opt( int argc, char **argv, char **cmd_ptr )
 			
 			case 'h':
 			{
-				*cmd_ptr = "help";
+				*cmd_ptr = "__fish_print_help fish";
 				break;
 			}
 			
@@ -307,7 +311,6 @@ int main( int argc, char **argv )
 	env_init();
 	reader_init();
 	history_init();
-
 
 	if( read_init() )
 	{

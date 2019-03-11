@@ -1,9 +1,9 @@
 
-function contains -d (N_ "Test if a key is contained in a set of values")
+function contains --description "Test if a key is contained in a set of values"
 	while count $argv >/dev/null
 		switch $argv[1]
 			case '-h' '--h' '--he' '--hel' '--help'
-				help contains
+				__fish_print_help contains
 				return
 
 			case '--'
@@ -12,8 +12,8 @@ function contains -d (N_ "Test if a key is contained in a set of values")
 				break
 			
 			case '-*'
-				printf (_ "%s: Unknown option '%s'\n") contains $argv[$i]
-				help contains
+				printf (_ "%s: Unknown option '%s'\n") contains $argv[1]
+				__fish_print_help contains >&2
 				return 1
 
 			case '*'
@@ -29,14 +29,14 @@ function contains -d (N_ "Test if a key is contained in a set of values")
 		return 1
 	end
 
-	set -- key $argv[1]
+	set key $argv[1]
 	set -e argv[1]	
 
 	#
 	# Loop through values
 	#
 
-	printf "%s\n" $argv|grep -Fx -- $key >/dev/null
+	printf "%s\n" $argv|sgrep -Fx -- $key >/dev/null
 	return $status
 end
 

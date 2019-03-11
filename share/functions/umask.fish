@@ -1,12 +1,13 @@
 
 function __fish_umask_parse -d "Internal umask function"
 	# Test if already a valid octal mask, and pad it with zeros
-	if echo $argv | grep -E '^(0|)[0-7]{1,3}$' >/dev/null
-		for i in (seq (echo 5-(echo $argv|wc -c)|bc)); set argv 0$argv; end
+	if echo $argv | sgrep -E '^(0|)[0-7]{1,3}$' >/dev/null
+		set -l char_count (echo $argv| wc -c)
+		for i in (seq (math 5 - $char_count)); set argv 0$argv; end
 		echo $argv 
 	else
 		# Test if argument really is a valid symbolic mask
-		if not echo $argv | grep -E '^(((u|g|o|a|)(=|\+|-)|)(r|w|x)*)(,(((u|g|o|a|)(=|\+|-)|)(r|w|x)*))*$' >/dev/null
+		if not echo $argv | sgrep -E '^(((u|g|o|a|)(=|\+|-)|)(r|w|x)*)(,(((u|g|o|a|)(=|\+|-)|)(r|w|x)*))*$' >/dev/null
 			printf (_ "%s: Invalid mask '%s'\n") umask $argv >&2
 			return 1
 		end
@@ -22,7 +23,8 @@ function __fish_umask_parse -d "Internal umask function"
 
 		for i in 1 2 3
 			set tmp (echo $tmp|cut -c 2-)
-			set res[$i] (echo 7-(echo $tmp|cut -c 1)|bc)
+			set -l char_count (echo $tmp|cut -c 1)
+			set res[$i] (math 7 - $char_count)
 		end
 				
 		set -l el (echo $argv|tr , \n)
@@ -70,20 +72,20 @@ function __fish_umask_parse -d "Internal umask function"
 					set mode set
 			end
 
-			if not echo $perm|grep -E '^(r|w|x)*$' >/dev/null
+			if not echo $perm|sgrep -E '^(r|w|x)*$' >/dev/null
 				printf (_ "%s: Invalid mask '%s'\n") umask $argv >&2
 				return
 			end
 
 			set val 0
-			if echo $i |grep 'r' >/dev/null
+			if echo $i |sgrep 'r' >/dev/null
 				set val 4
 			end
-			if echo $i |grep 'w' >/dev/null
-				set val (echo $val + 2|bc)
+			if echo $i |sgrep 'w' >/dev/null
+				set val (math $val + 2)
 			end
-			if echo $i |grep 'x' >/dev/null
-				set val (echo $val + 1|bc)
+			if echo $i |sgrep 'x' >/dev/null
+				set val (math $val + 1)
 			end
 
 			for j in $idx
@@ -101,7 +103,7 @@ function __fish_umask_parse -d "Internal umask function"
 		end
 
 		for i in 1 2 3
-			set res[$i] (echo 7-$res[$i]|bc)
+			set res[$i] (math 7 - $res[$i])
 		end
 		echo 0$res[1]$res[2]$res[3]
 	end
@@ -132,7 +134,7 @@ function __fish_umask_print_symbolic
 	echo $res|cut -c 2-
 end
 
-function umask -d (N_ "Set default file permission mask")
+function umask --description "Set default file permission mask"
 
 	set -l as_command 0
 	set -l symbolic 0
@@ -155,7 +157,7 @@ function umask -d (N_ "Set default file permission mask")
 
 		switch $opt[1]
 			case -h --help
-				help umask
+				__fish_print_help umask
 				return 0
 
 			case -p --as-command

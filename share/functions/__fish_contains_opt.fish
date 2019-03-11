@@ -8,7 +8,7 @@ function __fish_contains_opt -d "Checks if a specific option has been given in t
 	for i in $argv
 		if test $next_short 
 			set next_short 
-			set -- short_opt $short_opt $i
+			set short_opt $short_opt $i
 		else
 			switch $i
 				case -s
@@ -18,7 +18,7 @@ function __fish_contains_opt -d "Checks if a specific option has been given in t
 					return 1
 
 				case '**'
-					set -- long_opt $long_opt $i
+					set long_opt $long_opt $i
 			end
 		end
 	end
@@ -29,11 +29,11 @@ function __fish_contains_opt -d "Checks if a specific option has been given in t
 			continue
 		end
 
-		if commandline -cpo | grep -- "^-"$i"\|^-[^-]*"$i >/dev/null
+		if commandline -cpo | sgrep -- "^-"$i"\|^-[^-]*"$i >/dev/null
 			return 0
 		end
 		
-		if commandline -ct | grep -- "^-"$i"\|^-[^-]*"$i >/dev/null
+		if commandline -ct | sgrep -- "^-"$i"\|^-[^-]*"$i >/dev/null
 			return 0
 		end
 	end

@@ -301,6 +301,40 @@ int job_get_flag( job_t *j, int flag )
 	return j->flags&flag?1:0;
 }
 
+int job_signal( job_t *j, int signal )
+{	
+	pid_t my_pid = getpid();
+	int res = 0;
+	
+	if( j->pgid != my_pid )
+	{
+		res = killpg( j->pgid, SIGHUP );
+	}
+	else
+	{
+		process_t *p;
+
+		for( p = j->first_process; p; p=p->next )
+		{
+			if( ! p->completed )
+			{
+				if( p->pid )
+				{
+					if( kill( p->pid, SIGHUP ) )
+					{
+						res = -1;
+						break;
+					}
+				}
+			}
+		}
+
+	}
+
+	return res;
+
+}
+
 
 /**
    Store the status of the process pid that was returned by waitpid.
@@ -879,7 +913,7 @@ static int terminal_give_to_job( job_t *j, int cont )
 }
 
 /**
-   REturns contol of the terminal 
+   Returns contol of the terminal to the shell
 */
 static int terminal_return_from_job( job_t *j)
 {

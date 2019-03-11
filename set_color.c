@@ -37,6 +37,7 @@
 #endif
 
 #include "fallback.h"
+#include "print_help.h"
 
 /*
   Small utility for setting the color.
@@ -56,7 +57,11 @@
 */
 #define GETOPT_STRING "b:hvocu"
 
+#ifdef USE_GETTEXT
 #define _(string) gettext(string)
+#else
+#define _(string) (string)
+#endif
 
 char *col[]=
 {
@@ -90,8 +95,6 @@ int col_idx[]=
 }
 ;
 
-void print_help();
-
 int translate_color( char *str )
 {
 	char *endptr;
@@ -99,10 +102,11 @@ int translate_color( char *str )
 
 	if( !str )
 		return -1;
-	
 
+	errno = 0;
 	color = strtol( str, &endptr, 10 );
-	if(endptr<=str)
+
+	if( *endptr || color<0 || errno )
 	{
 		int i;
 		color = -1;
@@ -206,7 +210,7 @@ int main( int argc, char **argv )
 				bgcolor = optarg;
 				break;
 			case 'h':
-				print_help();
+				print_help( argv[0], 1 );
 				exit(0);				
 								
 			case 'o':
@@ -254,7 +258,7 @@ int main( int argc, char **argv )
 	{
 		check_locale_init();
 		fprintf( stderr, _("%s: Expected an argument\n"), SET_COLOR );
-		print_help();		
+		print_help( argv[0], 2 );		
 		return 1;
 	}
 	

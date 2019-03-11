@@ -48,7 +48,6 @@ static void	builtin_complete_add2( const wchar_t *cmd,
 								   array_list_t *gnu_opt,
 								   array_list_t *old_opt, 
 								   int result_mode, 
-								   int authorative,
 								   const wchar_t *condition,
 								   const wchar_t *comp,
 								   const wchar_t *desc )
@@ -64,7 +63,6 @@ static void	builtin_complete_add2( const wchar_t *cmd,
 					  0,
 					  0,
 					  result_mode,
-					  authorative,
 					  condition,
 					  comp,
 					  desc );
@@ -78,7 +76,6 @@ static void	builtin_complete_add2( const wchar_t *cmd,
 					  (wchar_t *)al_get(gnu_opt, i ),
 					  0,
 					  result_mode,
-					  authorative,
 					  condition,
 					  comp,
 					  desc );
@@ -92,7 +89,6 @@ static void	builtin_complete_add2( const wchar_t *cmd,
 					  (wchar_t *)al_get(old_opt, i ),
 					  1,
 					  result_mode,
-					  authorative,
 					  condition,
 					  comp,
 					  desc );
@@ -106,7 +102,6 @@ static void	builtin_complete_add2( const wchar_t *cmd,
 					  0,
 					  0,
 					  result_mode,
-					  authorative,
 					  condition,
 					  comp,
 					  desc );
@@ -137,10 +132,17 @@ static void	builtin_complete_add( array_list_t *cmd,
 							   gnu_opt,
 							   old_opt, 
 							   result_mode, 
-							   authorative,
 							   condition, 
 							   comp, 
 							   desc );
+
+		if( authorative != -1 )
+		{
+			complete_set_authorative( al_get( cmd, i ),
+									  COMMAND,
+									  authorative );
+		}
+		
 	}
 	
 	for( i=0; i<al_get_count( path ); i++ )
@@ -151,12 +153,18 @@ static void	builtin_complete_add( array_list_t *cmd,
 							   gnu_opt,
 							   old_opt, 
 							   result_mode, 
-							   authorative,
 							   condition, 
 							   comp, 
 							   desc );
-	}
-	
+
+		if( authorative != -1 )
+		{
+			complete_set_authorative( al_get( path, i ),
+									  PATH,
+									  authorative );
+		}
+		
+	}	
 }
 
 /**
@@ -278,7 +286,7 @@ static int builtin_complete( wchar_t **argv )
 	int argc=0;
 	int result_mode=SHARED;
 	int remove = 0;
-	int authorative = 1;
+	int authorative = -1;
 	
 	string_buffer_t short_opt;
 	array_list_t gnu_opt, old_opt;
@@ -360,6 +368,10 @@ static int builtin_complete( wchar_t **argv )
 				}
 				,
 				{
+					L"authorative", no_argument, 0, 'A'
+				}
+				,
+				{
 					L"condition", required_argument, 0, 'n'
 				}
 				,
@@ -381,7 +393,7 @@ static int builtin_complete( wchar_t **argv )
 		
 		int opt = wgetopt_long( argc,
 								argv, 
-								L"a:c:p:s:l:o:d:frxeun:C::h", 
+								L"a:c:p:s:l:o:d:frxeuAn:C::h", 
 								long_options, 
 								&opt_index );
 		if( opt == -1 )
@@ -396,9 +408,6 @@ static int builtin_complete( wchar_t **argv )
                            BUILTIN_ERR_UNKNOWN,
                            argv[0],
                            long_options[opt_index].name );
-				sb_append( sb_err, 
-						   parser_current_line() );
-				
 				builtin_print_help( argv[0], sb_err );
 
 				
@@ -441,6 +450,10 @@ static int builtin_complete( wchar_t **argv )
 				authorative=0;
 				break;
 				
+			case 'A':
+				authorative=1;
+				break;
+				
 			case 's':
 				sb_append( &short_opt, woptarg );
 				break;
@@ -474,10 +487,7 @@ static int builtin_complete( wchar_t **argv )
 				return 0;
 				
 			case '?':
-				sb_append( sb_err, 
-						   parser_current_line() );
-				builtin_print_help( argv[0], sb_err );
-				
+				builtin_unknown_option( argv[0], argv[woptind-1] );
 				res = 1;
 				break;
 				
@@ -561,8 +571,6 @@ static int builtin_complete( wchar_t **argv )
 			sb_printf( sb_err, 
 					   _( L"%ls: Too many arguments\n" ),
 					   argv[0] );
-			sb_append( sb_err, 
-					   parser_current_line() );
 			builtin_print_help( argv[0], sb_err );
 
 			res = 1;

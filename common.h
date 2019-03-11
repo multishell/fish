@@ -40,6 +40,10 @@
 */
 #define BYTE_MAX 0xffu
 
+#define UNESCAPE_SPECIAL 1
+#define UNESCAPE_INCOMPLETE 2
+
+
 /** 
 	Save the shell mode on startup so we can restore them on exit
 */
@@ -77,15 +81,26 @@ extern wchar_t *program_name;
 #define CHECK( arg, retval )											\
 	if( !(arg) )														\
 	{																	\
-		debug( 1,														\
-			   _( L"function %s called with null value for argument %s. " \
-				  L"This is a bug. "									\
-				  L"If you can reproduce it, please send a bug report to %s." ), \
+		debug( 0,														\
+			   _( L"function %s called with null value for argument %s. " ), \
 			   __func__,												\
-			   #arg,													\
-			   PACKAGE_BUGREPORT );										\
+			   #arg );													\
+		bugreport();													\
+		show_stackframe();												\
 		return retval;													\
 	}
+
+/**
+   Pause for input, then exit the program. If supported, print a backtrace first.
+*/
+#define FATAL_EXIT()							\
+	{											\
+		char c;									\
+		show_stackframe();						\
+		read( 0, &c, 1 );						\
+		exit( 1 );								\
+	}											\
+		
 
 /**
    Exit program at once, leaving an error message about running out of memory.
@@ -96,33 +111,22 @@ extern wchar_t *program_name;
 				  L"fish: Out of memory on line %d of file %s, shutting down fish\n", \
 				  __LINE__,												\
 				  __FILE__ );											\
-		exit(1);														\
-	}
-
-/**
-   Cause fish to crash. This should only be used for debugging. If
-   this function is ever called in shipped code, this is a bug.
-*/
-#define CRASH()									\
-	{											\
-		int *n = 0;								\
-		*n = 1;									\
+		FATAL_EXIT();														\
 	}
 
 /**
    Check if signals are blocked. If so, print an error message and
    return from the function performing this check.
 */
-#define CHECK_BLOCK( retval )													\
+#define CHECK_BLOCK( retval )											\
 	if( signal_is_blocked() )											\
 	{																	\
 		debug( 0,														\
-			   L"function %s called while blocking signals. "			\
-			   L"This is a bug. "										\
-			   L"If you can reproduce it, please send a bug report to %s.",	\
-			   __func__,												\
-			   PACKAGE_BUGREPORT );										\
-		return retval;											\
+			   _( L"function %s called while blocking signals. " ),		\
+			   __func__);												\
+		bugreport();													\
+		show_stackframe();												\
+		return retval;													\
 	}
 		
 /**
@@ -136,13 +140,15 @@ extern wchar_t *program_name;
 */
 #define N_(wstr) wstr
 
+/*
+  Print a stack trace to stderr
+*/
+void show_stackframe();
 
 /**
    Take an array_list_t containing wide strings and converts them to a
    single null-terminated wchar_t **. The array is allocated using
-   halloc, and uses the \c context parameter as context. If \c context
-   is not noll, all elements of the \c array_list_t are also
-   registered to \c context using \c halloc_register().
+   malloc, and needs to be fred's by the caller.
 */
 wchar_t **list_to_char_arr( array_list_t *l );
 
@@ -309,6 +315,10 @@ int read_blocked(int fd, void *buf, size_t count);
    Issue a debug message with printf-style string formating and
    automatic line breaking. The string will begin with the string \c
    program_name, followed by a colon and a whitespace.
+
+   Because debug is often called to tell the user about an error,
+   before using wperror to give a specific error message, debug will
+   never ever modify the value of errno.
    
    \param level the priority of the message. Lower number means higher priority. Messages with a priority_number higher than \c debug_level will be ignored..
    \param msg the message format string. 
@@ -404,6 +414,11 @@ void tokenize_variable_array( const wchar_t *val, array_list_t *out );
    \return 0 if the directory exists, -1 otherwise.
 */
 int create_directory( wchar_t *d );
+
+/**
+   Print a short message about how to file a bug report to stderr
+*/
+void bugreport();
 
 #endif
 

@@ -1,5 +1,5 @@
 /** \file history.c
-  History functions, part of the user interface.
+	History functions, part of the user interface.
 */
 #include "config.h"
 
@@ -345,9 +345,13 @@ static item_t *item_get( history_mode_t *m, void *d )
 					
 					if( *time_string )
 					{
-						time_t tm = (time_t)wcstol( time_string, 0, 10 );
-					
-						if( tm && !errno )
+						time_t tm;
+						wchar_t *end;
+						
+						errno = 0;
+						tm = (time_t)wcstol( time_string, &end, 10 );
+				
+						if( tm && !errno && !*end )
 						{
 							narrow_item.timestamp = tm;
 						}
@@ -385,10 +389,10 @@ static item_t *item_get( history_mode_t *m, void *d )
 /**
    Write the specified item to the specified file.
 */
-static void item_write( FILE *f, history_mode_t *m, void *v )
+static int item_write( FILE *f, history_mode_t *m, void *v )
 {
 	item_t *i = item_get( m, v );
-	fwprintf( f, L"# %d\n%ls\n", i->timestamp, history_escape_newlines( i->data ) );
+	return fwprintf( f, L"# %d\n%ls\n", i->timestamp, history_escape_newlines( i->data ) );
 }
 
 /**
@@ -605,8 +609,10 @@ static void history_save_mode( void *n, history_mode_t *m )
 	FILE *out;
 	history_mode_t *on_disk;
 	int i;
-	int has_new;
+	int has_new=0;
 	wchar_t *tmp_name;
+
+	int ok = 1;
 
 	/*
 	  First check if there are any new entries to save. If not, then
@@ -661,12 +667,19 @@ static void history_save_mode( void *n, history_mode_t *m )
 			/*
 			  Re-save the old history
 			*/
-			for( i=0; i<al_get_count(&on_disk->item); i++ )
+			for( i=0; ok && (i<al_get_count(&on_disk->item)); i++ )
 			{
 				void *ptr = al_get( &on_disk->item, i );
 				item_t *i = item_get( on_disk, ptr );
 				if( !hash_get( &mine, i ) )
-					item_write( out, on_disk, ptr );
+				{
+					if( item_write( out, on_disk, ptr ) == -1 )
+					{
+						ok = 0;
+						break;
+					}
+				}
+				
 			}
 			
 			hash_destroy( &mine );
@@ -674,15 +687,20 @@ static void history_save_mode( void *n, history_mode_t *m )
 			/*
 			  Add our own items last
 			*/		
-			for( i=0; i<al_get_count(&m->item); i++ )
+			for( i=0; ok && (i<al_get_count(&m->item)); i++ )
 			{
 				void *ptr = al_get( &m->item, i );
 				int is_new = item_is_new( m, ptr );
 				if( is_new )
-					item_write( out, m, ptr );
+				{
+					if( item_write( out, m, ptr ) == -1 )
+					{						
+						ok = 0;
+					}
+				}
 			}
 			
-			if( fclose( out ) )
+			if( fclose( out ) || !ok )
 			{
 				/*
 				  This message does not have high enough priority to
@@ -700,26 +718,32 @@ static void history_save_mode( void *n, history_mode_t *m )
 	
 	halloc_free( on_disk);
 
-	/*
-	  Reset the history. The item_t entries created in this session
-	  are not lost or dropped, they are stored in the session_item
-	  hash table. On reload, they will be automatically inserted at
-	  the end of the history list.
-	*/
-	
-	if( m->mmap_start && (m->mmap_start != MAP_FAILED ) )
-		munmap( m->mmap_start, m->mmap_length );
-	
-	al_truncate( &m->item, 0 );
-	al_truncate( &m->used, 0 );
-	m->pos = 0;
-	m->has_loaded = 0;
-	m->mmap_start=0;
-	m->mmap_length=0;
-	
-	m->save_timestamp=time(0);
-	m->new_count = 0;
+	if( ok )
+	{
 
+		/*
+		  Reset the history. The item_t entries created in this session
+		  are not lost or dropped, they are stored in the session_item
+		  hash table. On reload, they will be automatically inserted at
+		  the end of the history list.
+		*/
+			
+		if( m->mmap_start && (m->mmap_start != MAP_FAILED ) )
+		{
+			munmap( m->mmap_start, m->mmap_length );
+		}
+		
+		al_truncate( &m->item, 0 );
+		al_truncate( &m->used, 0 );
+		m->pos = 0;
+		m->has_loaded = 0;
+		m->mmap_start=0;
+		m->mmap_length=0;
+	
+		m->save_timestamp=time(0);
+		m->new_count = 0;
+	}
+	
 	signal_unblock();
 }
 

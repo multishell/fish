@@ -35,7 +35,12 @@
 #define STATUS_EXEC_FAIL 125
 
 /**
-   The status code use for erroneous argument combinations in a builtin
+   The status code used for normal exit in a  builtin
+*/
+#define STATUS_BUILTIN_OK 0
+
+/**
+   The status code used for erroneous argument combinations in a builtin
 */
 #define STATUS_BUILTIN_ERROR 1
 
@@ -128,7 +133,9 @@ typedef struct process
 	/** process ID */
 	pid_t pid;
 	/** File descriptor that pipe output should bind to */
-	int pipe_fd;
+	int pipe_write_fd;
+	/** File descriptor that the _next_ process pipe input should bind to */
+	int pipe_read_fd;
 	/** true if process has completed */
 	volatile int completed;
 	/** true if process has stopped */
@@ -365,6 +372,11 @@ int job_reap( int interactive );
    information.
 */
 void job_handle_signal( int signal, siginfo_t *info, void *con );
+
+/**
+   Send the specified signal to all processes in the specified job.
+*/
+int job_signal( job_t *j, int signal );
 
 #ifdef HAVE__PROC_SELF_STAT
 /**

@@ -222,8 +222,6 @@ static int builtin_jobs( wchar_t **argv )
                            argv[0],
                            long_options[opt_index].name );
 
-				sb_append( sb_err,
-						   parser_current_line() );
 				builtin_print_help( argv[0], sb_err );
 
 
@@ -253,8 +251,7 @@ static int builtin_jobs( wchar_t **argv )
 				return 0;				
 
 			case '?':
-				builtin_print_help( argv[0], sb_err );
-
+				builtin_unknown_option( argv[0], argv[woptind-1] );
 				return 1;
 
 		}

@@ -44,6 +44,10 @@ parts of fish.
 #include <sys/time.h>
 #include <fcntl.h>
 
+#ifdef HAVE_EXECINFO_H
+#include <execinfo.h>
+#endif
+
 #ifndef HOST_NAME_MAX
 /**
    Maximum length of hostname return. It is ok if this is too short,
@@ -110,6 +114,28 @@ static struct winsize termsize;
 */
 static string_buffer_t *setlocale_buff=0;
 
+
+void show_stackframe() 
+{
+	void *trace[32];
+	char **messages = (char **)NULL;
+	int i, trace_size = 0;
+
+	trace_size = backtrace(trace, 32);
+	messages = backtrace_symbols(trace, trace_size);
+
+	if( messages )
+	{
+		debug( 0, L"Backtrace:" );
+		for( i=0; i<trace_size; i++ )
+		{
+			fwprintf( stderr, L"%s\n", messages[i]);
+		}
+		free( messages );
+	}
+}
+
+
 wchar_t **list_to_char_arr( array_list_t *l )
 {
 	wchar_t ** res = malloc( sizeof(wchar_t *)*(al_get_count( l )+1) );
@@ -157,8 +183,6 @@ int fgetws2( wchar_t **b, int *len, FILE *f )
 		
 		if( errno == EILSEQ )
 		{
-
-			getc( f );
 			continue;
 		}
 	
@@ -548,14 +572,17 @@ int read_blocked(int fd, void *buf, size_t count)
 void debug( int level, const wchar_t *msg, ... )
 {
 	va_list va;
+
 	string_buffer_t sb;
 	string_buffer_t sb2;
+
+	int errno_old = errno;
 	
-	CHECK( msg, );
-		
 	if( level > debug_level )
 		return;
 
+	CHECK( msg, );
+		
 	sb_init( &sb );
 	sb_init( &sb2 );
 
@@ -570,6 +597,8 @@ void debug( int level, const wchar_t *msg, ... )
 
 	sb_destroy( &sb );	
 	sb_destroy( &sb2 );	
+
+	errno = errno_old;
 }
 
 void write_screen( const wchar_t *msg, string_buffer_t *buff )
@@ -673,7 +702,7 @@ wchar_t *escape( const wchar_t *in,
 	if( !in )
 	{
 		debug( 0, L"%s called with null input", __func__ );
-		exit(1);
+		FATAL_EXIT();
 	}
 	
 	out = malloc( sizeof(wchar_t)*(wcslen(in)*4 + 1));
@@ -786,7 +815,7 @@ wchar_t *escape( const wchar_t *in,
 }
 
 
-wchar_t *unescape( const wchar_t * orig, int unescape_special )
+wchar_t *unescape( const wchar_t * orig, int flags )
 {
 	
 	int mode = 0; 
@@ -795,7 +824,9 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 	int bracket_count=0;
 	wchar_t prev=0;	
 	wchar_t *in;
-
+	int unescape_special = flags & UNESCAPE_SPECIAL;
+	int allow_incomplete = flags & UNESCAPE_INCOMPLETE;
+	
 	CHECK( orig, 0 );
 		
 	len = wcslen( orig );
@@ -828,10 +859,13 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 						*/
 						case L'\0':
 						{
-							free(in);
-							return 0;
+							if( !allow_incomplete )
+							{
+								free(in);
+								return 0;
+							}
 						}
-						
+												
 						/*
 						  Numeric escape sequences. No prefix means
 						  octal escape, otherwise hexadecimal.
@@ -1148,6 +1182,8 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 							mode = 1;
 							if( unescape_special )
 								in[out_pos] = INTERNAL_SEPARATOR;							
+							else
+								out_pos--;						
 							break;					
 						}
 				
@@ -1156,6 +1192,8 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 							mode = 2;
 							if( unescape_special )
 								in[out_pos] = INTERNAL_SEPARATOR;							
+							else
+								out_pos--;						
 							break;
 						}
 
@@ -1188,8 +1226,13 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 						
 						case 0:
 						{
-							free(in);
-							return 0;
+							if( !allow_incomplete )
+							{
+								free(in);
+								return 0;
+							}
+							else
+								out_pos--;						
 						}
 						
 						default:
@@ -1204,6 +1247,8 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 				{
 					if( unescape_special )
 						in[out_pos] = INTERNAL_SEPARATOR;							
+					else
+						out_pos--;						
 					mode = 0;
 				}
 				else
@@ -1226,6 +1271,8 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 						mode = 0;
 						if( unescape_special )
 							in[out_pos] = INTERNAL_SEPARATOR;							
+						else
+							out_pos--;						
 						break;
 					}
 				
@@ -1235,8 +1282,13 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 						{
 							case L'\0':
 							{
-								free(in);
-								return 0;
+								if( !allow_incomplete )
+								{
+									free(in);
+									return 0;
+								}
+								else
+									out_pos--;						
 							}
 							
 							case '\\':
@@ -1282,6 +1334,13 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 			}
 		}
 	}
+
+	if( !allow_incomplete && mode )
+	{
+		free( in );
+		return 0;
+	}
+
 	in[out_pos]=L'\0';
 	return in;	
 }
@@ -1542,6 +1601,7 @@ void tokenize_variable_array( const wchar_t *val, array_list_t *out )
 	{
 		wchar_t *cpy = wcsdup( val );
 		wchar_t *pos, *start;
+		wchar_t *next;
 
 		if( !cpy )
 		{
@@ -1552,12 +1612,19 @@ void tokenize_variable_array( const wchar_t *val, array_list_t *out )
 		{
 			if( *pos == ARRAY_SEP )
 			{
+				
 				*pos=0;
-				al_push( out, start==cpy?cpy:wcsdup(start) );
+				next = start==cpy?cpy:wcsdup(start);
+				if( !next )
+					DIE_MEM();
+				al_push( out, next );
 				start=pos+1;
 			}
 		}
-		al_push( out, start==cpy?cpy:wcsdup(start) );
+		next = start==cpy?cpy:wcsdup(start);
+		if( !next )
+			DIE_MEM();
+		al_push( out, next );
 	}
 }
 
@@ -1599,5 +1666,13 @@ int create_directory( wchar_t *d )
 	}
 	
 	return ok?0:-1;
+}
+
+void bugreport()
+{
+	debug( 1,
+		   _( L"This is a bug. "
+			  L"If you can reproduce it, please send a bug report to %s." ),
+		PACKAGE_BUGREPORT );
 }
 

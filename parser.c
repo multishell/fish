@@ -1,6 +1,6 @@
 /** \file parser.c
 
-The fish parser. Contains functions for parsing code.
+The fish parser. Contains functions for parsing and evaluating code.
 
 */
 
@@ -57,10 +57,9 @@ The fish parser. Contains functions for parsing code.
 #define MAX_RECURSION_DEPTH 128
 
 /**
-   Message about reporting bugs, used on weird internal error to
-   hopefully get them to report stuff.
+   Error message for unknown builtin
 */
-#define BUGREPORT_MSG _( L"If this error can be reproduced, please send a bug report to %s.")
+#define UNKNOWN_BUILTIN_ERR_MSG _(L"Unknown builtin '%ls'")
 
 /**
    Error message for improper use of the exec builtin
@@ -114,6 +113,11 @@ The fish parser. Contains functions for parsing code.
 #define ILLEGAL_CMD_ERR_MSG _( L"Illegal command name '%ls'")
 
 /**
+   Error message when encountering an illegal file descriptor
+*/
+#define ILLEGAL_FD_ERR_MSG _( L"Illegal file descriptor '%ls'")
+
+/**
    Error message for wildcards with no matches
 */
 #define WILDCARD_ERR_MSG _( L"Warning: No match for wildcard '%ls'. The command will not be executed.")
@@ -131,7 +135,7 @@ The fish parser. Contains functions for parsing code.
 /**
    Error when using return builtin outside of function definition
 */
-#define INVALID_RETURN_ERR_MSG _( L"'return' command command outside of function definition" )
+#define INVALID_RETURN_ERR_MSG _( L"'return' builtin command outside of function definition" )
 
 /**
    Error when using else builtin outside of if block
@@ -474,11 +478,9 @@ void parser_pop_block()
 	if( !current_block )
 	{
 		debug( 1,
-			   L"function %s called on empty block stack. "
-			   L"This is a bug. "
-			   L"If you can reproduce it, please send a bug report to %s.",
-			   __func__,
-			   PACKAGE_BUGREPORT );										\
+			   L"function %s called on empty block stack.",
+			   __func__);
+		bugreport();
 		return;
 	}
 	
@@ -512,6 +514,15 @@ static int parser_skip_arguments( const wchar_t *cmd )
 						 L"begin",
 						 (void *)0 );
 }
+
+int parser_is_switch( const wchar_t *cmd )
+{
+	if( wcscmp( cmd, L"--" ) == 0 )
+		return ARG_SKIP;
+	else 
+		return cmd[0] == L'-';
+}
+
 
 int parser_is_subcommand( const wchar_t *cmd )
 {
@@ -1360,6 +1371,8 @@ static void parse_job_argument_list( process_t *p,
 		{
 			case TOK_PIPE:
 			{
+				wchar_t *end;
+				
 				if( (p->type == INTERNAL_EXEC) )
 				{
 					error( SYNTAX_ERROR,
@@ -1367,14 +1380,22 @@ static void parse_job_argument_list( process_t *p,
 						   EXEC_ERR_MSG );
 					return;
 				}
-				p->pipe_fd = wcstol( tok_last( tok ), 0, 10 );
+
+				errno = 0;
+				p->pipe_write_fd = wcstol( tok_last( tok ), &end, 10 );
+				if( p->pipe_write_fd < 0 || errno || *end )
+				{
+					error( SYNTAX_ERROR,
+						   tok_get_pos( tok ),
+						   ILLEGAL_FD_ERR_MSG,
+						   tok_last( tok ) );
+					return;
+				}
+				
 				if( !p->argv )
 					halloc_register( j, p->argv = list_to_char_arr( args ) );
 				p->next = halloc( j, sizeof( process_t ) );
-				if( p->next == 0 )
-				{
-					DIE_MEM();
-				}
+
 				tok_next( tok );
 				
 				/*
@@ -1499,7 +1520,8 @@ static void parse_job_argument_list( process_t *p,
 				int type = tok_last_type( tok );
 				io_data_t *new_io;
 				wchar_t *target = 0;
-
+				wchar_t *end;
+				
 				/*
 				  Don't check redirections in skipped part
 
@@ -1524,93 +1546,109 @@ static void parse_job_argument_list( process_t *p,
 				if( !new_io )
 					DIE_MEM();
 
+				errno = 0;
 				new_io->fd = wcstol( tok_last( tok ),
-									 0,
+									 &end,
 									 10 );
-				tok_next( tok );
-
-				switch( tok_last_type( tok ) )
+				if( new_io->fd < 0 || errno || *end )
 				{
-					case TOK_STRING:
-					{
-						target = (wchar_t *)expand_one( j, wcsdup( tok_last( tok ) ), 0);
-
-						if( target == 0 && error_code == 0 )
-						{
-							error( SYNTAX_ERROR,
-								   tok_get_pos( tok ),
-								   REDIRECT_TOKEN_ERR_MSG,
-								   tok_last( tok ) );
-
-						}
-						break;
-					}
-
-					default:
-						error( SYNTAX_ERROR,
-							   tok_get_pos( tok ),
-							   REDIRECT_TOKEN_ERR_MSG,
-							   tok_get_desc( tok_last_type(tok)) );
-				}
-
-				if( target == 0 || wcslen( target )==0 )
-				{
-					if( error_code == 0 )
-						error( SYNTAX_ERROR,
-							   tok_get_pos( tok ),
-							   _(L"Invalid IO redirection") );
-					tok_next(tok);
+					error( SYNTAX_ERROR,
+						   tok_get_pos( tok ),
+						   ILLEGAL_FD_ERR_MSG,
+						   tok_last( tok ) );
 				}
 				else
 				{
+					
+					tok_next( tok );
 
-
-					switch( type )
+					switch( tok_last_type( tok ) )
 					{
-						case TOK_REDIRECT_APPEND:
-							new_io->io_mode = IO_FILE;
-							new_io->param2.flags = O_CREAT | O_APPEND | O_WRONLY;
-							new_io->param1.filename = target;
-							break;
-
-						case TOK_REDIRECT_OUT:
-							new_io->io_mode = IO_FILE;
-							new_io->param2.flags = O_CREAT | O_WRONLY | O_TRUNC;
-							new_io->param1.filename = target;
-							break;
-
-						case TOK_REDIRECT_IN:
-							new_io->io_mode = IO_FILE;
-							new_io->param2.flags = O_RDONLY;
-							new_io->param1.filename = target;
-							break;
-
-						case TOK_REDIRECT_FD:
+						case TOK_STRING:
 						{
-							if( wcscmp( target, L"-" ) == 0 )
-							{
-								new_io->io_mode = IO_CLOSE;
-							}
-							else
-							{
-								new_io->io_mode = IO_FD;
-								new_io->param1.old_fd = wcstol( target,
-																0,
-																10 );
-								if( ( new_io->param1.old_fd < 0 ) ||
-									( new_io->param1.old_fd > 10 ) )
-								{
-									error( SYNTAX_ERROR,
-										   tok_get_pos( tok ),
-										   _(L"Requested redirection to something that is not a file descriptor %ls"),
-										   target );
+							target = (wchar_t *)expand_one( j, wcsdup( tok_last( tok ) ), 0);
 
-									tok_next(tok);
-								}
+							if( target == 0 && error_code == 0 )
+							{
+								error( SYNTAX_ERROR,
+									   tok_get_pos( tok ),
+									   REDIRECT_TOKEN_ERR_MSG,
+									   tok_last( tok ) );
+
 							}
 							break;
 						}
 
+						default:
+							error( SYNTAX_ERROR,
+								   tok_get_pos( tok ),
+								   REDIRECT_TOKEN_ERR_MSG,
+								   tok_get_desc( tok_last_type(tok)) );
+					}
+
+					if( target == 0 || wcslen( target )==0 )
+					{
+						if( error_code == 0 )
+							error( SYNTAX_ERROR,
+								   tok_get_pos( tok ),
+								   _(L"Invalid IO redirection") );
+						tok_next(tok);
+					}
+					else
+					{
+
+						switch( type )
+						{
+							case TOK_REDIRECT_APPEND:
+								new_io->io_mode = IO_FILE;
+								new_io->param2.flags = O_CREAT | O_APPEND | O_WRONLY;
+								new_io->param1.filename = target;
+								break;
+
+							case TOK_REDIRECT_OUT:
+								new_io->io_mode = IO_FILE;
+								new_io->param2.flags = O_CREAT | O_WRONLY | O_TRUNC;
+								new_io->param1.filename = target;
+								break;
+
+							case TOK_REDIRECT_IN:
+								new_io->io_mode = IO_FILE;
+								new_io->param2.flags = O_RDONLY;
+								new_io->param1.filename = target;
+								break;
+
+							case TOK_REDIRECT_FD:
+							{
+								if( wcscmp( target, L"-" ) == 0 )
+								{
+									new_io->io_mode = IO_CLOSE;
+								}
+								else
+								{
+									wchar_t *end;
+									
+									new_io->io_mode = IO_FD;
+									errno = 0;
+									
+									new_io->param1.old_fd = wcstol( target,
+																	&end,
+																	10 );
+									
+									if( ( new_io->param1.old_fd < 0 ) ||
+										errno || *end )
+									{
+										error( SYNTAX_ERROR,
+											   tok_get_pos( tok ),
+											   _(L"Requested redirection to something that is not a file descriptor %ls"),
+											   target );
+
+										tok_next(tok);
+									}
+								}
+								break;
+							}
+						}
+					
 					}
 				}
 
@@ -1671,14 +1709,14 @@ static void parse_job_argument_list( process_t *p,
 }
 
 /*
-static void print_block_stack( block_t *b )
-{
-	if( !b )
-		return;
-	print_block_stack( b->outer );
+  static void print_block_stack( block_t *b )
+  {
+  if( !b )
+  return;
+  print_block_stack( b->outer );
 	
-	debug( 0, L"Block type %ls, skip: %d", parser_get_block_desc( b->type ), b->skip );	
-}
+  debug( 0, L"Block type %ls, skip: %d", parser_get_block_desc( b->type ), b->skip );	
+  }
 */
 	
 /**
@@ -1697,6 +1735,7 @@ static int parse_job( process_t *p,
 	array_list_t *args = al_halloc( j );      // The list that will become the argc array for the program
 	int use_function = 1;   // May functions be considered when checking what action this command represents
 	int use_builtin = 1;    // May builtins be considered when checking what action this command represents
+	int use_command = 1;    // May commands be considered when checking what action this command represents
 	int is_new_block=0;     // Does this command create a new block?
 
 	block_t *prev_block = current_block;
@@ -1778,80 +1817,19 @@ static int parse_job( process_t *p,
 		
 		mark = tok_get_pos( tok );
 
-		/*
-		  Test if this command is one of the many special builtins
-		  that work directly on the parser, like e.g. 'not', that
-		  simply flips the status inversion flag in the job.
-		*/
-		if( wcscmp( L"command", nxt )==0 )
-		{
-			tok_next( tok );
-			if( parser_is_help( tok_last( tok ), 0 ) )
-			{
-				tok_set_pos( tok, mark);
-			}
-			else
-			{
-				use_function = 0;
-				use_builtin=0;
-				consumed=1;
-			}
-		}
-		else if(  wcscmp( L"builtin", nxt )==0 )
-		{
-			tok_next( tok );
-			if( tok_last(tok)[0] == L'-' )
-			{
-				tok_set_pos( tok, mark);
-			}
-			else
-			{
-				use_function = 0;
-				consumed=1;
-			}
-		}
-		else if(  wcscmp( L"not", nxt )==0 )
-		{
-			tok_next( tok );
-			if( tok_last(tok)[0] == L'-' )
-			{
-				tok_set_pos( tok, mark);
-			}
-			else
-			{
-				job_set_flag( j, JOB_NEGATE, !job_get_flag( j, JOB_NEGATE ) );
-				consumed=1;
-			}
-		}
-		else if(  wcscmp( L"and", nxt )==0 )
-		{
-			tok_next( tok );
-			if( tok_last(tok)[0] == L'-' )
-			{
-				tok_set_pos( tok, mark);
-			}
-			else
-			{
-				job_set_flag( j, JOB_SKIP, proc_get_last_status());
-				consumed=1;
-			}
-		}
-		else if(  wcscmp( L"or", nxt )==0 )
-		{
-			tok_next( tok );
-			if( tok_last(tok)[0] == L'-' )
-			{
-				tok_set_pos( tok, mark);
-			}
-			else
-			{
-				job_set_flag( j, JOB_SKIP, !proc_get_last_status());
-				consumed=1;
-			}
-		}
-		else if(  wcscmp( L"exec", nxt )==0 )
-		{
-			if( p != j->first_process )
+		if( contains_str( nxt,
+						  L"command",
+						  L"builtin",
+						  L"not",
+						  L"and",
+						  L"or",
+						  L"exec",
+						  (void *)0 ) )
+		{			
+			int sw;
+			int is_exec = (wcscmp( L"exec", nxt )==0);
+			
+			if( is_exec && (p != j->first_process) )
 			{
 				error( SYNTAX_ERROR,
 					   tok_get_pos( tok ),
@@ -1861,17 +1839,55 @@ static int parse_job( process_t *p,
 			}
 
 			tok_next( tok );
-			if( tok_last(tok)[0] == L'-' )
+			sw = parser_is_switch( tok_last( tok ) );
+			
+			if( sw == ARG_SWITCH )
 			{
 				tok_set_pos( tok, mark);
 			}
 			else
 			{
-				use_function = 0;
-				use_builtin=0;
-				p->type=INTERNAL_EXEC;
+				if( sw == ARG_SKIP )
+				{
+					tok_next( tok );
+				}
+								
 				consumed=1;
-				current_tokenizer_pos = prev_tokenizer_pos;	
+
+				if( ( wcscmp( L"command", nxt )==0 ) ||
+					( wcscmp( L"builtin", nxt )==0 ) )
+				{
+					use_function = 0;
+					if( wcscmp( L"command", nxt )==0 )
+					{
+						use_builtin = 0;
+						use_command = 1;
+					}					
+					else
+					{
+						use_builtin = 1;						
+						use_command = 0;					
+					}
+				}
+				else if(  wcscmp( L"not", nxt )==0 )
+				{
+					job_set_flag( j, JOB_NEGATE, !job_get_flag( j, JOB_NEGATE ) );
+				}
+				else if(  wcscmp( L"and", nxt )==0 )
+				{
+					job_set_flag( j, JOB_SKIP, proc_get_last_status());
+				}
+				else if(  wcscmp( L"or", nxt )==0 )
+				{
+					job_set_flag( j, JOB_SKIP, !proc_get_last_status());
+				}
+				else if( is_exec )
+				{
+					use_function = 0;
+					use_builtin=0;
+					p->type=INTERNAL_EXEC;
+					current_tokenizer_pos = prev_tokenizer_pos;	
+				}
 			}
 		}
 		else if( wcscmp( L"while", nxt ) ==0 )
@@ -1989,8 +2005,8 @@ static int parse_job( process_t *p,
 				is_new_block |= parser_is_block( (wchar_t *)al_get( args, 0 ) );
 			}
 		}
-
-		if( !p->type || (p->type == INTERNAL_EXEC) )
+		
+		if( (!p->type || (p->type == INTERNAL_EXEC) ) )
 		{
 			/*
 			  If we are not executing the current block, allow
@@ -2029,7 +2045,7 @@ static int parse_job( process_t *p,
 						  If we have defined a wrapper around cd, use it,
 						  otherwise use the cd builtin
 						*/
-						if( function_exists( L"cd" ) )
+						if( use_function && function_exists( L"cd" ) )
 							p->type = INTERNAL_FUNCTION;
 						else
 							p->type = INTERNAL_BUILTIN;
@@ -2114,7 +2130,16 @@ static int parse_job( process_t *p,
 				}
 			}
 		}
+		
+		if( (p->type == EXTERNAL) && !use_command )
+		{
+			error( SYNTAX_ERROR,
+				   tok_get_pos( tok ),
+				   UNKNOWN_BUILTIN_ERR_MSG,
+				   al_get( args, al_get_count( args ) -1 ) );
+		}
 	}
+	
 	
 	if( is_new_block )
 	{
@@ -2310,6 +2335,8 @@ static void eval_job( tokenizer *tok )
 	if( profile )
 	{
 		p=malloc( sizeof(profile_element_t));
+		if( !p )
+			DIE_MEM();
 		p->cmd=0;
 		al_push( &profile_data, p );
 		p->skipped=1;
@@ -2521,9 +2548,7 @@ int eval( const wchar_t *cmd, io_data_t *io, int block_type )
 	{
 		debug( 1,
 			   EVAL_NULL_ERR_MSG );
-		debug( 1,
-			   BUGREPORT_MSG,
-			   PACKAGE_BUGREPORT );
+		bugreport();
 		return 1;
 	}
 
@@ -2533,10 +2558,7 @@ int eval( const wchar_t *cmd, io_data_t *io, int block_type )
 		debug( 1,
 			   INVALID_SCOPE_ERR_MSG,
 			   parser_get_block_desc( block_type ) );
-
-		debug( 1,
-			   BUGREPORT_MSG,
-			   PACKAGE_BUGREPORT );
+		bugreport();
 		return 1;
 	}
 
@@ -2570,16 +2592,14 @@ int eval( const wchar_t *cmd, io_data_t *io, int block_type )
 		{
 			debug( 0,
 				   _(L"End of block mismatch. Program terminating.") );
-			debug( 0,
-				   BUGREPORT_MSG,
-				   PACKAGE_BUGREPORT );
-			exit(1);
+			bugreport();
+			FATAL_EXIT();
 			break;
 		}
 
 		if( (!error_code) && (!exit_status()) && (!proc_get_last_status()) )
 		{
-			char *h;
+			wchar_t *h;
 
 			//debug( 2, L"Status %d\n", proc_get_last_status() );
 
@@ -2591,7 +2611,7 @@ int eval( const wchar_t *cmd, io_data_t *io, int block_type )
 
 			h = builtin_help_get( L"end" );
 			if( h )
-				fwprintf( stderr, L"%s", h );
+				fwprintf( stderr, L"%ls", h );
 			break;
 
 		}
@@ -2946,6 +2966,7 @@ int parser_test( const  wchar_t * buff,
 			{
 				if( !had_cmd )
 				{
+					int is_else;
 					int mark = tok_get_pos( &tok );
 					had_cmd = 1;
 					arg_count=0;
@@ -3002,6 +3023,8 @@ int parser_test( const  wchar_t * buff,
 						tok_set_pos( &tok, mark );
 					}
 
+					is_else = wcscmp(cmd, L"else")==0;
+					
 					/*
 					  Store the block level. This needs to be done
 					  _after_ checking for end commands, but _before_
@@ -3009,10 +3032,9 @@ int parser_test( const  wchar_t * buff,
 					*/
 					if( block_level )
 					{
-						block_level[tok_get_pos( &tok )] = count;
+						block_level[tok_get_pos( &tok )] = count + (is_else?-1:0);
 					}
 					
-
 					/*
 					  Handle block commands
 					*/
@@ -3105,7 +3127,7 @@ int parser_test( const  wchar_t * buff,
 
 							if( out )
 							{
-								char *h;
+								wchar_t *h;
 
 								error( SYNTAX_ERROR,
 									   tok_get_pos( &tok ),
@@ -3114,7 +3136,7 @@ int parser_test( const  wchar_t * buff,
 								print_errors( out, prefix);
 								h = builtin_help_get( L"case" );
 								if( h )
-									sb_printf( out, L"%s", h );
+									sb_printf( out, L"%ls", h );
 							}
 						}
 					}
@@ -3268,7 +3290,7 @@ int parser_test( const  wchar_t * buff,
 						err = 1;
 						if( out )
 						{
-							char *h;
+							wchar_t *h;
 							
 							error( SYNTAX_ERROR,
 								   tok_get_pos( &tok ),
@@ -3276,7 +3298,7 @@ int parser_test( const  wchar_t * buff,
 							print_errors( out, prefix );
 							h = builtin_help_get( L"end" );
 							if( h )
-								sb_printf( out, L"%s", h );
+								sb_printf( out, L"%ls", h );
 						}
 					}
 					
@@ -3547,7 +3569,7 @@ int parser_test( const  wchar_t * buff,
 
 	if( out && count>0 )
 	{
-		const char *h;
+		const wchar_t *h;
 		const wchar_t *cmd;
 		
 		error( SYNTAX_ERROR,
@@ -3562,7 +3584,7 @@ int parser_test( const  wchar_t * buff,
 			h = builtin_help_get( cmd );
 			if( cmd )
 			{
-				sb_printf( out, L"%s", h );
+				sb_printf( out, L"%ls", h );
 			}
 		}
 		

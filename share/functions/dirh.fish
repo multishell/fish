@@ -1,9 +1,18 @@
 
-function dirh -d (N_ "Print the current directory history (the back- and fwd- lists)") 
+function dirh --description "Print the current directory history (the back- and fwd- lists)" 
+
+	if count $argv >/dev/null
+		switch $argv[1]
+			case -h --h --he --hel --help
+				__fish_print_help dirh
+				return 0
+		end
+	end
+
 	# Avoid set comment
 	set -l current (command pwd)
 	set -l separator "  "
-	set -l line_len (echo (count $dirprev) + (echo $dirprev $current $dirnext | wc -m) | bc)
+	set -l line_len (math (count $dirprev) + (echo $dirprev $current $dirnext | wc -m) )
 	if test $line_len -gt $COLUMNS
 		# Print one entry per line if history is long
 		set separator "\n"

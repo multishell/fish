@@ -35,12 +35,12 @@ enum
 /**
    Error message on multiple scope levels for variables
 */
-#define BUILTIN_ERR_GLOCAL _( L"%ls: Variable scope can only be one of universal, global and local\n%ls\n" )
+#define BUILTIN_ERR_GLOCAL _( L"%ls: Variable scope can only be one of universal, global and local\n" )
 
 /**
    Error message for specifying both export and unexport to set/read
 */
-#define BUILTIN_ERR_EXPUNEXP _( L"%ls: Variable can't be both exported and unexported\n%ls\n" )
+#define BUILTIN_ERR_EXPUNEXP _( L"%ls: Variable can't be both exported and unexported\n" )
 
 /**
    Error message for unknown switch
@@ -164,12 +164,10 @@ const wchar_t *builtin_complete_get_temporary_buffer();
 
 
 /**
-   Return the help text for the specified builtin command. Use
-   non-wide characters since wide characters have some issues with
-   string formating escape sequences sometimes.
+   Return the help text for the specified builtin command.
 
    \param cmd The command for which to obtain help text
 */
-char *builtin_help_get( const wchar_t *cmd );
+wchar_t *builtin_help_get( const wchar_t *cmd );
 
 #endif

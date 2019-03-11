@@ -540,6 +540,11 @@ void highlight_shell( wchar_t * buff,
 
 	void *context;
 	wchar_t *cmd=0;
+	int accept_switches = 1;		
+	
+	int use_function = 1;
+	int use_command = 1;
+	int use_builtin = 1;
 	
 	CHECK( buff, );
 	CHECK( color, );
@@ -572,10 +577,22 @@ void highlight_shell( wchar_t * buff,
 					wchar_t *param = tok_last( &tok );
 					if( param[0] == L'-' )
 					{
-						if( complete_is_valid_option( last_cmd, param, error ))
+						if (wcscmp( param, L"--" ) == 0 )
+						{
+							accept_switches = 0;
 							color[ tok_get_pos( &tok ) ] = HIGHLIGHT_PARAM;
+						}
+						else if( accept_switches )
+						{
+							if( complete_is_valid_option( last_cmd, param, error ) )
+								color[ tok_get_pos( &tok ) ] = HIGHLIGHT_PARAM;
+							else
+								color[ tok_get_pos( &tok ) ] = HIGHLIGHT_ERROR;
+						}
 						else
-							color[ tok_get_pos( &tok ) ] = HIGHLIGHT_ERROR;
+						{
+							color[ tok_get_pos( &tok ) ] = HIGHLIGHT_PARAM;
+						}
 					}
 					else
 					{
@@ -627,21 +644,48 @@ void highlight_shell( wchar_t * buff,
 
 						if( parser_is_subcommand( cmd ) )
 						{
+							
+							int sw;
+							
+							if( wcscmp( cmd, L"builtin" )==0)
+							{
+								use_function = 0;
+								use_command  = 0;
+								use_builtin  = 1;
+							}
+							else if( wcscmp( cmd, L"command" )==0)
+							{
+								use_command  = 1;
+								use_function = 0;
+								use_builtin  = 0;
+							}
+
 							tok_next( &tok );
-							if( ( ! parser_is_block( cmd ) ) &&
-								( ( wcscmp( L"-h", tok_last( &tok ) ) == 0 ) ||
-								  ( wcsncmp( L"--help", tok_last( &tok ), wcslen( tok_last( &tok ) ) ) == 0 && wcslen( tok_last( &tok ) ) >= 3 ) ) )							
+							
+							sw = parser_is_switch( tok_last( &tok ) );
+							
+							if( !parser_is_block( cmd ) &&
+								sw == ARG_SWITCH )
 							{
 								/* 
-								   The builtin and command builtins
+								   The 'builtin' and 'command' builtins
 								   are normally followed by another
 								   command, but if they are invoked
-								   with the -h option, their help text
-								   is displayed instead
+								   with a switch, they aren't.
+
 								*/
+								use_command  = 1;
+								use_function = 1;
+								use_builtin  = 2;
 							}
 							else
 							{
+								if( sw == ARG_SKIP )
+								{
+									color[ tok_get_pos( &tok ) ] = HIGHLIGHT_PARAM;
+									mark = tok_get_pos( &tok );
+								}
+								
 								is_subcommand = 1;
 							}
 							tok_set_pos( &tok, mark );
@@ -662,8 +706,11 @@ void highlight_shell( wchar_t * buff,
 							  function, since we don't have to stat
 							  any files for that
 							*/
-							is_cmd |= builtin_exists( cmd );
-							is_cmd |= function_exists( cmd );
+							if( use_builtin )
+								is_cmd |= builtin_exists( cmd );
+							
+							if( use_function )
+								is_cmd |= function_exists( cmd );
 
 							/*
 							  Moving on to expensive tests
@@ -672,13 +719,15 @@ void highlight_shell( wchar_t * buff,
 							/*
 							  Check if this is a regular command
 							*/
-							is_cmd |= !!(tmp=path_get_path( context, cmd ));
+							if( use_command )
+								is_cmd |= !!(tmp=path_get_path( context, cmd ));
 							
 							/* 
 							   Could not find the command. Maybe it is
 							   a path for a implicit cd command.
 							*/
-							is_cmd |= !!(tmp=path_get_cdpath( context, cmd ));
+							if( use_builtin || (use_function && function_exists( L"cd") ) )
+								is_cmd |= !!(tmp=path_get_cdpath( context, cmd ));
 														
 							if( is_cmd )
 							{								
@@ -791,6 +840,10 @@ void highlight_shell( wchar_t * buff,
 				{
 					color[ tok_get_pos( &tok ) ] = HIGHLIGHT_END;
 					had_cmd = 0;
+					use_command  = 1;
+					use_function = 1;
+					use_builtin  = 1;
+					accept_switches = 1;
 				}
 				else
 				{
@@ -806,6 +859,10 @@ void highlight_shell( wchar_t * buff,
 			{
 				color[ tok_get_pos( &tok ) ] = HIGHLIGHT_END;
 				had_cmd = 0;
+				use_command  = 1;
+				use_function = 1;
+				use_builtin  = 1;
+				accept_switches = 1;
 				break;
 			}
 			

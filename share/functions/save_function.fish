@@ -1,5 +1,15 @@
 
-function save_function -d (N_ "Save the current definition of all specified functions to file")
+function save_function --description "Save the current definition of all specified functions to file"
+
+	if count $argv >/dev/null
+		switch $argv[1]
+			case -h --h --he --hel --help
+				__fish_print_help save_function
+				return 0
+		end
+	else
+		__fish_print_help save_function
+	end
 
 	set -l res 0
 
@@ -9,8 +19,8 @@ function save_function -d (N_ "Save the current definition of all specified func
 	end
 
 	for i in $configdir $configdir/fish $configdir/fish/functions
-		if not test -d 
-			if not builtin mkdir $configdir >/dev/null
+		if not test -d $i
+			if not command mkdir $i >/dev/null
 				printf (_ "%s: Could not create configuration directory\n") save_function
 				return 1
 			end

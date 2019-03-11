@@ -1,9 +1,9 @@
 /** \file screen.c High level library for handling the terminal screen
 
-	The screen library allows the interactive reader to write its
-	output to screen efficiently by keeping an inetrnal representation
-	of the current screen contents and trying to find the most
-	efficient way for transforming that to the desired screen content.
+The screen library allows the interactive reader to write its
+output to screen efficiently by keeping an inetrnal representation
+of the current screen contents and trying to find the most
+efficient way for transforming that to the desired screen content.
 */
 
 #include "config.h"
@@ -51,6 +51,7 @@
 #include "output.h"
 #include "highlight.h"
 #include "screen.h"
+#include "env.h"
 
 /**
    Ugly kludge. The internal buffer used to store output of
@@ -82,6 +83,9 @@ static int try_sequence( char *seq, wchar_t *str )
 
 static int next_tab_stop( int in )
 {
+	/*
+	  Assume tab stops every 8 characters if undefined
+	*/
 	if( init_tabs <= 0 )
 		init_tabs = 8;
 				
@@ -105,103 +109,132 @@ static int calc_prompt_width( wchar_t *prompt )
 			/*
 			  This is the start of an escape code. Try to guess it's width.
 			*/
-				int l;
-				int len=0;
-				int found = 0;
-
-				/*
-				  Detect these terminfo color escapes with parameter
-				  value 0..7, all of which don't move the cursor
-				*/
-				char * esc[] =
-					{
-						set_a_foreground,
-						set_a_background,
-						set_foreground,
-						set_background,
-					}
-				;
-
-				/*
-				  Detect these semi-common terminfo escapes without any
-				  parameter values, all of which don't move the cursor
-				*/
-				char *esc2[] =
-					{
-						enter_bold_mode,
-						exit_attribute_mode,
-						enter_underline_mode,
-						exit_underline_mode,
-						enter_standout_mode,
-						exit_standout_mode,
-						flash_screen,
-						enter_subscript_mode,
-						exit_subscript_mode,
-						enter_superscript_mode,
-						exit_superscript_mode,
-						enter_blink_mode,
-						enter_italics_mode,
-						exit_italics_mode,
-						enter_reverse_mode,
-						enter_shadow_mode,
-						exit_shadow_mode,
-						enter_standout_mode,
-						exit_standout_mode,
-						enter_secure_mode
-					}
-				;
-
-				for( l=0; l < (sizeof(esc)/sizeof(char *)) && !found; l++ )
+			int l;
+			int len=0;
+			int found = 0;
+			
+			/*
+			  Detect these terminfo color escapes with parameter
+			  value 0..7, all of which don't move the cursor
+			*/
+			char * esc[] =
 				{
-					if( !esc[l] )
-						continue;
-
-					for( k=0; k<8; k++ )
-					{
-						len = try_sequence( tparm(esc[l],k), &prompt[j] );
-						if( len )
-						{
-							j += (len-1);
-							found = 1;
-							break;
-						}
-					}
+					set_a_foreground,
+					set_a_background,
+					set_foreground,
+					set_background,
 				}
+			;
 
-				for( l=0; l < (sizeof(esc2)/sizeof(char *)) && !found; l++ )
+			/*
+			  Detect these semi-common terminfo escapes without any
+			  parameter values, all of which don't move the cursor
+			*/
+			char *esc2[] =
 				{
-					if( !esc2[l] )
-						continue;
-					/*
-					  Test both padded and unpadded version, just to
-					  be safe. Most versions of tparm don't actually
-					  seem to do anything these days.
-					*/
-					len = maxi( try_sequence( tparm(esc2[l]), &prompt[j] ),
-								try_sequence( esc2[l], &prompt[j] ));
-					
+					enter_bold_mode,
+					exit_attribute_mode,
+					enter_underline_mode,
+					exit_underline_mode,
+					enter_standout_mode,
+					exit_standout_mode,
+					flash_screen,
+					enter_subscript_mode,
+					exit_subscript_mode,
+					enter_superscript_mode,
+					exit_superscript_mode,
+					enter_blink_mode,
+					enter_italics_mode,
+					exit_italics_mode,
+					enter_reverse_mode,
+					enter_shadow_mode,
+					exit_shadow_mode,
+					enter_standout_mode,
+					exit_standout_mode,
+					enter_secure_mode
+				}
+			;
+
+			for( l=0; l < (sizeof(esc)/sizeof(char *)) && !found; l++ )
+			{
+				if( !esc[l] )
+					continue;
+
+				for( k=0; k<8; k++ )
+				{
+					len = try_sequence( tparm(esc[l],k), &prompt[j] );
 					if( len )
 					{
 						j += (len-1);
 						found = 1;
+						break;
 					}
 				}
 			}
-			else if( prompt[j] == L'\t' )
+
+			for( l=0; l < (sizeof(esc2)/sizeof(char *)) && !found; l++ )
 			{
+				if( !esc2[l] )
+					continue;
 				/*
-				  Assume tab stops every 8 characters if undefined
+				  Test both padded and unpadded version, just to
+				  be safe. Most versions of tparm don't actually
+				  seem to do anything these days.
 				*/
-				res = next_tab_stop( res );
+				len = maxi( try_sequence( tparm(esc2[l]), &prompt[j] ),
+							try_sequence( esc2[l], &prompt[j] ));
+					
+				if( len )
+				{
+					j += (len-1);
+					found = 1;
+				}
 			}
-			else
+				
+			if( !found )
 			{
-				/*
-				  Ordinary decent character. Just add width.
-				*/
-				res += wcwidth( prompt[j] );
+				if( prompt[j+1] == L'k' )
+				{
+					wchar_t *term_name = env_get( L"TERM" );
+					if( term_name && wcscmp( term_name, L"screen" ) == 0 )
+					{
+						wchar_t *end;
+						j+=2;
+						found = 1;
+						end = wcsstr( &prompt[j], L"\e\\" );
+						if( end )
+						{
+							/*
+							  You'd thing this should be
+							  '(end-prompt)+2', in order to move j
+							  past the end of the string, but there is
+							  a 'j++' at the end of each lap, so j
+							  should always point to the last menged
+							  character, e.g. +1.
+							*/
+							j = (end-prompt)+1;
+						}
+						else
+						{
+							break;
+						}
+					}						
+				}					
 			}
+				
 		}
+		else if( prompt[j] == L'\t' )
+		{
+			res = next_tab_stop( res );
+		}
+		else
+		{
+			/*
+			  Ordinary decent character. Just add width.
+			*/
+			res += wcwidth( prompt[j] );
+		}
+	}
 	return res;
 }
 
@@ -304,7 +337,6 @@ static void s_check_status( screen_t *s)
 /**
    Free all memory used by one line_t struct. 
 */
-
 static void free_line( void *l )
 {
 	line_t *line = (line_t *)l;
@@ -354,9 +386,9 @@ static line_t *s_create_line()
 }
 
 /**
-  Appends a character to the end of the line that the output cursor is
-  on. This function automatically handles linebreaks and lines longer
-  than the screen width. 
+   Appends a character to the end of the line that the output cursor is
+   on. This function automatically handles linebreaks and lines longer
+   than the screen width. 
 */
 static void s_desired_append_char( screen_t *s, 
 								   wchar_t b,
@@ -465,9 +497,9 @@ static void s_move( screen_t *s, buffer_t *b, int new_x, int new_y )
 
 	char *str;
 /*
-	debug( 0, L"move from %d %d to %d %d", 
-		   s->screen_cursor[0], s->screen_cursor[1],  
-		   new_x, new_y );
+  debug( 0, L"move from %d %d to %d %d", 
+  s->screen_cursor[0], s->screen_cursor[1],  
+  new_x, new_y );
 */
 	output_set_writer( &s_writeb );
 	s_writeb_buffer = b;
@@ -477,10 +509,11 @@ static void s_move( screen_t *s, buffer_t *b, int new_x, int new_y )
 	if( y_steps > 0 && (strcmp( cursor_down, "\n")==0))
 	{	
 		/*
-		  This is very strange - it seems all (most) consoles use a
+		  This is very strange - it seems some (all?) consoles use a
 		  simple newline as the cursor down escape. This will of
-		  course move the cursor to the beginning of the line as
-		  well. The cursor_up does not have this behaviour...
+		  course move the cursor to the beginning of the line as well
+		  as moving it down one step. The cursor_up does not have this
+		  behaviour...
 		*/
 		s->actual_cursor[0]=0;
 	}
@@ -565,6 +598,7 @@ static void s_write_char( screen_t *s, buffer_t *b, wchar_t c )
 	
 	output_set_writer( writer_old );
 }
+
 /**
    Send the specified string through tputs and append the output to
    the specified buffer.
@@ -642,6 +676,11 @@ static void s_update( screen_t *scr, wchar_t *prompt )
 		{
 			s_move( scr, &output, start_pos, i );
 			s_write_mbs( &output, clr_eol);
+			if( s_line )
+			{
+				al_truncate( &s_line->text, 0 );
+				al_truncate( &s_line->color, 0 );
+			}
 		}
 		
 		if( !s_line )

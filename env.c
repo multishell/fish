@@ -1,7 +1,6 @@
 /** \file env.c
 	Functions for setting and getting environment variables.
 */
-
 #include "config.h"
 
 #include <stdlib.h>
@@ -67,9 +66,13 @@
 #define ENV_NULL L"\x1d"
 
 /**
-   At init, we read all the environment variables from this array 
+   At init, we read all the environment variables from this array.
 */
 extern char **environ;
+/**
+   This should be the same thing as \c environ, but it is possible only one of the two work...
+*/
+extern char **__environ;
 
 
 /**
@@ -108,6 +111,8 @@ typedef struct env_node
 typedef struct var_entry
 {
 	int export; /**< Whether the variable should be exported */
+	size_t size; /**< The maximum length (excluding the NULL) that will fit into this var_entry_t */
+	
 #if __STDC_VERSION__ < 199901L
 	wchar_t val[1]; /**< The value of the variable */
 #else
@@ -200,7 +205,9 @@ static void clear_hash_entry( void *key, void *data )
 {
 	var_entry_t *entry = (var_entry_t *)data;	
 	if( entry->export )
+	{
 		has_changed = 1;
+	}
 	
 	free( (void *)key );
 	free( (void *)data );
@@ -255,8 +262,12 @@ static int is_locale( const wchar_t *key )
 {
 	int i;
 	for( i=0; locale_variable[i]; i++ )
+	{
 		if( wcscmp(locale_variable[i], key ) == 0 )
+		{
 			return 1;
+		}
+	}
 	return 0;
 }
 
@@ -301,8 +312,11 @@ static void handle_locale()
 		for( i=2; locale_variable[i]; i++ )
 		{
 			const wchar_t *val = env_get( locale_variable[i] );
+
 			if( val )
+			{
 				wsetlocale(  cat[i], val );
+			}
 		}
 	}
 	
@@ -316,8 +330,10 @@ static void handle_locale()
 		   strings should be reloaded. We do both and hope for the
 		   best.
 		*/
+
 		extern int _nl_msg_cat_cntr;
-		++_nl_msg_cat_cntr;
+		_nl_msg_cat_cntr++;
+
 		dcgettext( "fish", "Changing language to English", LC_MESSAGES );
 		
 		if( is_interactive )
@@ -341,17 +357,24 @@ static void universal_callback( int type,
 	wchar_t *str=0;
 	
 	if( is_locale( name ) )
+	{
 		handle_locale();
+	}
 	
 	switch( type )
 	{
 		case SET:
 		case SET_EXPORT:
+		{
 			str=L"SET";
 			break;
+		}
+		
 		case ERASE:
+		{
 			str=L"ERASE";
 			break;
+		}
 	}
 	
 	if( str )
@@ -402,19 +425,27 @@ static void setup_path()
 	al_init( &l );
 	
 	if( path )
+	{
 		tokenize_variable_array( path, &l );
+	}
 	
 	for( j=0; path_el[j]; j++ )
 	{
+
 		int has_el=0;
 		
 		for( i=0; i<al_get_count( &l); i++ )
 		{
 			wchar_t * el = (wchar_t *)al_get( &l, i );
 			size_t len = wcslen( el );
+
 			while( (len > 0) && (el[len-1]==L'/') )
+			{
 				len--;
-			if( (wcslen( path_el[j] ) == len) && (wcsncmp( el, path_el[j], len)==0) )
+			}
+
+			if( (wcslen( path_el[j] ) == len) && 
+				(wcsncmp( el, path_el[j], len)==0) )
 			{
 				has_el = 1;
 			}
@@ -454,6 +485,7 @@ static void setup_path()
 
 static void env_set_defaults()
 {
+
 	if( !env_get( L"USER" ) )
 	{
 		struct passwd *pw = getpwuid( getuid());
@@ -461,6 +493,7 @@ static void env_set_defaults()
 		env_set( L"USER", unam, ENV_GLOBAL );
 		free( unam );
 	}
+
 	if( !env_get( L"HOME" ) )
 	{
 		wchar_t *unam = env_get( L"USER" );
@@ -471,6 +504,7 @@ static void env_set_defaults()
 		free( dir );		
 		free( unam_narrow );
 	}	
+
 }
 
 void env_init()
@@ -480,7 +514,6 @@ void env_init()
 	wchar_t *uname;
 	wchar_t *version;
 	
-
 	sb_init( &dyn_var );
 	b_init( &export_buffer );
 	
@@ -522,7 +555,7 @@ void env_init()
 	hash_init( &top->env, &hash_wcs_func, &hash_wcs_cmp );
 	global_env = top;
 	global = &top->env;	
-
+	
 	/*
 	  Now the environemnt variable handling is set up, the next step
 	  is to insert valid data
@@ -531,7 +564,7 @@ void env_init()
 	/*
 	  Import environment variables
 	*/
-	for( p=environ; *p; p++ )
+	for( p=environ?environ:__environ; p && *p; p++ )
 	{
 		wchar_t *key, *val;
 		wchar_t *pos;
@@ -539,13 +572,16 @@ void env_init()
 		key = str2wcs(*p);
 
 		if( !key )
+		{
 			continue;
+		}
 		
 		val = wcschr( key, L'=' );
-		
 
 		if( val == 0 )
+		{
 			env_set( key, L"", ENV_EXPORT );
+		}
 		else
 		{ 
 			*val = L'\0';
@@ -555,7 +591,9 @@ void env_init()
 			while( *pos )
 			{
 				if( *pos == L':' )
+				{
 					*pos = ARRAY_SEP;
+				}
 				pos++;
 			}
 
@@ -563,7 +601,7 @@ void env_init()
 		}		
 		free(key);
 	}
-
+	
 	/*
 	  Set up the PATH variable
 	*/
@@ -607,8 +645,10 @@ void env_destroy()
 	b_destroy( &export_buffer );
 	
 	while( &top->env != global )
+	{
 		env_pop();
-
+	}
+	
 	hash_destroy( &env_read_only );
 
 	hash_destroy( &env_electric );
@@ -622,8 +662,8 @@ void env_destroy()
 }
 
 /**
-   Find the scope hashtable containing the variable with the specified
-   key
+   Search all visible scopes in order for the specified key. Return
+   the first scope in which it was found.
 */
 static env_node_t *env_get_node( const wchar_t *key )
 {
@@ -641,9 +681,13 @@ static env_node_t *env_get_node( const wchar_t *key )
 		}
 
 		if( env->new_scope )
+		{
 			env = global_env;
+		}
 		else		
+		{
 			env = env->next;
+		}
 	}
 	
 	return 0;
@@ -663,7 +707,7 @@ int env_set( const wchar_t *key,
 
 	event_t ev;
 	int is_universal = 0;	
-
+	
 	CHECK( key, ENV_INVALID );
 		
 	if( (var_mode & ENV_USER ) && 
@@ -691,13 +735,15 @@ int env_set( const wchar_t *key,
 			}
 		}
 		/*
-		  Do not actually create a umask variable, on env_get, it will be calculated dynamically
+		  Do not actually create a umask variable, on env_get, it will
+		  be calculated dynamically
 		*/
 		return 0;
 	}
 
 	/*
-	  Zero element arrays are internaly not coded as null but as this placeholder string
+	  Zero element arrays are internaly not coded as null but as this
+	  placeholder string
 	*/
 	if( !val )
 	{
@@ -714,7 +760,9 @@ int env_set( const wchar_t *key,
 			env_universal_get_export( key );
 		}
 		else 
+		{
 			export = (var_mode & ENV_EXPORT );
+		}
 		
 		env_universal_set( key, val, export );
 		is_universal = 1;
@@ -723,14 +771,6 @@ int env_set( const wchar_t *key,
 	else
 	{
 		
-		if( val == 0 )
-		{
-			wchar_t *prev_val;
-			free_val = 1;
-			prev_val = env_get( key );
-			val = wcsdup( prev_val?prev_val:L"" );
-		}
-
 		node = env_get_node( key );
 		if( node && &node->env != 0 )
 		{
@@ -738,15 +778,15 @@ int env_set( const wchar_t *key,
 										  key );
 		
 			if( e->export )
+			{
 				has_changed_new = 1;
-		
+			}
 		}
 
 		if( (var_mode & ENV_LOCAL) || 
 			(var_mode & ENV_GLOBAL) )
 		{
 			node = ( var_mode & ENV_GLOBAL )?global_env:top;
-		
 		}
 		else
 		{
@@ -776,8 +816,10 @@ int env_set( const wchar_t *key,
 						env_universal_get_export( key );
 					}
 					else 
+					{
 						export = (var_mode & ENV_EXPORT );
-				
+					}
+					
 					env_universal_set( key, val, export );
 					is_universal = 1;
 					
@@ -788,12 +830,15 @@ int env_set( const wchar_t *key,
 				{
 					/*
 					  New variable with unspecified scope. The default
-					  scope is the innermost scope that is shadowing
+					  scope is the innermost scope that is shadowing,
+					  which will be either the current function or the
+					  global scope.				   
 					*/
 					node = top;
 					while( node->next && !node->new_scope )
+					{
 						node = node->next;
-					
+					}
 				}
 			}
 		}
@@ -801,24 +846,59 @@ int env_set( const wchar_t *key,
 		if( !done )
 		{
 			void *k, *v;
-			hash_remove( &node->env, key, &k, &v );
-			free( k );
-			free( v );
+			var_entry_t *old_entry;
+			size_t val_len = wcslen(val);
 
-			entry = malloc( sizeof( var_entry_t ) + 
-							sizeof(wchar_t )*(wcslen(val)+1));
-	
-			if( var_mode & ENV_EXPORT)
+			hash_remove( &node->env, key, &k, &v );
+
+			/*
+			  Try to reuse previous key string
+			*/
+			if( !k )
 			{
-				entry->export = 1;
-				has_changed_new = 1;		
+				k = wcsdup(key);
+			}
+			
+			old_entry = (var_entry_t *)v;
+			if( old_entry && old_entry->size >= val_len )
+			{
+				entry = old_entry;
+				
+				if( !!(var_mode & ENV_EXPORT) || entry->export )
+				{
+					entry->export = !!(var_mode & ENV_EXPORT);
+					has_changed_new = 1;		
+				}
 			}
 			else
-				entry->export = 0;
+			{
+				free( v );
+
+				entry = malloc( sizeof( var_entry_t ) + 
+								sizeof(wchar_t )*(val_len+1));
+	
+				if( !entry )
+				{
+					DIE_MEM();
+				}
+				
+				entry->size = val_len;
+				
+				if( var_mode & ENV_EXPORT)
+				{
+					entry->export = 1;
+					has_changed_new = 1;		
+				}
+				else
+				{
+					entry->export = 0;
+				}
+				
+			}
 
 			wcscpy( entry->val, val );
-
-			hash_put( &node->env, wcsdup(key), entry );
+			
+			hash_put( &node->env, k, entry );
 
 			if( entry->export )
 			{
@@ -826,8 +906,10 @@ int env_set( const wchar_t *key,
 			}
 
 			if( free_val )
+			{
 				free((void *)val);
-		
+			}
+			
 			has_changed = has_changed_old || has_changed_new;
 		}
 	
@@ -873,8 +955,10 @@ static int try_remove( env_node_t *n,
 	wchar_t *old_key, *old_val;
 
 	if( n == 0 )
+	{
 		return 0;
-
+	}
+	
 	hash_remove( &n->env, 
 				 key,
 				 &old_key_void, 
@@ -897,12 +981,18 @@ static int try_remove( env_node_t *n,
 	}
 
 	if( var_mode & ENV_LOCAL )
+	{
 		return 0;
+	}
 	
 	if( n->new_scope )
+	{
 		return try_remove( global_env, key, var_mode );
+	}
 	else
+	{
 		return try_remove( n->next, key, var_mode );
+	}
 }
 
 
@@ -996,7 +1086,10 @@ wchar_t *env_get( const wchar_t *key )
 			}
 			
 			if( i!=0)
+			{
 				sb_append( &dyn_var, ARRAY_SEP_STR );
+			}
+
 			sb_append( &dyn_var, next );
 		}
 
@@ -1038,13 +1131,19 @@ wchar_t *env_get( const wchar_t *key )
 				return 0;
 			}
 			else
+			{
 				return res->val;			
+			}
 		}
 		
 		if( env->new_scope )
+		{
 			env = global_env;
+		}
 		else
+		{
 			env = env->next;
+		}
 	}	
 	if( !proc_had_barrier)
 	{
@@ -1059,7 +1158,9 @@ wchar_t *env_get( const wchar_t *key )
 		return 0;
 	}
 	else
+	{
 		return item;
+	}
 }
 
 int env_exist( const wchar_t *key, int mode )
@@ -1096,12 +1197,18 @@ int env_exist( const wchar_t *key, int mode )
 			}
 			
 			if( mode & ENV_LOCAL )
+			{
 				break;
+			}
 			
 			if( env->new_scope )
+			{
 				env = global_env;
+			}
 			else
+			{
 				env = env->next;
+			}
 		}	
 	}
 	
@@ -1314,15 +1421,30 @@ void env_get_names( array_list_t *l, int flags )
 static void export_func1( void *k, void *v, void *aux )
 {
 	var_entry_t *val_entry = (var_entry_t *)v;
-	if( val_entry->export )
-	{
-		hash_table_t *h = (hash_table_t *)aux;
-		
-		if( !hash_get( h, k ) )
-			hash_put( h, k, val_entry->val );
+	hash_table_t *h = (hash_table_t *)aux;
+
+	hash_remove( h, k, 0, 0 );
+
+	if( val_entry->export && wcscmp( val_entry->val, ENV_NULL ) )
+	{	
+		hash_put( h, k, val_entry->val );
 	}
 	
 }
+
+static void get_exported( env_node_t *n, hash_table_t *h )
+{
+	if( !n )
+		return;
+	
+	if( n->new_scope )
+		get_exported( global_env, h );
+	else
+		get_exported( n->next, h );
+
+	hash_foreach2( &n->env, &export_func1, h );	
+}		
+
 
 /**
    Function used by env_export_arr to iterate over hashtable of variables
@@ -1376,7 +1498,6 @@ char **env_export_arr( int recalc )
 	{
 		array_list_t uni;
 		hash_table_t vals;
-		env_node_t *n=top;
 		int prev_was_null=1;
 		int pos=0;		
 		int i;
@@ -1385,15 +1506,7 @@ char **env_export_arr( int recalc )
 				
 		hash_init( &vals, &hash_wcs_func, &hash_wcs_cmp );
 		
-		while( n )
-		{
-			hash_foreach2( &n->env, &export_func1, &vals );
-			
-			if( n->new_scope )
-				n = global_env;
-			else
-				n = n->next;			
-		}		
+		get_exported( top, &vals );
 		
 		al_init( &uni );
 		env_universal_get_names( &uni, 1, 0 );
@@ -1401,7 +1514,7 @@ char **env_export_arr( int recalc )
 		{
 			wchar_t *key = (wchar_t *)al_get( &uni, i );
 			wchar_t *val = env_universal_get( key );
-			if( !hash_get( &vals, key ) )
+			if( wcscmp( val, ENV_NULL) && !hash_get( &vals, key ) )
 				hash_put( &vals, key, val );
 		}
 		al_destroy( &uni );

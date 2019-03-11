@@ -150,11 +150,18 @@ fi
 %dir %_datadir/fish/functions
 %_datadir/fish/functions/*.fish
 
+# Documentation for builtins and shellscript functions
+%dir %_datadir/fish/man
+%_datadir/fish/man/*.1
+
 
 
 
 
 %changelog
+* Thu Feb 8 2007 Axel Liljencrantz<axel@liljencrantz.se> 1.22.3-0
+- Tell rpm about the help pages in %_datadir/fish/man/
+
 * Sat Oct 14 2006 Axel Liljencrantz<axel@liljencrantz.se> 1.22.0-0
 - Update names of various configuration files
 

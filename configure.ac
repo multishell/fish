@@ -9,7 +9,7 @@
 # configure the build process.
 #
 
-AC_INIT(fish,1.22.1,fish-users@lists.sf.net)
+AC_INIT(fish,1.22.3,fish-users@lists.sf.net)
 
 
 #
@@ -62,7 +62,7 @@ if test ! -f ./config.h.in -o config.h.in -ot configure.ac; then
 			[cannot find the autoheader program in your path.
 This program needs to be run whenever the configure.ac file is modified.
 Please install it and try again.]
-	   )
+		)
 	fi
 else
 	AC_MSG_RESULT([no])
@@ -86,7 +86,7 @@ for i in /usr/pkg /sw /opt /opt/local; do
 		CPPFLAGS="$CPPFLAGS -I$i/include/"
 		CFLAGS="$CFLAGS -I$i/include/"
 	else
-   	AC_MSG_RESULT(no)
+	AC_MSG_RESULT(no)
 	fi
 
 	AC_MSG_CHECKING([for $i/lib library directory])
@@ -94,7 +94,7 @@ for i in /usr/pkg /sw /opt /opt/local; do
 		AC_MSG_RESULT(yes)
 		LDFLAGS="$LDFLAGS -L$i/lib/ -R$i/lib/"
 	else
-    	AC_MSG_RESULT(no)
+		AC_MSG_RESULT(no)
 	fi
 
 	AC_MSG_CHECKING([for $i/bin command directory])
@@ -102,7 +102,7 @@ for i in /usr/pkg /sw /opt /opt/local; do
 		AC_MSG_RESULT(yes)
 		optbindirs="$optbindirs $i/bin"
 	else
-    	AC_MSG_RESULT(no)
+		AC_MSG_RESULT(no)
 	fi
 
 done
@@ -185,13 +185,32 @@ AC_ARG_WITH(
 )
 
 if [[ "$xsel" = "with_xsel" ]]; then
-    AC_SUBST( XSEL,[xsel-0.9.6/xsel])
-    AC_SUBST( XSEL_MAN,[xsel.1x])
-    AC_SUBST( XSEL_MAN_PATH,[xsel-0.9.6/xsel.1x])
+	AC_SUBST( XSEL,[xsel-0.9.6/xsel])
+	AC_SUBST( XSEL_MAN,[xsel.1x])
+	AC_SUBST( XSEL_MAN_PATH,[xsel-0.9.6/xsel.1x])
 else
-    AC_SUBST( XSEL,[ ])
-    AC_SUBST( XSEL_MAN,[ ])
-    AC_SUBST( XSEL_MAN_PATH,[ ])
+	AC_SUBST( XSEL,[ ])
+	AC_SUBST( XSEL_MAN,[ ])
+	AC_SUBST( XSEL_MAN_PATH,[ ])
+fi
+
+
+#
+# Optionally drop gettext support
+#
+
+AC_ARG_WITH(
+	gettext,
+	AC_HELP_STRING(
+		[--without-gettext],
+		[do not translate messages, even if gettext is available]
+	),
+	[local_gettext=$withval],
+	[local_gettext=yes]
+)
+
+if test x$local_gettext != xno; then 
+	AC_DEFINE([USE_GETTEXT],[1],[Perform string translations with gettext])
 fi
 
 
@@ -226,6 +245,14 @@ AC_CACHE_VAL(
 	]
 )
 
+#
+# Try to enale large file support. This will make sure that on systems
+# where off_t can be either 32 or 64 bit, the latter size is used. On
+# other systems, this should do nothing. (Hopefully)
+#
+
+CFLAGS="$CFLAGS -D_LARGEFILE_SOURCE=1 -D_FILE_OFFSET_BITS=64"
+
 AC_MSG_RESULT($local_cv_has__std_c99)
 case x$local_cv_has__std_c99 in
 xno) 
@@ -259,6 +286,12 @@ if test "$CC" = gcc; then
 	#
 
 	CFLAGS="$CFLAGS -Wall"
+
+	#
+	# This is needed in order to get the really cool backtraces
+	#
+
+	LDFLAGS="$LDFLAGS -rdynamic"
 
 fi
 
@@ -320,7 +353,7 @@ fi
 AC_CANONICAL_TARGET
 
 if test $target_cpu = powerpc; then
-   AC_DEFINE([TPUTS_KLUDGE],[1],[Evil kludge to get Power based machines to work])
+	AC_DEFINE([TPUTS_KLUDGE],[1],[Evil kludge to get Power based machines to work])
 fi
 
 
@@ -418,7 +451,10 @@ AC_DEFINE(
 # Check presense of various libraries
 #
 
-AC_SEARCH_LIBS( gettext, intl,,)
+# Only link with gettext if we are using it
+if test x$local_gettext != xno; then 
+	AC_SEARCH_LIBS( gettext, intl,,)
+fi
 AC_SEARCH_LIBS( connect, socket, , [AC_MSG_ERROR([Cannot find the socket library, needed to build this package.] )] )
 AC_SEARCH_LIBS( nanosleep, rt, , [AC_MSG_ERROR([Cannot find the rt library, needed to build this package.] )] )
 AC_SEARCH_LIBS( setupterm, [ncurses curses], , [AC_MSG_ERROR([Could not find a curses implementation, needed to build fish])] )
@@ -429,7 +465,7 @@ AC_SEARCH_LIBS( iconv_open, iconv, , [AC_MSG_ERROR([Could not find an iconv impl
 # Check presense of various header files
 #
 
-AC_CHECK_HEADERS([getopt.h termio.h sys/resource.h term.h ncurses/term.h libintl.h ncurses.h curses.h stropts.h siginfo.h sys/select.h sys/ioctl.h sys/termios.h])
+AC_CHECK_HEADERS([getopt.h termio.h sys/resource.h term.h ncurses/term.h ncurses.h curses.h stropts.h siginfo.h sys/select.h sys/ioctl.h sys/termios.h libintl.h execinfo.h])
 
 AC_CHECK_HEADER(
 	[regex.h],
@@ -438,9 +474,9 @@ AC_CHECK_HEADER(
 			[HAVE_REGEX_H], 
 			[1], 
 			[Define to 1 if you have the <regex.h> header file.]
-		)],
-		[AC_MSG_ERROR([Could not find the header regex.h, needed to build fish])
-	]
+		)
+	],
+	[AC_MSG_ERROR([Could not find the header regex.h, needed to build fish])]
 )
 
 
@@ -448,7 +484,7 @@ AC_CHECK_HEADER(
 # On some platforms (Solaris 10) adding -std=c99 in turn requires that
 # _POSIX_C_SOURCE be defined to 200112L otherwise several
 # POSIX-specific, non-ISO-C99 types/prototypes are made unavailable
-# e.g. siginfo_t.  Defining _XOPEN_SOURCE to 600 is compatible with
+# e.g. siginfo_t. Defining _XOPEN_SOURCE to 600 is compatible with
 # the _POSIX_C_SOURCE value and provides a little assurance that
 # extension functions' prototypes are available, e.g. killpg().
 #
@@ -570,17 +606,19 @@ fi
 # Check for presense of various functions used by fish
 #
 
-AC_CHECK_FUNCS( gettext wcsdup wcsndup wcslen wcscasecmp wcsncasecmp fwprintf )
+AC_CHECK_FUNCS( wcsdup wcsndup wcslen wcscasecmp wcsncasecmp fwprintf )
 AC_CHECK_FUNCS( futimes wcwidth wcswidth wcstok fputwc fgetwc )
-AC_CHECK_FUNCS( wcstol dcgettext wcslcat wcslcpy lrand48_r killpg)
-
+AC_CHECK_FUNCS( wcstol wcslcat wcslcpy lrand48_r killpg gettext )
+AC_CHECK_FUNCS( dcgettext backtrace backtrace_symbols)
 
 #
 # The Makefile also needs to know if we have gettext, so it knows if
 # the translations should be installed.
 #
 
-AC_CHECK_FUNC( gettext, AC_SUBST( HAVE_GETTEXT, 1 ), AC_SUBST( HAVE_GETTEXT, 0 ) )
+if test x$local_gettext != xno; then 
+	AC_CHECK_FUNC( gettext, AC_SUBST( HAVE_GETTEXT, 1 ), AC_SUBST( HAVE_GETTEXT, 0 ) )
+fi
 
 #
 # Here follows a list of small programs used to test for various
@@ -682,10 +720,10 @@ if test "$ac_cv_func_fwprintf" = yes; then
 				]
 			)
 		],
-	    [
+		[
 			AC_MSG_RESULT(no)
 		],
-	    [
+		[
 			AC_MSG_RESULT([yes])
 			AC_DEFINE([HAVE_BROKEN_FWPRINTF], [1], [Define to 1 one if the implemented fwprintf is broken])
 		] 
@@ -718,7 +756,32 @@ if test "$have__nl_msg_cat_cntr" = yes; then
 		[Define to 1 if the _nl_msg_cat_cntr symbol is exported.]
 	)	
 else
-    AC_MSG_RESULT(no)
+	AC_MSG_RESULT(no)
+fi
+
+# Check for __environ symbol
+AC_MSG_CHECKING([for __environ symbol])
+AC_TRY_LINK(
+	[
+		#include <unistd.h>
+	],
+	[
+		extern char **__environ;
+		char **tmp = __environ; 
+		exit(tmp!=0);
+	],
+	have___environ=yes, 
+	have___environ=no
+)
+if test "$have___environ" = yes; then
+	AC_MSG_RESULT(yes)
+	AC_DEFINE(
+		[HAVE___ENVIRON], 
+		[1],
+		[Define to 1 if the __environ symbol is exported.]
+	)	
+else
+	AC_MSG_RESULT(no)
 fi
 
 # Check if getopt_long exists and works
@@ -754,7 +817,7 @@ if test "$have_working_getopt_long" = yes; then
 		[Define to 1 if getopt_long exists and works.]
 	)	
 else
-    AC_MSG_RESULT(no)
+	AC_MSG_RESULT(no)
 fi
 
 # Check if del_curterm is broken - in that case we redefine
@@ -776,7 +839,7 @@ case $target_os in
 esac
 
 # Tell the world what we know
-AC_CONFIG_FILES([Makefile fish.spec doc_src/Doxyfile seq])
+AC_CONFIG_FILES([Makefile fish.spec Doxyfile.help seq])
 AC_OUTPUT
 
 if test ! x$local_found_posix_switch = xyes; then

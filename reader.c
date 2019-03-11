@@ -37,6 +37,7 @@ commence.
 #include <sys/ioctl.h>
 #endif
 
+#include <time.h>
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <sys/poll.h>
@@ -114,6 +115,8 @@ commence.
 */
 #define DEFAULT_PROMPT L"whoami; echo @; hostname|cut -d . -f 1; echo \" \"; pwd; printf '> ';"
 
+#define PROMPT_FUNCTION_NAME L"fish_prompt"
+
 /**
    The default title for the reader. This is used by reader_readline.
 */
@@ -132,8 +135,8 @@ commence.
 
 /**
    A struct describing the state of the interactive reader. These
-   states can be stacked, in case reader_readline is called from
-   input_read().
+   states can be stacked, in case reader_readline() calls are
+   nested. This happens when the 'read' builtin is used.
 */
 typedef struct reader_data
 {
@@ -253,6 +256,12 @@ typedef struct reader_data
 */
 static reader_data_t *data=0;
 
+/**
+   This flag is set to true when fish is interactively reading from
+   stdin. It changes how a ^C is handled by the fish interrupt
+   handler.
+*/
+static int is_interactive_read;
 
 /**
    Flag for ending non-interactive shell
@@ -397,11 +406,17 @@ static void reader_kill( wchar_t *begin, int length, int mode, int new )
 void reader_handle_int( int sig )
 {
 	block_t *c = current_block;
-	while( c )
+	
+	if( !is_interactive_read )
 	{
-		c->skip=1;
-		c=c->outer;
+		while( c )
+		{
+			c->type=FAKE;
+			c->skip=1;
+			c=c->outer;
+		}
 	}
+	
 	interrupted = 1;
 	
 }
@@ -692,7 +707,7 @@ static int insert_str(wchar_t *str)
 	{
 		memmove( &data->buff[data->buff_pos+len],
 				 &data->buff[data->buff_pos],
-				 sizeof(wchar_t)*(data->buff_len-data->buff_pos) );
+				 sizeof(wchar_t)*(old_len-data->buff_pos) );
 	}
 	memmove( &data->buff[data->buff_pos], str, sizeof(wchar_t)*len );
 	data->buff_pos += len;
@@ -974,14 +989,15 @@ static void run_pager( wchar_t *prefix, int is_quoted, array_list_t *comp )
 	sb_init( &cmd );
 	sb_init( &msg );
 	sb_printf( &cmd,
-			   L"fish_pager %d %ls",
+			   L"fish_pager -c 3 -r 4 %ls -p %ls",
 //			   L"valgrind --track-fds=yes --log-file=pager.txt --leak-check=full ./fish_pager %d %ls",
-			   is_quoted,
+			   is_quoted?L"-q":L"",
 			   prefix_esc );
 
 	free( prefix_esc );
 
 	io_data_t *in= io_buffer_create( 1 );
+	in->fd = 3;
 	
 	for( i=0; i<al_get_count( comp); i++ )
 	{
@@ -998,7 +1014,7 @@ static void run_pager( wchar_t *prefix, int is_quoted, array_list_t *comp )
 	
 	io_data_t *out = io_buffer_create( 0 );
 	out->next = in;
-	out->fd = 1;
+	out->fd = 4;
 	
 	eval( (wchar_t *)cmd.buff, out, TOP);
 	term_steal();
@@ -1028,6 +1044,35 @@ static void run_pager( wchar_t *prefix, int is_quoted, array_list_t *comp )
 	io_buffer_destroy( in);
 }
 
+/*
+  Flash the screen. This function only changed the color of the
+  current line, since the flash_screen sequnce is rather painful to
+  look at in most terminal emulators.
+*/
+static void reader_flash()
+{
+	struct timespec pollint;
+
+	int i;
+	
+	for( i=0; i<data->buff_pos; i++ )
+	{
+		data->color[i] = HIGHLIGHT_SEARCH_MATCH<<16;
+	}
+	
+	repaint();
+	
+	pollint.tv_sec = 0;
+	pollint.tv_nsec = 100 * 1000000;
+	nanosleep( &pollint, NULL );
+
+	reader_super_highlight_me_plenty( data->buff_pos, 0 );
+	repaint();
+	
+	
+}
+
+
 /**
    Handle the list of completions. This means the following:
    
@@ -1050,8 +1095,7 @@ static int handle_completions( array_list_t *comp )
 	
 	if( al_get_count( comp ) == 0 )
 	{
-		if( flash_screen != 0 )
-			writembs( flash_screen );
+		reader_flash();
 		return 0;
 	}
 	else if( al_get_count( comp ) == 1 )
@@ -1368,12 +1412,31 @@ static void handle_token_history( int forward, int reset )
 	{
 		if( current_pos == -1 )
 		{
+			const wchar_t *item;
+			
 			/*
 			  Move to previous line
 			*/
-			free( (void *)data->token_history_buff );
-			data->token_history_buff = wcsdup( history_prev_match(L"") );
+			free( (void *)data->token_history_buff );		
+
+			/*
+			  Search for previous item that contains this substring
+			*/
+			item = history_prev_match(data->search_buff);
+
+			/*
+			  If there is no match, the original string is returned
+
+			  If so, we clear the match string to avoid infinite loop
+			*/
+			if( wcscmp( item, data->search_buff ) == 0 )
+			{
+				item=L"";
+			}
+
+			data->token_history_buff = wcsdup( item );
 			current_pos = wcslen(data->token_history_buff);
+
 		}
 
 		if( ! wcslen( data->token_history_buff ) )
@@ -1397,7 +1460,7 @@ static void handle_token_history( int forward, int reset )
 		else
 		{
 
-			debug( 3, L"new '%ls'", data->token_history_buff );
+			//debug( 3, L"new '%ls'", data->token_history_buff );
 
 			for( tok_init( &tok, data->token_history_buff, TOK_ACCEPT_UNFINISHED );
 				 tok_has_next( &tok);
@@ -1409,12 +1472,12 @@ static void handle_token_history( int forward, int reset )
 					{
 						if( wcsstr( tok_last( &tok ), data->search_buff ) )
 						{
-							debug( 3, L"Found token at pos %d\n", tok_get_pos( &tok ) );
+							//debug( 3, L"Found token at pos %d\n", tok_get_pos( &tok ) );
 							if( tok_get_pos( &tok ) >= current_pos )
 							{
 								break;
 							}
-							debug( 3, L"ok pos" );
+							//debug( 3, L"ok pos" );
 
 							if( !contains( tok_last( &tok ), &data->search_prev ) )
 							{
@@ -1439,7 +1502,7 @@ static void handle_token_history( int forward, int reset )
 			al_push( &data->search_prev, str );
 			data->search_pos = al_get_count( &data->search_prev )-1;
 		}
-		else
+		else if( ! reader_interrupted() )
 		{
 			data->token_history_pos=-1;
 			handle_token_history( 0, 0 );
@@ -1668,12 +1731,7 @@ void reader_run_command( const wchar_t *cmd )
 }
 
 
-/**
-   Test if the given shell command contains errors. Uses parser_test
-   for testing.
-*/
-
-static int shell_test( wchar_t *b )
+int reader_shell_test( wchar_t *b )
 {
 	int res = parser_test( b, 0, 0, 0 );
 	
@@ -1707,6 +1765,12 @@ static int default_test( wchar_t *b )
 void reader_push( wchar_t *name )
 {
 	reader_data_t *n = calloc( 1, sizeof( reader_data_t ) );
+
+	if( !n )
+	{
+		DIE_MEM();
+	}
+	
 	n->name = wcsdup( name );
 	n->next = data;
 	sb_init( &n->kill_item );
@@ -1774,8 +1838,9 @@ void reader_pop()
 	}
 	else
 	{
+		end_loop = 0;
 		history_set_mode( data->name );
-		exec_prompt();
+		s_reset( &data->screen );
 	}
 }
 
@@ -1853,7 +1918,7 @@ static int read_i()
 	reader_push(L"fish");
 	reader_set_complete_function( &complete );
 	reader_set_highlight_function( &highlight_shell );
-	reader_set_test_function( &shell_test );
+	reader_set_test_function( &reader_shell_test );
 
 	data->prev_end_loop=0;
 
@@ -1861,8 +1926,8 @@ static int read_i()
 	{
 		wchar_t *tmp;
 
-		if( function_exists( L"fish_prompt" ) )
-			reader_set_prompt( L"fish_prompt" );
+		if( function_exists( PROMPT_FUNCTION_NAME ) )
+			reader_set_prompt( PROMPT_FUNCTION_NAME );
 		else
 			reader_set_prompt( DEFAULT_PROMPT );
 
@@ -1899,34 +1964,24 @@ static int read_i()
 			}
 			else
 			{
-				pid_t my_pid = getpid();
-				for( j = first_job; j; j=j->next )
+				if( !isatty(0) )
 				{
-					if( ! job_is_completed( j ) )
+					/*
+					  We already know that stdin is a tty since we're
+					  in interactive mode. If isatty returns false, it
+					  means stdin must have been closed. 
+					*/
+					for( j = first_job; j; j=j->next )
 					{
-						if( j->pgid != my_pid )
+						if( ! job_is_completed( j ) )
 						{
-							killpg( j->pgid, SIGHUP );
-						}
-						else
-						{
-							process_t *p;
-							for( p = j->first_process; p; p=p->next )
-							{
-								if( ! p->completed )
-								{
-									if( p->pid )
-									{
-										kill( p->pid, SIGHUP );
-									}
-								}
-							}
+							job_signal( j, SIGHUP );						
 						}
 					}
 				}
 			}
 		}
-		else
+		else if( tmp )
 		{
 			tmp = wcsdup( tmp );
 			
@@ -1966,6 +2021,27 @@ static int wchar_private( wchar_t c )
 	return ( (c >= 0xe000) && (c <= 0xf8ff ) );
 }
 
+/**
+   Test if the specified character in the specified string is
+   backslashed.
+*/
+static int is_backslashed( const wchar_t *str, int pos )
+{
+	int count = 0;
+	int i;
+	
+	for( i=pos-1; i>=0; i-- )
+	{
+		if( str[i] != L'\\' )
+			break;
+		
+		count++;
+	}
+
+	return count %2;
+}
+
+
 wchar_t *reader_readline()
 {
 
@@ -1997,9 +2073,9 @@ wchar_t *reader_readline()
 	*/
 	tcgetattr(0,&old_modes);        
 	/* set the new modes */
-	if( tcsetattr(0,TCSANOW,&shell_modes))      
+	if( tcsetattr(0,TCSANOW,&shell_modes))
 	{
-        wperror(L"tcsetattr");
+		wperror(L"tcsetattr");
     }
 
 	while( !finished && !data->end_loop)
@@ -2013,9 +2089,11 @@ wchar_t *reader_readline()
 		*/
 		while( 1 )
 		{
+			int was_interactive_read = is_interactive_read;
+			is_interactive_read = 1;
 			c=input_readch();
-
-			
+			is_interactive_read = was_interactive_read;
+						
 			if( ( (!wchar_private(c))) && (c>31) && (c != 127) )
 			{
 				if( can_read(0) )
@@ -2112,7 +2190,17 @@ wchar_t *reader_readline()
 
 			case R_NULL:
 			{
+//				exec_prompt();
+				write( 1, "\r", 1 );
+				s_reset( &data->screen );
+				repaint();
+				break;
+			}
+
+			case R_REPAINT:
+			{
 				exec_prompt();
+				write( 1, "\r", 1 );
 				s_reset( &data->screen );
 				repaint();
 				break;
@@ -2138,10 +2226,7 @@ wchar_t *reader_readline()
 				if( !data->complete_func )
 					break;
 
-				if( !comp_empty && last_char == R_COMPLETE )
-					break;
-
- 				if( comp_empty )
+ 				if( comp_empty || last_char != R_COMPLETE)
 				{
 					wchar_t *begin, *end;
 					wchar_t *token_begin, *token_end;
@@ -2155,6 +2240,11 @@ wchar_t *reader_readline()
 					
 					cursor_steps = token_end - data->buff- data->buff_pos;
 					data->buff_pos += cursor_steps;
+					if( is_backslashed( data->buff, data->buff_pos ) )
+					{
+						remove_backward();
+					}
+					
 					repaint();
 					
 					len = data->buff_pos - (begin-data->buff);
@@ -2296,6 +2386,7 @@ wchar_t *reader_readline()
 						reader_replace_current_token( data->search_buff );
 					}
 					*data->search_buff=0;
+					reader_super_highlight_me_plenty( data->buff_pos, 0 );
 					repaint();
 
 				}
@@ -2330,7 +2421,6 @@ wchar_t *reader_readline()
 			{
 				if( data->buff_len == 0 )
 				{
-					writestr( L"\n" );
 					data->end_loop=1;
 				}
 				break;
@@ -2346,7 +2436,7 @@ wchar_t *reader_readline()
 				/*
 				  Allow backslash-escaped newlines
 				*/
-				if( data->buff_pos && data->buff[data->buff_pos-1]==L'\\' )
+				if( is_backslashed( data->buff, data->buff_pos ) )
 				{
 					insert_char( '\n' );
 					break;
@@ -2368,7 +2458,6 @@ wchar_t *reader_readline()
 						finished=1;
 						data->buff_pos=data->buff_len;
 						repaint();
-						writestr( L"\n" );
 						break;
 					}
 					
@@ -2571,6 +2660,7 @@ wchar_t *reader_readline()
 		last_char = c;
 	}
 
+	writestr( L"\n" );
 	al_destroy( &comp );
 	if( !reader_exit_forced() )
 	{
@@ -2582,7 +2672,7 @@ wchar_t *reader_readline()
 		set_color( FISH_COLOR_RESET, FISH_COLOR_RESET );
 	}
 	
-	return data->buff;
+	return finished ? data->buff : 0;
 }
 
 /**

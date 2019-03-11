@@ -141,7 +141,8 @@ static int my_env_set( const wchar_t *key, array_list_t *val, int scope )
 	{
 		for( i=0; i<al_get_count( val ); i++ )
 		{
-			sb_append( &sb, (wchar_t *)al_get( val, i ) );
+			wchar_t *next =(wchar_t *)al_get( val, i );
+			sb_append( &sb, next?next:L"" );
 			if( i<al_get_count( val )-1 )
 			{
 				sb_append( &sb, ARRAY_SEP_STR );
@@ -232,9 +233,14 @@ static int parse_index( array_list_t *indexes,
 	while (*src != L']') 
 	{
 		wchar_t *end;
-		long l_ind = wcstol(src, &end, 10);
 		
-		if (end == src) 
+		long l_ind;
+
+		errno = 0;
+		
+		l_ind = wcstol(src, &end, 10);
+		
+		if( end==src || errno ) 
 		{
 			sb_printf(sb_err, _(L"%ls: Invalid index starting at '%ls'\n"), L"set", src);
 			return 0;
@@ -274,11 +280,11 @@ static int update_values( array_list_t *list,
 	{
 		/*
 		  The '- 1' below is because the indices in fish are
-		  one-based, but the array_lsit_t uses zero-based indices
+		  one-based, but the array_list_t uses zero-based indices
 		*/
 		long ind = al_get_long(indexes, i) - 1;
 		void *new = (void *) al_get(values, i);
-		if( ind <= 0 )
+		if( ind < 0 )
 		{
 			return 1;
 		}
@@ -534,7 +540,7 @@ static int builtin_set( wchar_t **argv )
 				return 0;
 
 			case '?':
-				builtin_print_help( argv[0], sb_err );
+				builtin_unknown_option( argv[0], argv[woptind-1] );
 				return 1;
 
 			default:
@@ -554,9 +560,8 @@ static int builtin_set( wchar_t **argv )
 	if( query && (erase || list || global || local || universal || export || unexport ) )
 	{
 		sb_printf(sb_err,
-				  BUILTIN_ERR_COMBO2,
-				  argv[0],
-				  parser_current_line() );
+				  BUILTIN_ERR_COMBO,
+				  argv[0] );
 		
 		builtin_print_help( argv[0], sb_err );
 		return 1;
@@ -567,9 +572,8 @@ static int builtin_set( wchar_t **argv )
 	if( erase && list ) 
 	{
 		sb_printf(sb_err,
-				  BUILTIN_ERR_COMBO2,
-				  argv[0],
-				  parser_current_line() );		
+				  BUILTIN_ERR_COMBO,
+				  argv[0] );		
 
 		builtin_print_help( argv[0], sb_err );
 		return 1;
@@ -582,8 +586,7 @@ static int builtin_set( wchar_t **argv )
 	{
 		sb_printf( sb_err,
 				   BUILTIN_ERR_GLOCAL,
-				   argv[0],
-				   parser_current_line() );
+				   argv[0] );
 		builtin_print_help( argv[0], sb_err );
 		return 1;
 	}
@@ -595,8 +598,7 @@ static int builtin_set( wchar_t **argv )
 	{
 		sb_printf( sb_err,
 				   BUILTIN_ERR_EXPUNEXP,
-				   argv[0],
-				   parser_current_line() );
+				   argv[0] );
 		builtin_print_help( argv[0], sb_err );
 		return 1;
 	}
@@ -615,10 +617,55 @@ static int builtin_set( wchar_t **argv )
 		int i;
 		for( i=woptind; i<argc; i++ )
 		{
-			if( !env_exist( argv[i], scope ) )
+			wchar_t *arg = argv[i];
+			int slice=0;
+
+			if( !(dest = wcsdup(arg)))
 			{
-				retcode++;
+				DIE_MEM();		
 			}
+
+			if( wcschr( dest, L'[' ) )
+			{
+				slice = 1;
+				*wcschr( dest, L'[' )=0;
+			}
+			
+			if( slice )
+			{
+				array_list_t indexes;
+				array_list_t result;
+				int j;
+				
+				al_init( &result );
+				al_init( &indexes );
+
+				tokenize_variable_array( env_get( dest ), &result );
+								
+				if( !parse_index( &indexes, arg, dest, al_get_count( &result ) ) )
+				{
+					builtin_print_help( argv[0], sb_err );
+					retcode = 1;
+					break;
+				}
+				for( j=0; j<al_get_count( &indexes ); j++ )
+				{
+					long idx = al_get_long( &indexes, j );
+					if( idx < 1 || idx > al_get_count( &result ) )
+					{
+						retcode++;
+					}
+				}
+			}
+			else
+			{
+				if( !env_exist( arg, scope ) )
+				{
+					retcode++;
+				}
+			}
+			
+			free( dest );
 			
 		}
 		return retcode;
@@ -641,8 +688,7 @@ static int builtin_set( wchar_t **argv )
 		{
 			sb_printf( sb_err,
 					   _(L"%ls: Erase needs a variable name\n%ls\n"), 
-					   argv[0],
-					   parser_current_line() );
+					   argv[0] );
 			
 			builtin_print_help( argv[0], sb_err );
 			retcode = 1;
@@ -799,9 +845,8 @@ static int builtin_set( wchar_t **argv )
 			if( woptind != argc )
 			{
 				sb_printf( sb_err, 
-						   _(L"%ls: Values cannot be specfied with erase\n%ls\n"),
-						   argv[0],
-						   parser_current_line() );
+						   _(L"%ls: Values cannot be specfied with erase\n"),
+						   argv[0] );
 				builtin_print_help( argv[0], sb_err );
 				retcode=1;
 			}

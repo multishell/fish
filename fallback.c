@@ -47,6 +47,12 @@
 #include "util.h"
 
 
+#ifndef HAVE___ENVIRON
+
+char **__environ = 0;
+
+#endif
+
 #ifdef TPUTS_KLUDGE
 
 int tputs(const char *str, int affcnt, int (*fish_putc)(tputs_arg_t))
@@ -1091,3 +1097,16 @@ int getopt_long( int argc,
 
 #endif
 
+#ifndef HAVE_BACKTRACE
+int backtrace (void **buffer, int size)
+{
+	return 0;
+}
+#endif
+
+#ifndef HAVE_BACKTRACE_SYMBOLS
+char ** backtrace_symbols (void *const *buffer, int size)
+{
+	return 0;
+}
+#endif

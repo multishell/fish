@@ -4,37 +4,39 @@
 # value of a variable interactively.
 #
 
-function vared -d (N_ "Edit variable value")
+function vared --description "Edit variable value"
 	if test (count $argv) = 1
 		switch $argv
 
 			case '-h' '--h' '--he' '--hel' '--help'
-				help vared
+				__fish_print_help vared
+				return 0
 
 			case '-*'
 				printf (_ "%s: Unknown option %s\n") vared $argv
+				return 1
 
 			case '*'
 				if test (count $$argv ) -lt 2
-					set init ''
+					set -l init ''
 					if test $$argv
-						set -- init $$argv
+						set init $$argv
 					end
-					set prompt 'set_color green; echo '$argv'; set_color normal; echo "> "'
-					read -p $prompt -c $init tmp
+					set -l prompt 'set_color green; echo '$argv'; set_color normal; echo "> "'
+					if read -p $prompt -c $init tmp
 
-					# If variable already exists, do not add any
-					# switches, so we don't change export rules. But
-					# if it does not exist, we make the variable
-					# global, so that it will not die when this
-					# function dies
+						# If variable already exists, do not add any
+						# switches, so we don't change export rules. But
+						# if it does not exist, we make the variable
+						# global, so that it will not die when this
+						# function dies
 
-					if test $$argv
-						set -- $argv $tmp
-					else
-						set -g -- $argv $tmp
+						if test $$argv
+							set $argv $tmp
+						else
+							set -g $argv $tmp
+						end
 					end
-
 				else
 
 					printf (_ '%s: %s is an array variable. Use %svared%s %s[n] to edit the n:th element of %s\n') $argv (set_color $fish_color_command) (set_color $fish_color_normal) vared $argv $argv

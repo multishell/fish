@@ -133,7 +133,8 @@ static const wchar_t *name_arr[] =
 	L"vi-arg-digit",
 	L"execute",
 	L"beginning-of-buffer",
-	L"end-of-buffer"
+	L"end-of-buffer",
+	L"repaint"
 }
 	;
 
@@ -214,6 +215,7 @@ static const wchar_t code_arr[] =
 	R_EXECUTE,
 	R_BEGINNING_OF_BUFFER,
 	R_END_OF_BUFFER,
+	R_REPAINT
 }
 	;
 
@@ -254,7 +256,6 @@ static int inputrc_error = 0;
    Set to one when the input subsytem has been initialized. 
 */
 static int is_init = 0;
-
 
 /**
    This is the variable telling us how many timew the next command
@@ -1610,13 +1611,14 @@ static wint_t input_exec_binding( mapping *m, const wchar_t *seq )
 		write( 1, "\r", 1 );
 		tputs(clr_eol,1,&writeb);
 		
-		reader_run_command( m->command );
-		
+		eval( m->command, 0, TOP );
+
 		/*
 		  We still need to return something to the caller, R_NULL
-		  tells the reader that nothing happened, but it might be a
-		  godd idea to redraw and reexecute the prompt.
+		  tells the reader that no key press needs to be handled, but
+		  it might be a good idea to redraw.
 		*/
+		
 		return R_NULL;
 	}
 	
@@ -1675,6 +1677,8 @@ wint_t input_readch()
 {
 	
 	int i;
+
+	CHECK_BLOCK( R_NULL );
 	
 	/*
 	  Clear the interrupted flag
