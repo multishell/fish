@@ -92,6 +92,9 @@
 /// The name of the function that prints the fish right prompt (RPROMPT).
 #define RIGHT_PROMPT_FUNCTION_NAME L"fish_right_prompt"
 
+/// The name of the function to use in place of the left prompt if we're in the debugger context.
+#define DEBUG_PROMPT_FUNCTION_NAME L"fish_breakpoint_prompt"
+
 /// The name of the function for getting the input mode indicator.
 #define MODE_PROMPT_FUNCTION_NAME L"fish_mode_prompt"
 
@@ -693,14 +696,14 @@ void reader_write_title(const wcstring &cmd, bool reset_cursor_position) {
         for (size_t i = 0; i < lst.size(); i++) {
             fputws(lst.at(i).c_str(), stdout);
         }
-        fputwc(L'\a', stdout);
+       ignore_result(write(STDOUT_FILENO, "\a", 1));
     }
 
     proc_pop_interactive();
     set_color(rgb_color_t::reset(), rgb_color_t::reset());
     if (reset_cursor_position && !lst.empty()) {
         // Put the cursor back at the beginning of the line (issue #2453).
-        fputwc(L'\r', stdout);
+        ignore_result(write(STDOUT_FILENO, "\r", 1));
     }
 }
 
@@ -800,6 +803,10 @@ void reader_init() {
     if (is_interactive_session) {
         tcsetattr(STDIN_FILENO, TCSANOW, &shell_modes);
     }
+
+    // We do this not because we actually need the window size but for its side-effect of correctly
+    // setting the COLUMNS and LINES env vars.
+    get_current_winsize();
 }
 
 void reader_destroy() { pthread_key_delete(generation_count_key); }
@@ -1284,7 +1291,7 @@ static void reader_flash() {
     }
 
     reader_repaint();
-    fputwc(L'\a', stdout);
+    ignore_result(write(STDOUT_FILENO, "\a", 1));
 
     pollint.tv_sec = 0;
     pollint.tv_nsec = 100 * 1000000;
@@ -1517,9 +1524,9 @@ static bool check_for_orphaned_process(unsigned long loop_count, pid_t shell_pgi
         we_think_we_are_orphaned = true;
     }
 
+    // Try reading from the tty; if we get EIO we are orphaned. This is sort of bad because it
+    // may block.
     if (!we_think_we_are_orphaned && loop_count % 128 == 0) {
-        // Try reading from the tty; if we get EIO we are orphaned. This is sort of bad because it
-        // may block.
 #ifdef HAVE_CTERMID_R
         char buf[L_ctermid];
         char *tty = ctermid_r(buf);
@@ -1556,10 +1563,10 @@ static bool check_for_orphaned_process(unsigned long loop_count, pid_t shell_pgi
 
 /// Initialize data for interactive use.
 static void reader_interactive_init() {
-    assert(input_initialized);
     // See if we are running interactively.
     pid_t shell_pgid;
 
+    if (!input_initialized) init_input();
     kill_init();
     shell_pgid = getpgrp();
 
@@ -1966,7 +1973,7 @@ parser_test_error_bits_t reader_shell_test(const wchar_t *b) {
 
     if (res & PARSER_TEST_ERROR) {
         wcstring error_desc;
-        parser_t::principal_parser().get_backtrace(bstr, errors, &error_desc);
+        parser_t::principal_parser().get_backtrace(bstr, errors, error_desc);
 
         // Ensure we end with a newline. Also add an initial newline, because it's likely the user
         // just hit enter and so there's junk on the current line.
@@ -1986,6 +1993,11 @@ parser_test_error_bits_t reader_shell_test(const wchar_t *b) {
 static parser_test_error_bits_t default_test(const wchar_t *b) {
     UNUSED(b);
     return 0;
+}
+
+void reader_change_history(const wchar_t *name) {
+    data->history->save();
+    data->history = &history_t::history_with_name(name);
 }
 
 void reader_push(const wchar_t *name) {
@@ -2178,6 +2190,21 @@ bool shell_is_exiting() {
     return end_loop;
 }
 
+static void bg_job_warning() {
+    fputws(_(L"There are still jobs active:\n"), stdout);
+    fputws(_(L"\n   PID  Command\n"), stdout);
+
+    job_iterator_t jobs;
+    while (job_t *j = jobs.next()) {
+        if (!job_is_completed(j)) {
+            fwprintf(stdout, L"%6d  %ls\n", j->processes[0]->pid, j->command_wcstr());
+        }
+    }
+    fputws(L"\n", stdout);
+    fputws(_(L"A second attempt to exit will terminate them.\n"), stdout);
+    fputws(_(L"Use 'disown PID' to remove jobs from the list without terminating them.\n"), stdout);
+}
+
 /// This function is called when the main loop notices that end_loop has been set while in
 /// interactive mode. It checks if it is ok to exit.
 static void handle_end_loop() {
@@ -2202,8 +2229,7 @@ static void handle_end_loop() {
         }
 
         if (!data->prev_end_loop && bg_jobs) {
-            fputws(_(L"There are still jobs active (use the jobs command to see them).\n"), stdout);
-            fputws(_(L"A second attempt to exit will terminate them.\n"), stdout);
+            bg_job_warning();
             reader_exit(0, 0);
             data->prev_end_loop = 1;
             return;
@@ -2233,7 +2259,7 @@ static bool selection_is_at_top() {
 
 /// Read interactively. Read input from stdin while providing editing facilities.
 static int read_i(void) {
-    reader_push(L"fish");
+    reader_push(history_session_id().c_str());
     reader_set_complete_function(&complete);
     reader_set_highlight_function(&highlight_shell);
     reader_set_test_function(&reader_shell_test);
@@ -2247,15 +2273,20 @@ static int read_i(void) {
 
     while ((!data->end_loop) && (!sanity_check())) {
         event_fire_generic(L"fish_prompt");
-        if (function_exists(LEFT_PROMPT_FUNCTION_NAME))
-            reader_set_left_prompt(LEFT_PROMPT_FUNCTION_NAME);
-        else
-            reader_set_left_prompt(DEFAULT_PROMPT);
 
-        if (function_exists(RIGHT_PROMPT_FUNCTION_NAME))
+        if (is_breakpoint && function_exists(DEBUG_PROMPT_FUNCTION_NAME)) {
+            reader_set_left_prompt(DEBUG_PROMPT_FUNCTION_NAME);
+        } else if (function_exists(LEFT_PROMPT_FUNCTION_NAME)) {
+            reader_set_left_prompt(LEFT_PROMPT_FUNCTION_NAME);
+        } else {
+            reader_set_left_prompt(DEFAULT_PROMPT);
+        }
+
+        if (function_exists(RIGHT_PROMPT_FUNCTION_NAME)) {
             reader_set_right_prompt(RIGHT_PROMPT_FUNCTION_NAME);
-        else
+        } else {
             reader_set_right_prompt(L"");
+        }
 
         // Put buff in temporary string and clear buff, so that we can handle a call to
         // reader_set_buffer during evaluation.
@@ -2283,6 +2314,7 @@ static int read_i(void) {
             }
         }
     }
+
     reader_pop();
     return 0;
 }
@@ -3216,7 +3248,7 @@ const wchar_t *reader_readline(int nchars) {
         reader_repaint_if_needed();
     }
 
-    fputwc(L'\n', stdout);
+    ignore_result(write(STDOUT_FILENO, "\n", 1));
 
     // Ensure we have no pager contents when we exit.
     if (!data->pager.empty()) {
@@ -3315,7 +3347,7 @@ static int read_ni(int fd, const io_chain_t &io) {
             parser.eval(str, io, TOP, std::move(tree));
         } else {
             wcstring sb;
-            parser.get_backtrace(str, errors, &sb);
+            parser.get_backtrace(str, errors, sb);
             fwprintf(stderr, L"%ls", sb.c_str());
             res = 1;
         }

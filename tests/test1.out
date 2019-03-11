@@ -14,8 +14,8 @@ a
 b
 c
 Test 2 pass
-Test  pass
-Test 3 pass
+Test 3a pass
+Test 3b pass
 Test 4 pass
 1
 0
@@ -27,6 +27,8 @@ errput
 output
 caret_no_redirect 12345^
 is_stdout
+
+# echo tests
 abc\ndef
 abc
 def
@@ -37,6 +39,7 @@ abcQdef
 abcQ2def
 abc
 -
+-h
 0000000 376
 0000001
 Catch your breath

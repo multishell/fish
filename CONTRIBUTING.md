@@ -1,4 +1,3 @@
-
 # Guidelines For Developers
 
 This document provides guidelines for making changes to the fish-shell project. This includes rules for how to format the code, naming conventions, etcetera. Generally known as the style of the code. It also includes recommended best practices such as creating a Travis-CI account so you can verify your changes pass all the tests before making a pull-request.
@@ -6,6 +5,13 @@ This document provides guidelines for making changes to the fish-shell project. 
 See the bottom of this document for help on installing the linting and style reformatting tools discussed in the following sections.
 
 Fish source should limit the C++ features it uses to those available in C++11. It should not use exceptions.
+
+Before introducing a new dependency, please make it optional with graceful failure if possible. Add
+any new dependencies to the README.md under the *Running* and/or *Building* sections.
+
+## Versioning
+
+The fish version is constructed by the *build_tools/git_version_gen.sh* script. For developers the version is the branch name plus the output of `git describe --always --dirty`. Normally the main part of the version will be the closest annotated tag. Which itself is usually the most recent release number (e.g., `2.6.0`).
 
 ## Include What You Use
 
@@ -31,6 +37,8 @@ Ultimately we want lint free code. However, at the moment a lot of cleanup is re
 To make linting the code easy there are two make targets: `lint` and `lint-all`. The latter does just what the name implies. The former will lint any modified but not committed `*.cpp` files. If there is no uncommitted work it will lint the files in the most recent commit.
 
 Fish has custom cppcheck rules in the file `.cppcheck.rule`. These help catch mistakes such as using `wcwidth()` rather than `fish_wcwidth()`. Please add a new rule if you find similar mistakes being made.
+
+Fish also depends on `diff` and `expect` for its tests.
 
 ### Dealing With Lint Warnings
 
@@ -94,7 +102,25 @@ If you use Emacs: TBD
 
 ### Configuring Your Editor for Fish Scripts
 
-If you use ViM: TBD
+If you use ViM: Install [vim-fish](https://github.com/dag/vim-fish), make sure you have syntax and filetype functionality in `~/.vimrc`:
+
+```
+syntax enable
+filetype plugin indent on
+```
+
+Then turn on some options for nicer display of fish scripts in `~/.vim/ftplugin/fish.vim`:
+
+```
+" Set up :make to use fish for syntax checking.
+compiler fish
+
+" Set this to have long lines wrap inside comments.
+setlocal textwidth=79
+
+" Enable folding of block structures in fish.
+setlocal foldmethod=expr
+```
 
 If you use Emacs: Install [fish-mode](https://github.com/wwwjfy/emacs-fish) (also available in melpa and melpa-stable) and `(setq-default indent-tabs-mode nil)` for it (via a hook or in `use-package`s ":init" block). It can also be made to run fish_indent via e.g.
 
@@ -112,6 +138,8 @@ If you have a good reason for doing so you can tell `clang-format` to not reform
 code to ignore
 // clang-format on
 ```
+
+However, as I write this there are no places in the code where we use this and I can't think of any legitimate reasons for exempting blocks of code from clang-format.
 
 ## Fish Script Style Guide
 
@@ -248,3 +276,27 @@ That will list the versions available. Pick the newest one available (3.9 for Ub
 sudo apt-get install clang-format-3.9
 sudo ln -s /usr/bin/clang-format-3.9 /usr/bin/clang-format
 ```
+
+## Message Translations
+
+Fish uses the GNU gettext library to translate messages from english to other languages. To create or update a translation run `make po/[LANGUAGE CODE].po`. Where `LANGUAGE CODE` is the two letter ISO 639-1 language code of the language you are translating to. For example, `de` for German. You'll need to have the `xgettext`, `msgfmt` and `msgmerge` commands installed to do this.
+
+All messages in fish script must be enclosed in single or double quote characters. They must also be translated via a subcommand. This means that the following are not valid:
+
+```
+echo (_ hello)
+_ "goodbye"
+```
+
+Those should be written like this:
+
+```
+echo (_ "hello")
+echo (_ "goodbye")
+```
+
+Note that you can use either single or double quotes to enclose the message to be translated. You can also optionally include spaces after the opening parentheses and before the closing paren.
+
+Be cautious about blindly updating an existing translation file. Trivial changes to an existing message (e.g., changing the punctuation) will cause existing translations to be removed. That is because the tools do literal string matching. Which means that in general you need to carefully review any recommended deletions.
+
+See the [wiki](https://github.com/fish-shell/fish-shell/wiki/Translations) for more details.

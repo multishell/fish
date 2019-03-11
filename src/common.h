@@ -4,6 +4,7 @@
 #include "config.h"  // IWYU pragma: keep
 
 #include <errno.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdarg.h>  // IWYU pragma: keep
 #include <stddef.h>
@@ -12,6 +13,9 @@
 #include <string.h>
 #include <termios.h>
 #include <wchar.h>
+#ifdef HAVE_SYS_IOCTL_H
+#include <sys/ioctl.h>  // IWYU pragma: keep
+#endif
 
 #include <memory>
 #include <sstream>
@@ -86,6 +90,19 @@ typedef std::vector<wcstring> wcstring_list_t;
 #define INPUT_COMMON_BASE (wchar_t)0xF700
 #define INPUT_COMMON_END (INPUT_COMMON_BASE + 64)
 
+// NAME_MAX is not defined on Solaris
+#if !defined(NAME_MAX)
+#include <sys/param.h>
+#if defined(MAXNAMELEN)
+// MAXNAMELEN is defined on Linux, BSD, and Solaris among others
+#define NAME_MAX MAXNAMELEN
+#else
+static_assert(false, "Neither NAME_MAX nor MAXNAMELEN is defined!");
+#endif
+#endif
+
+enum escape_string_style_t { STRING_STYLE_SCRIPT, STRING_STYLE_URL, STRING_STYLE_VAR };
+
 // Flags for unescape_string functions.
 enum {
     UNESCAPE_DEFAULT = 0,         // default behavior
@@ -94,15 +111,14 @@ enum {
 };
 typedef unsigned int unescape_flags_t;
 
-// Flags for the escape_string() and escape_string() functions.
+// Flags for the escape_string() and escape_string() functions. These are only applicable when the
+// escape style is "script" (i.e., STRING_STYLE_SCRIPT).
 enum {
     /// Escape all characters, including magic characters like the semicolon.
     ESCAPE_ALL = 1 << 0,
-
     /// Do not try to use 'simplified' quoted escapes, and do not use empty quotes as the empty
     /// string.
     ESCAPE_NO_QUOTED = 1 << 1,
-
     /// Do not escape tildes.
     ESCAPE_NO_TILDE = 1 << 2
 };
@@ -175,10 +191,6 @@ extern bool g_profiling_active;
 /// Name of the current program. Should be set at startup. Used by the debug function.
 extern const wchar_t *program_name;
 
-// Variants of read() and write() that ignores return values, defeating a warning.
-void read_ignore(int fd, void *buff, size_t count);
-void write_ignore(int fd, const void *buff, size_t count);
-
 /// Set to false at run-time if it's been determined we can't trust the last modified timestamp on
 /// the tty.
 extern bool has_working_tty_timestamps;
@@ -199,12 +211,12 @@ extern bool has_working_tty_timestamps;
 // from within a `switch` block. As of the time I'm writing this oclint doesn't recognize the
 // `__attribute__((noreturn))` on the exit_without_destructors() function.
 // TODO: we use C++11 [[noreturn]] now, does that change things?
-#define FATAL_EXIT()                        \
-    {                                       \
-        char exit_read_buff;                \
-        show_stackframe(L'E');              \
-        read_ignore(0, &exit_read_buff, 1); \
-        exit_without_destructors(1);        \
+#define FATAL_EXIT()                       \
+    {                                      \
+        char exit_read_buff;               \
+        show_stackframe(L'E');             \
+        ignore_result(read(0, &exit_read_buff, 1)); \
+        exit_without_destructors(1);       \
     }
 
 /// Exit the program at once after emitting an error message and stack trace if possible.
@@ -213,23 +225,21 @@ extern bool has_working_tty_timestamps;
 /// stdio functions and should be writing the message to stderr rather than stdout. Second, if
 /// possible it is useful to provide additional context such as a stack backtrace.
 #undef assert
-#undef __assert
-//#define assert(e)  do {(void)((e) ? ((void)0) : __assert(#e, __FILE__, __LINE__)); } while(false)
-#define assert(e) (e) ? ((void)0) : __assert(#e, __FILE__, __LINE__, 0)
-#define assert_with_errno(e) (e) ? ((void)0) : __assert(#e, __FILE__, __LINE__, errno)
-#define DIE(msg) __assert(msg, __FILE__, __LINE__, 0)
-#define DIE_WITH_ERRNO(msg) __assert(msg, __FILE__, __LINE__, errno)
+#define assert(e) (e) ? ((void)0) : __fish_assert(#e, __FILE__, __LINE__, 0)
+#define assert_with_errno(e) (e) ? ((void)0) : __fish_assert(#e, __FILE__, __LINE__, errno)
+#define DIE(msg) __fish_assert(msg, __FILE__, __LINE__, 0)
+#define DIE_WITH_ERRNO(msg) __fish_assert(msg, __FILE__, __LINE__, errno)
 /// This macro is meant to be used with functions that return zero on success otherwise return an
 /// errno value. Most notably the pthread family of functions which we never expect to fail.
-#define DIE_ON_FAILURE(e)                             \
-    do {                                              \
-        int status = e;                               \
-        if (status != 0) {                            \
-            __assert(#e, __FILE__, __LINE__, status); \
-        }                                             \
+#define DIE_ON_FAILURE(e)                                  \
+    do {                                                   \
+        int status = e;                                    \
+        if (status != 0) {                                 \
+            __fish_assert(#e, __FILE__, __LINE__, status); \
+        }                                                  \
     } while (0)
 
-[[noreturn]] void __assert(const char *msg, const char *file, size_t line, int error);
+[[noreturn]] void __fish_assert(const char *msg, const char *file, size_t line, int error);
 
 /// Check if signals are blocked. If so, print an error message and return from the function
 /// performing this check.
@@ -691,8 +701,10 @@ ssize_t read_loop(int fd, void *buff, size_t count);
 /// \param in The string to be escaped
 /// \param flags Flags to control the escaping
 /// \return The escaped string
-wcstring escape_string(const wchar_t *in, escape_flags_t flags);
-wcstring escape_string(const wcstring &in, escape_flags_t flags);
+wcstring escape_string(const wchar_t *in, escape_flags_t flags,
+                       escape_string_style_t style = STRING_STYLE_SCRIPT);
+wcstring escape_string(const wcstring &in, escape_flags_t flags,
+                       escape_string_style_t style = STRING_STYLE_SCRIPT);
 
 /// Expand backslashed escapes and substitute them with their unescaped counterparts. Also
 /// optionally change the wildcards, the tilde character and a few more into constants which are
@@ -707,10 +719,13 @@ size_t read_unquoted_escape(const wchar_t *input, wcstring *result, bool allow_i
 /// indicates the string was unmodified.
 bool unescape_string_in_place(wcstring *str, unescape_flags_t escape_special);
 
-/// Unescapes a string, returning the unescaped value by reference. On failure, the output is set to
-/// an empty string.
-bool unescape_string(const wchar_t *input, wcstring *output, unescape_flags_t escape_special);
-bool unescape_string(const wcstring &input, wcstring *output, unescape_flags_t escape_special);
+/// Reverse the effects of calling `escape_string`. Returns the unescaped value by reference. On
+/// failure, the output is set to an empty string.
+bool unescape_string(const wchar_t *input, wcstring *output, unescape_flags_t escape_special,
+                     escape_string_style_t style = STRING_STYLE_SCRIPT);
+
+bool unescape_string(const wcstring &input, wcstring *output, unescape_flags_t escape_special,
+                     escape_string_style_t style = STRING_STYLE_SCRIPT);
 
 /// Returns the width of the terminal window, so that not all functions that use these values
 /// continually have to keep track of it separately.
@@ -730,12 +745,6 @@ void common_handle_winch(int signal);
 
 /// Write the given paragraph of output, redoing linebreaks to fit the current screen.
 wcstring reformat_for_screen(const wcstring &msg);
-
-/// Tokenize the specified string into the specified wcstring_list_t.
-///
-/// \param val the input string. The contents of this string is not changed.
-/// \param out the list in which to place the elements.
-void tokenize_variable_array(const wcstring &val, wcstring_list_t &out);
 
 /// Make sure the specified direcotry exists. If needed, try to create it and any currently not
 /// existing parent directories.
@@ -879,4 +888,17 @@ enum {
     /// like an unrecognized flag, missing or too many arguments, an invalid integer, etc. But
     STATUS_INVALID_ARGS = 121,
 };
+
+/* Normally casting an expression to void discards its value, but GCC
+   versions 3.4 and newer have __attribute__ ((__warn_unused_result__))
+   which may cause unwanted diagnostics in that case.  Use __typeof__
+   and __extension__ to work around the problem, if the workaround is
+   known to be needed.  */
+#if 3 < __GNUC__ + (4 <= __GNUC_MINOR__)
+# define ignore_result(x) \
+    (__extension__ ({ __typeof__ (x) __x = (x); (void) __x; }))
+#else
+# define ignore_result(x) ((void) (x))
+#endif
+
 #endif

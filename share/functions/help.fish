@@ -1,26 +1,24 @@
 function help --description 'Show help for the fish shell'
+    set -l options 'h/help'
+    argparse -n help --max-args=1 $options -- $argv
+    or return
 
-    # Declare variables to set correct scope
-    set -l fish_browser
-
-    set -l h syntax completion editor job-control todo bugs history killring help
-    set h $h color prompt title variables builtin-overview changes expand
-    set h $h expand-variable expand-home expand-brace expand-wildcard
-    set -l help_topics $h expand-command-substitution expand-process
-
-    # 'help -h' should launch 'help help'
-    if count $argv >/dev/null
-        switch $argv[1]
-            case -h --h --he --hel --help
-                __fish_print_help help
-                return 0
-        end
+    if set -q _flag_help
+        __fish_print_help help
+        return 0
     end
+
+    set -l fish_help_item $argv[1]
+    set -l help_topics syntax completion editor job-control todo bugs history killring help
+    set help_topics $help_topics color prompt title variables builtin-overview changes expand
+    set help_topics $help_topics expand-variable expand-home expand-brace expand-wildcard
+    set help_topics $help_topics expand-command-substitution expand-process
 
     #
     # Find a suitable browser for viewing the help pages. This is needed
     # by the help function defined below.
     #
+    set -l fish_browser
     set -l graphical_browsers htmlview x-www-browser firefox galeon mozilla konqueror epiphany opera netscape rekonq google-chrome chromium-browser
 
     if set -q fish_help_browser[1]
@@ -57,8 +55,9 @@ function help --description 'Show help for the fish shell'
             # If the OS appears to be Windows (graphical), try to use cygstart
             if type -q cygstart
                 set fish_browser cygstart
-                # If xdg-open is available, just use that
-            else if type -q xdg-open
+            # If xdg-open is available, just use that
+            # but only if an X session is running
+            else if type -q xdg-open; and set -q -x DISPLAY
                 set fish_browser xdg-open
             end
 
@@ -86,11 +85,7 @@ function help --description 'Show help for the fish shell'
         end
     end
 
-    set -l fish_help_item $argv[1]
-
     switch "$fish_help_item"
-        case ""
-            set fish_help_page index.html
         case "."
             set fish_help_page "commands.html\#source"
         case globbing
@@ -99,8 +94,14 @@ function help --description 'Show help for the fish shell'
             set fish_help_page "commands.html\#$fish_help_item"
         case $help_topics
             set fish_help_page "index.html\#$fish_help_item"
+        case 'tut_*'
+            set fish_help_page "tutorial.html\#$fish_help_item"
+        case tutorial
+            set fish_help_page "tutorial.html"
         case "*"
-            if type -q -f $fish_help_item
+            # If $fish_help_item is empty, this will fail,
+            # and $fish_help_page will end up as index.html
+            if type -q -f "$fish_help_item"
                 # Prefer to use fish's man pages, to avoid
                 # the annoying useless "builtin" man page bash
                 # installs on OS X
@@ -147,6 +148,12 @@ function help --description 'Show help for the fish shell'
         end
         eval "$fish_browser $page_url &"
     else
+        # Work around lynx bug where <div class="contents"> always has the same formatting as links (unreadable)
+        # by using a custom style sheet. See https://github.com/fish-shell/fish-shell/issues/4170
+        set -l local_file 0
+        if eval $fish_browser --version 2>/dev/null | string match -qr Lynx
+            set fish_browser $fish_browser -lss={$__fish_datadir}/lynx.lss
+        end
         eval $fish_browser $page_url
     end
 end

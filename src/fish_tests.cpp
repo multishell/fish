@@ -64,6 +64,7 @@
 #include "signal.h"
 #include "tokenizer.h"
 #include "utf8.h"
+#include "util.h"
 #include "wcstringutil.h"
 #include "wildcard.h"
 #include "wutil.h"  // IWYU pragma: keep
@@ -804,7 +805,7 @@ static void test_cancellation() {
     // Test for #3780
     // Ugly hack - temporarily set is_interactive_session
     // else we will SIGINT ourselves in response to our child death
-    scoped_push<int> iis(&is_interactive_session, 1);
+    scoped_push<bool> iis(&is_interactive_session, true);
     const wchar_t *child_self_destructor = L"while true ; sh -c 'sleep .25; kill -s INT $$' ; end";
     parser_t::principal_parser().eval(child_self_destructor, io_chain_t(), TOP);
     iis.restore();
@@ -907,31 +908,162 @@ static void test_indents() {
     }
 }
 
-static void test_utils() {
-    say(L"Testing utils");
+static void test_parse_util_cmdsubst_extent() {
     const wchar_t *a = L"echo (echo (echo hi";
-
     const wchar_t *begin = NULL, *end = NULL;
+
     parse_util_cmdsubst_extent(a, 0, &begin, &end);
-    if (begin != a || end != begin + wcslen(begin))
+    if (begin != a || end != begin + wcslen(begin)) {
         err(L"parse_util_cmdsubst_extent failed on line %ld", (long)__LINE__);
+    }
     parse_util_cmdsubst_extent(a, 1, &begin, &end);
-    if (begin != a || end != begin + wcslen(begin))
+    if (begin != a || end != begin + wcslen(begin)) {
         err(L"parse_util_cmdsubst_extent failed on line %ld", (long)__LINE__);
+    }
     parse_util_cmdsubst_extent(a, 2, &begin, &end);
-    if (begin != a || end != begin + wcslen(begin))
+    if (begin != a || end != begin + wcslen(begin)) {
         err(L"parse_util_cmdsubst_extent failed on line %ld", (long)__LINE__);
+    }
     parse_util_cmdsubst_extent(a, 3, &begin, &end);
-    if (begin != a || end != begin + wcslen(begin))
+    if (begin != a || end != begin + wcslen(begin)) {
         err(L"parse_util_cmdsubst_extent failed on line %ld", (long)__LINE__);
+    }
 
     parse_util_cmdsubst_extent(a, 8, &begin, &end);
-    if (begin != a + wcslen(L"echo ("))
+    if (begin != a + wcslen(L"echo (")) {
         err(L"parse_util_cmdsubst_extent failed on line %ld", (long)__LINE__);
+    }
 
     parse_util_cmdsubst_extent(a, 17, &begin, &end);
-    if (begin != a + wcslen(L"echo (echo ("))
+    if (begin != a + wcslen(L"echo (echo (")) {
         err(L"parse_util_cmdsubst_extent failed on line %ld", (long)__LINE__);
+    }
+}
+
+/// Verify the behavior of the `list_to_aray_val()` family of functions.
+static void test_list_to_array() {
+    auto list = wcstring_list_t();
+    auto val = list_to_array_val(list);
+    if (*val != ENV_NULL) {
+        err(L"test_list_to_array failed on line %lu", __LINE__);
+    }
+
+    list.push_back(L"");
+    val = list_to_array_val(list);
+    if (*val != list[0]) {
+        err(L"test_list_to_array failed on line %lu", __LINE__);
+    }
+
+    list.push_back(L"abc");
+    val = list_to_array_val(list);
+    if (*val != L"" ARRAY_SEP_STR L"abc") {
+        err(L"test_list_to_array failed on line %lu", __LINE__);
+    }
+
+    list.insert(list.begin(), L"ghi");
+    val = list_to_array_val(list);
+    if (*val != L"ghi" ARRAY_SEP_STR L"" ARRAY_SEP_STR L"abc") {
+        err(L"test_list_to_array failed on line %lu", __LINE__);
+    }
+
+    list.push_back(L"");
+    val = list_to_array_val(list);
+    if (*val != L"ghi" ARRAY_SEP_STR L"" ARRAY_SEP_STR L"abc" ARRAY_SEP_STR L"") {
+        err(L"test_list_to_array failed on line %lu", __LINE__);
+    }
+
+    list.push_back(L"def");
+    val = list_to_array_val(list);
+    if (*val !=
+        L"ghi" ARRAY_SEP_STR L"" ARRAY_SEP_STR L"abc" ARRAY_SEP_STR L"" ARRAY_SEP_STR L"def") {
+        err(L"test_list_to_array failed on line %lu", __LINE__);
+    }
+
+    const wchar_t *array1[] = {NULL};
+    val = list_to_array_val(array1);
+    if (*val != ENV_NULL) {
+        err(L"test_list_to_array failed on line %lu", __LINE__);
+    }
+
+    const wchar_t *array2[] = {L"abc", NULL};
+    val = list_to_array_val(array2);
+    if (wcscmp(val->c_str(), L"abc") != 0) {
+        err(L"test_list_to_array failed on line %lu", __LINE__);
+    }
+
+    const wchar_t *array3[] = {L"abc", L"def", NULL};
+    val = list_to_array_val(array3);
+    if (wcscmp(val->c_str(), L"abc" ARRAY_SEP_STR L"def") != 0) {
+        err(L"test_list_to_array failed on line %lu", __LINE__);
+    }
+
+    const wchar_t *array4[] = {L"abc", L"def", L"ghi", NULL};
+    val = list_to_array_val(array4);
+    if (wcscmp(val->c_str(), L"abc" ARRAY_SEP_STR L"def" ARRAY_SEP_STR L"ghi") != 0) {
+        err(L"test_list_to_array failed on line %lu", __LINE__);
+    }
+}
+
+static struct wcsfilecmp_test {
+    const wchar_t *str1;
+    const wchar_t *str2;
+    int expected_rc;
+} wcsfilecmp_tests[] = {{L"", L"", 0},
+                        {L"", L"def", -1},
+                        {L"abc", L"", 1},
+                        {L"abc", L"def", -1},
+                        {L"abc", L"DEF", -1},
+                        {L"DEF", L"abc", 1},
+                        {L"abc", L"abc", 0},
+                        {L"ABC", L"ABC", 0},
+                        {L"AbC", L"abc", -1},
+                        {L"AbC", L"ABC", 1},
+                        {L"def", L"abc", 1},
+                        {L"1ghi", L"1gHi", 1},
+                        {L"1ghi", L"2ghi", -1},
+                        {L"1ghi", L"01ghi", 1},
+                        {L"1ghi", L"02ghi", -1},
+                        {L"01ghi", L"1ghi", -1},
+                        {L"1ghi", L"002ghi", -1},
+                        {L"002ghi", L"1ghi", 1},
+                        {L"abc01def", L"abc1def", -1},
+                        {L"abc1def", L"abc01def", 1},
+                        {L"abc12", L"abc5", 1},
+                        {L"51abc", L"050abc", 1},
+                        {L"abc5", L"abc12", -1},
+                        {L"5abc", L"12ABC", -1},
+                        {L"abc0789", L"abc789", -1},
+                        {L"abc0xA789", L"abc0xA0789", 1},
+                        {L"abc002", L"abc2", -1},
+                        {L"abc002g", L"abc002", 1},
+                        {L"abc002g", L"abc02g", -1},
+                        {L"abc002.txt", L"abc02.txt", -1},
+                        {L"abc005", L"abc012", -1},
+                        {L"abc02", L"abc002", 1},
+                        {L"abc002.txt", L"abc02.txt", -1},
+                        {L"GHI1abc2.txt", L"ghi1abc2.txt", -1},
+                        {L"a0", L"a00", -1},
+                        {L"a00b", L"a0b", -1},
+                        {L"a0b", L"a00b", 1},
+                        {NULL, NULL, 0}};
+
+/// Verify the behavior of the `wcsfilecmp()` function.
+static void test_wcsfilecmp() {
+    for (auto test = wcsfilecmp_tests; test->str1; test++) {
+        int rc = wcsfilecmp(test->str1, test->str2);
+        if (rc != test->expected_rc) {
+            err(L"New failed on line %lu: [\"%ls\" <=> \"%ls\"]: "
+                L"expected return code %d but got %d",
+                __LINE__, test->str1, test->str2, test->expected_rc, rc);
+        }
+    }
+}
+
+static void test_utility_functions() {
+    say(L"Testing utility functions");
+    test_list_to_array();
+    test_wcsfilecmp();
+    test_parse_util_cmdsubst_extent();
 }
 
 // UTF8 tests taken from Alexey Vatchenko's utf8 library. See http://www.bsdua.org/libbsdua.html.
@@ -1695,7 +1827,7 @@ struct pager_layout_testcase_t {
 
             wcstring text = sd.line(0).to_string();
             if (text != expected) {
-                fwprintf(stderr, L"width %zu got %d<%ls>, expected %d<%ls>\n", this->width,
+                fwprintf(stderr, L"width %zu got %zu<%ls>, expected %zu<%ls>\n", this->width,
                          text.length(), text.c_str(), expected.length(), expected.c_str());
                 for (size_t i = 0; i < std::max(text.length(), expected.length()); i++) {
                     fwprintf(stderr, L"i %zu got <%lx> expected <%lx>\n", i,
@@ -2489,12 +2621,13 @@ static void test_input() {
 #define UVARS_TEST_PATH L"test/fish_uvars_test/varsfile.txt"
 
 static int test_universal_helper(int x) {
+    callback_data_list_t callbacks;
     env_universal_t uvars(UVARS_TEST_PATH);
     for (int j = 0; j < UVARS_PER_THREAD; j++) {
         const wcstring key = format_string(L"key_%d_%d", x, j);
         const wcstring val = format_string(L"val_%d_%d", x, j);
         uvars.set(key, val, false);
-        bool synced = uvars.sync(NULL);
+        bool synced = uvars.sync(callbacks);
         if (!synced) {
             err(L"Failed to sync universal variables after modification");
         }
@@ -2502,7 +2635,7 @@ static int test_universal_helper(int x) {
 
     // Last step is to delete the first key.
     uvars.remove(format_string(L"key_%d_%d", x, 0));
-    bool synced = uvars.sync(NULL);
+    bool synced = uvars.sync(callbacks);
     if (!synced) {
         err(L"Failed to sync universal variables after deletion");
     }
@@ -2520,7 +2653,8 @@ static void test_universal() {
     iothread_drain_all();
 
     env_universal_t uvars(UVARS_TEST_PATH);
-    bool loaded = uvars.load();
+    callback_data_list_t callbacks;
+    bool loaded = uvars.load(callbacks);
     if (!loaded) {
         err(L"Failed to load universal variables");
     }
@@ -2553,6 +2687,8 @@ static bool callback_data_less_than(const callback_data_t &a, const callback_dat
 
 static void test_universal_callbacks() {
     say(L"Testing universal callbacks");
+    callback_data_list_t callbacks;
+
     if (system("mkdir -p test/fish_uvars_test/")) err(L"mkdir failed");
     env_universal_t uvars1(UVARS_TEST_PATH);
     env_universal_t uvars2(UVARS_TEST_PATH);
@@ -2566,23 +2702,23 @@ static void test_universal_callbacks() {
     uvars1.set(L"kappa", L"1", false);
     uvars1.set(L"omicron", L"1", false);
 
-    uvars1.sync(NULL);
-    uvars2.sync(NULL);
+    uvars1.sync(callbacks);
+    uvars2.sync(callbacks);
 
     // Change uvars1.
     uvars1.set(L"alpha", L"2", false);    // changes value
     uvars1.set(L"beta", L"1", true);      // changes export
     uvars1.remove(L"delta");              // erases value
     uvars1.set(L"epsilon", L"1", false);  // changes nothing
-    uvars1.sync(NULL);
+    uvars1.sync(callbacks);
 
     // Change uvars2. It should treat its value as correct and ignore changes from uvars1.
     uvars2.set(L"lambda", L"1", false);  // same value
     uvars2.set(L"kappa", L"2", false);   // different value
 
     // Now see what uvars2 sees.
-    callback_data_list_t callbacks;
-    uvars2.sync(&callbacks);
+    callbacks.clear();
+    uvars2.sync(callbacks);
 
     // Sort them to get them in a predictable order.
     std::sort(callbacks.begin(), callbacks.end(), callback_data_less_than);
@@ -4257,7 +4393,6 @@ int main(int argc, char **argv) {
     if (should_test_function("parser")) test_parser();
     if (should_test_function("cancellation")) test_cancellation();
     if (should_test_function("indents")) test_indents();
-    if (should_test_function("utils")) test_utils();
     if (should_test_function("utf8")) test_utf8();
     if (should_test_function("escape_sequences")) test_escape_sequences();
     if (should_test_function("lru")) test_lru();
@@ -4288,6 +4423,7 @@ int main(int argc, char **argv) {
     if (should_test_function("string")) test_string();
     if (should_test_function("env_vars")) test_env_vars();
     if (should_test_function("illegal_command_exit_code")) test_illegal_command_exit_code();
+    if (should_test_function("utility_functions")) test_utility_functions();
     // history_tests_t::test_history_speed();
 
     say(L"Encountered %d errors in low-level tests", err_count);

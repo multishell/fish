@@ -106,6 +106,7 @@ Some characters can not be written directly on the command line. For these chara
 - '<code>\\\></code>' escapes the more than character
 - '<code>\\^</code>' escapes the circumflex character
 - '<code>\\&amp;</code>' escapes the ampersand character
+- '<code>\\|</code>' escapes the vertical bar character
 - '<code>\\;</code>' escapes the semicolon character
 - '<code>\\"</code>' escapes the quote character
 - '<code>\\'</code>' escapes the apostrophe character
@@ -580,7 +581,7 @@ Be careful when you try to use braces to separate variable names from text. The 
 
 \subsection expand-index-range Index range expansion
 
-Both command substitution and shell variable expansion support accessing only specific items by providing a set of indices in square brackets. It's often needed to access a sequence of elements. To do this, use the range operator '`..`' for this. A range '`a..b`', where range limits 'a' and 'b' are integer numbers, is expanded into a sequence of indices '`a a+1 a+2 ... b`' or '`a a-1 a-2 ... b`' depending on which of 'a' or 'b' is higher. The negative range limits are calculated from the end of the array or command substitution.
+Both command substitution and shell variable expansion support accessing only specific items by providing a set of indices in square brackets. It's often needed to access a sequence of elements. To do this, use the range operator '`..`' for this. A range '`a..b`', where range limits 'a' and 'b' are integer numbers, is expanded into a sequence of indices '`a a+1 a+2 ... b`' or '`a a-1 a-2 ... b`' depending on which of 'a' or 'b' is higher. The negative range limits are calculated from the end of the array or command substitution. Note that invalid indexes for either end are silently clamped to one or the size of the array as appropriate.
 
 Some examples:
 
@@ -692,7 +693,7 @@ After a variable has been set, you can use the value of a variable in the shell 
 
 Example:
 
-To use the value of the variable `smurf`, write `$` (dollar symbol) followed by the name of the variable, like `echo Smurfs are usually $smurf_color`, which would print the result 'Smurfs are usually blue'.
+To use the value of the variable `smurf_color`, write `$` (dollar symbol) followed by the name of the variable, like `echo Smurfs are usually $smurf_color`, which would print the result 'Smurfs are usually blue'.
 
 
 \subsection variables-scope Variable scope
@@ -778,7 +779,7 @@ Variables can be explicitly set to be exported with the `-x` or `--export` switc
 
 `echo $PATH[3]`
 
-Note that array indices start at 1 in `fish`, not 0, as is more common in other languages. This is because many common Unix tools like `seq` are more suited to such use.
+Note that array indices start at 1 in `fish`, not 0, as is more common in other languages. This is because many common Unix tools like `seq` are more suited to such use. An invalid index is silently ignored resulting in no value being substituted (not an empty string).
 
 If you do not use any brackets, all the elements of the array will be written as separate items. This means you can easily iterate over an array using this syntax:
 
@@ -822,9 +823,19 @@ The user can change the settings of `fish` by changing the values of certain var
 
 - A large number of variable starting with the prefixes `fish_color` and `fish_pager_color.` See <a href='#variables-color'>Variables for changing highlighting colors</a> for more information.
 
+- `fish_escape_delay_ms` overrides the default timeout of 300ms (default key bindings) or 10ms (vi key bindings) after seeing an escape character before giving up on matching a key binding. See the documentation for the <a href='bind.html#special-case-escape'>bind</a> builtin command. This delay facilitates using escape as a meta key.
+
 - `fish_greeting`, the greeting message printed on startup.
 
-- `fish_escape_delay_ms` overrides the default timeout of 300ms (default key bindings) or 10ms (vi key bindings) after seeing an escape character before giving up on matching a key binding. See the documentation for the <a href='bind.html#special-case-escape'>bind</a> builtin command. This delay facilitates using escape as a meta key.
+- `fish_history`, the current history session name. If set, all subsequent commands within an
+  interactive fish session will be logged to a separate file identified by the value of the
+  variable. If unset, or set to `default`, the default session name "fish" is used. If set to an
+  empty string, history is not saved to disk (but is still available within the interactive
+  session).
+
+- `fish_user_paths`, an array of directories that are prepended to `PATH`. This can be a universal variable.
+
+- `umask`, the current file creation mask. The preferred way to change the umask variable is through the <a href="commands.html#umask">umask function</a>. An attempt to set umask to an invalid value will always fail.
 
 - `BROWSER`, the user's preferred web browser. If this variable is set, fish will use the specified browser instead of the system default browser to display the fish documentation.
 
@@ -832,11 +843,7 @@ The user can change the settings of `fish` by changing the values of certain var
 
 - `LANG`, `LC_ALL`, `LC_COLLATE`, `LC_CTYPE`, `LC_MESSAGES`, `LC_MONETARY`, `LC_NUMERIC` and `LC_TIME` set the language option for the shell and subprograms. See the section <a href='#variables-locale'>Locale variables</a> for more information.
 
-- `fish_user_paths`, an array of directories that are prepended to `PATH`. This can be a universal variable.
-
 - `PATH`, an array of directories in which to search for commands
-
-- `umask`, the current file creation mask. The preferred way to change the umask variable is through the <a href="commands.html#umask">umask function</a>. An attempt to set umask to an invalid value will always fail.
 
 `fish` also sends additional information to the user through the values of certain environment variables. The user cannot change the values of most of these variables.
 
@@ -1091,7 +1098,7 @@ Command mode is also known as normal mode.
 
 - @key{p} pastes text from the <a href="#killring">killring</a>.
 
-- @key{u} undoes the most recent action.
+- @key{u} search history backwards.
 
 - @key{[} and @key{]} search the command history for the previous/next token containing the token under the cursor before the search was started. See the <a href='#history'>history</a> section for more information on history searching.
 
@@ -1129,7 +1136,10 @@ History searches can be aborted by pressing the escape key.
 
 Prefixing the commandline with a space will prevent the entire line from being stored in the history.
 
-The history is stored in the file `~/.local/share/fish/fish_history` (or `$XDG_DATA_HOME/fish/fish_history` if that variable is set).
+The command history is stored in the file `~/.local/share/fish/fish_history` (or
+`$XDG_DATA_HOME/fish/fish_history` if that variable is set) by default. However, you can set the
+`fish_history` environment variable to change the name of the history session (resulting in a
+`<session>_history` file); both before starting the shell and while the shell is running.
 
 Examples:
 
@@ -1287,9 +1297,11 @@ For more information on how to define new event handlers, see the documentation 
 
 \subsection debugging Debugging fish scripts
 
-Fish includes a built in debugger. The debugger allows you to stop execution of a script at an arbitrary point and launch a prompt. This prompt can then be used to check or change the value of any variables or perform any shellscript command. To resume normal execution of the script, simply exit the prompt.
+Fish includes a built in debugging facility. The debugger allows you to stop execution of a script at an arbitrary point. When this happens you are presented with an interactive prompt. At this prompt you can execute any fish command (there are no debug commands as such). For example, you can check or change the value of any variables using `printf` and `set`. As another example, you can run `status print-stack-trace` to see how this breakpoint was reached. To resume normal execution of the script, simply type `exit` or [ctrl-D].
 
-To start the debugger, simply call the builtin command `breakpoint`. The default action of the TRAP signal is to call this builtin, so a running script can be debugged by sending it the TRAP signal. Once in the debugger, it is easy to insert new breakpoints by using the funced function to edit the definition of a function.
+To start a debug session simply run the builtin command `breakpoint` at the point in a function or script where you wish to gain control. Also, the default action of the TRAP signal is to call this builtin. So a running script can be debugged by sending it the TRAP signal with the `kill` command. Once in the debugger, it is easy to insert new breakpoints by using the funced function to edit the definition of a function.
+
+Note: At the moment the debug prompt is identical to your normal fish prompt. This can make it hard to recognize that you've entered a debug session. <a hread="https://github.com/fish-shell/fish-shell/issues/1310">Issue 1310</a> is open to improve this.
 
 
 \section issues Common issues with fish

@@ -36,11 +36,11 @@
 #include <utility>
 #include <vector>
 
+#include "builtin_bind.h"
 #include "common.h"
 #include "env.h"
 #include "env_universal_common.h"
 #include "event.h"
-#include "expand.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "fish_version.h"
 #include "history.h"
@@ -54,8 +54,6 @@
 #include "screen.h"
 #include "wutil.h"  // IWYU pragma: keep
 
-/// Value denoting a null string.
-#define ENV_NULL L"\x1d"
 #define DEFAULT_TERM1 "ansi"
 #define DEFAULT_TERM2 "dumb"
 
@@ -98,9 +96,9 @@ static const wcstring_list_t locale_variables({L"LANG", L"LANGUAGE", L"LC_ALL", 
 /// subsystem.
 static const wcstring_list_t curses_variables({L"TERM", L"TERMINFO", L"TERMINFO_DIRS"});
 
-/// List of all "path" like variable names that need special handling. This includes automatic
+/// List of "path" like variable names that need special handling. This includes automatic
 /// splitting and joining on import/export. As well as replacing empty elements, which implicitly
-/// refer to the CWD, with an explicit '.'.
+/// refer to the CWD, with an explicit '.' in the case of PATH and CDPATH.
 static const wcstring_list_t colon_delimited_variable({L"PATH", L"MANPATH", L"CDPATH"});
 
 // Some forward declarations to make it easy to logically group the code.
@@ -331,6 +329,9 @@ static void handle_timezone(const wchar_t *env_var_name) {
 /// Unfortunately that convention causes problems for fish scripts. So this function replaces the
 /// empty path element with an explicit ".". See issue #3914.
 static void fix_colon_delimited_var(const wcstring &var_name) {
+    // While we auto split/join MANPATH we do not want to replace empty elements with "." (#4158).
+    if (var_name == L"MANPATH") return;
+
     const env_var_t paths = env_get_string(var_name);
     if (paths.missing_or_empty()) return;
 
@@ -587,7 +588,8 @@ static bool variable_is_colon_delimited_var(const wcstring &str) {
 /// React to modifying the given variable.
 static void react_to_variable_change(const wcstring &key) {
     // Don't do any of this until `env_init()` has run. We only want to do this in response to
-    // variables set by the user; e.g., in a script like *config.fish* or interactively.
+    // variables set by the user; e.g., in a script like *config.fish* or interactively or as part
+    // of loading the universal variables for the first time.
     if (!env_initialized) return;
 
     if (var_is_locale(key)) {
@@ -610,6 +612,8 @@ static void react_to_variable_change(const wcstring &key) {
         invalidate_termsize(true);  // force fish to update its idea of the terminal size plus vars
     } else if (key == L"FISH_READ_BYTE_LIMIT") {
         env_set_read_limit();
+    } else if (key == L"fish_history") {
+        reader_change_history(history_session_id().c_str());
     }
 }
 
@@ -702,11 +706,11 @@ wcstring env_get_pwd_slash(void) {
 /// Set up the USER variable.
 static void setup_user(bool force) {
     if (env_get_string(L"USER").missing_or_empty() || force) {
-	struct passwd userinfo;
-	struct passwd *result;
-	char buf[8192];
-	int retval = getpwuid_r(getuid(), &userinfo, buf, sizeof(buf), &result);
-	if (!retval && result) {
+        struct passwd userinfo;
+        struct passwd *result;
+        char buf[8192];
+        int retval = getpwuid_r(getuid(), &userinfo, buf, sizeof(buf), &result);
+        if (!retval && result) {
             const wcstring uname = str2wcstring(userinfo.pw_name);
             env_set(L"USER", uname.c_str(), ENV_GLOBAL | ENV_EXPORT);
         }
@@ -747,6 +751,26 @@ void misc_init() {
         fclose(procsyskosrel);
     }
 #endif  // OS_IS_MS_WINDOWS
+}
+
+static void env_universal_callbacks(callback_data_list_t &callbacks) {
+    for (size_t i = 0; i < callbacks.size(); i++) {
+        const callback_data_t &data = callbacks.at(i);
+        universal_callback(data.type, data.key.c_str());
+    }
+}
+
+void env_universal_barrier() {
+    ASSERT_IS_MAIN_THREAD();
+    if (!uvars()) return;
+
+    callback_data_list_t callbacks;
+    bool changed = uvars()->sync(callbacks);
+    if (changed) {
+        universal_notifier_t::default_notifier().post_notification();
+    }
+
+    env_universal_callbacks(callbacks);
 }
 
 void env_init(const struct config_paths_t *paths /* or NULL */) {
@@ -842,33 +866,39 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
     //     env HOME=(mktemp -d) su --preserve-environment fish
     if (env_get_string(L"HOME").missing_or_empty()) {
         const env_var_t unam = env_get_string(L"USER");
-        char *unam_narrow = wcs2str(unam.c_str());
-        struct passwd userinfo;
-        struct passwd *result;
-        char buf[8192];
-        int retval = getpwnam_r(unam_narrow, &userinfo, buf, sizeof(buf), &result);
-        if (retval || !result) {
-            // Maybe USER is set but it's bogus. Reset USER from the db and try again.
-            setup_user(true);
-            const env_var_t unam = env_get_string(L"USER");
-            unam_narrow = wcs2str(unam.c_str());
-            retval = getpwnam_r(unam_narrow, &userinfo, buf, sizeof(buf), &result);
+        if (!unam.missing_or_empty()) {
+            char *unam_narrow = wcs2str(unam.c_str());
+            struct passwd userinfo;
+            struct passwd *result;
+            char buf[8192];
+            int retval = getpwnam_r(unam_narrow, &userinfo, buf, sizeof(buf), &result);
+            if (retval || !result) {
+                // Maybe USER is set but it's bogus. Reset USER from the db and try again.
+                setup_user(true);
+                const env_var_t unam = env_get_string(L"USER");
+                unam_narrow = wcs2str(unam.c_str());
+                retval = getpwnam_r(unam_narrow, &userinfo, buf, sizeof(buf), &result);
+            }
+            if (!retval && result && userinfo.pw_dir) {
+                const wcstring dir = str2wcstring(userinfo.pw_dir);
+                env_set(L"HOME", dir.c_str(), ENV_GLOBAL | ENV_EXPORT);
+            } else {
+                // We cannot get $HOME, set it to the empty list.
+                // This triggers warnings for history and config.fish already,
+                // so it isn't necessary to warn here as well.
+                env_set(L"HOME", ENV_NULL, ENV_GLOBAL | ENV_EXPORT);
+            }
+            free(unam_narrow);
+        } else {
+            // If $USER is empty as well (which we tried to set above),
+            // we can't get $HOME.
+            env_set(L"HOME", ENV_NULL, ENV_GLOBAL | ENV_EXPORT);
         }
-        if (!retval && result && userinfo.pw_dir) {
-            const wcstring dir = str2wcstring(userinfo.pw_dir);
-            env_set(L"HOME", dir.c_str(), ENV_GLOBAL | ENV_EXPORT);
-        }
-        free(unam_narrow);
     }
 
     env_set_pwd();         // initialize the PWD variable
     env_set_termsize();    // initialize the terminal size variables
     env_set_read_limit();  // initialize the read_byte_limit
-
-    // Set up universal variables. The empty string means to use the deafult path.
-    assert(s_universal_variables == NULL);
-    s_universal_variables = new env_universal_t(L"");
-    s_universal_variables->load();
 
     // Set g_use_posix_spawn. Default to true.
     env_var_t use_posix_spawn = env_get_string(L"fish_use_posix_spawn");
@@ -878,11 +908,23 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
     // Set fish_bind_mode to "default".
     env_set(FISH_BIND_MODE_VAR, DEFAULT_BIND_MODE, ENV_GLOBAL);
 
+    // This is somewhat subtle. At this point we consider our environment to be sufficiently
+    // initialized that we can react to changes to variables. Prior to doing this we expect that the
+    // code for setting vars that might have side-effects will do whatever
+    // `react_to_variable_change()` would do for that var.
+    env_initialized = true;
+
+    // Set up universal variables. The empty string means to use the default path.
+    assert(s_universal_variables == NULL);
+    s_universal_variables = new env_universal_t(L"");
+    callback_data_list_t callbacks;
+    s_universal_variables->load(callbacks);
+    env_universal_callbacks(callbacks);
+
     // Now that the global scope is fully initialized, add a toplevel local scope. This same local
     // scope will persist throughout the lifetime of the fish process, and it will ensure that `set
     // -l` commands run at the command-line don't affect the global scope.
     env_push(false);
-    env_initialized = true;
 }
 
 /// Search all visible scopes in order for the specified key. Return the first scope in which it was
@@ -957,7 +999,7 @@ int env_set(const wcstring &key, const wchar_t *val, env_mode_flags_t var_mode) 
         return ENV_INVALID;
     }
 
-    // Zero element arrays are internaly not coded as null but as this placeholder string.
+    // Zero element arrays are internally not coded as an empty string but this placeholder string.
     if (!val) {
         val = ENV_NULL;  //!OCLINT(parameter reassignment)
     }
@@ -1174,7 +1216,7 @@ env_var_t env_get_string(const wcstring &key, env_mode_flags_t mode) {
 
             history_t *history = reader_get_history();
             if (!history) {
-                history = &history_t::history_with_name(L"fish");
+                history = &history_t::history_with_name(history_session_id());
             }
             if (history) history->get_string_representation(&result, ARRAY_SEP_STR);
             return result;
@@ -1478,23 +1520,6 @@ env_vars_snapshot_t::env_vars_snapshot_t(const wchar_t *const *keys) {
     }
 }
 
-void env_universal_barrier() {
-    ASSERT_IS_MAIN_THREAD();
-    if (uvars()) {
-        callback_data_list_t changes;
-        bool changed = uvars()->sync(&changes);
-        if (changed) {
-            universal_notifier_t::default_notifier().post_notification();
-        }
-
-        // Post callbacks.
-        for (size_t i = 0; i < changes.size(); i++) {
-            const callback_data_t &data = changes.at(i);
-            universal_callback(data.type, data.key.c_str());
-        }
-    }
-}
-
 env_vars_snapshot_t::env_vars_snapshot_t() {}
 
 // The "current" variables are not a snapshot at all, but instead trampoline to env_get_string, etc.
@@ -1517,3 +1542,61 @@ const wchar_t *const env_vars_snapshot_t::highlighting_keys[] = {L"PATH", L"CDPA
                                                                  L"fish_function_path", NULL};
 
 const wchar_t *const env_vars_snapshot_t::completing_keys[] = {L"PATH", L"CDPATH", NULL};
+
+// The next set of functions convert between a flat string and an actual list of strings using
+// the encoding employed by fish internally for "arrays".
+
+std::unique_ptr<wcstring> list_to_array_val(const wcstring_list_t &list) {
+    auto val = std::unique_ptr<wcstring>(new wcstring());
+
+    if (list.size() == 0) {
+        // Zero element arrays are internally encoded as this placeholder string.
+        val->append(ENV_NULL);
+    } else {
+        bool need_sep = false;
+        for (auto it : list) {
+            if (need_sep) {
+                val->push_back(ARRAY_SEP);
+            } else {
+                need_sep = true;
+            }
+            val->append(it);
+        }
+    }
+
+    return val;
+}
+
+std::unique_ptr<wcstring> list_to_array_val(const wchar_t **list) {
+    auto val = std::unique_ptr<wcstring>(new wcstring());
+
+    if (!*list) {
+        // Zero element arrays are internally encoded as this placeholder string.
+        val->append(ENV_NULL);
+    } else {
+        for (auto it = list; *it; it++) {
+            if (it != list) val->push_back(ARRAY_SEP);
+            val->append(*it);
+        }
+    }
+
+    return val;
+}
+
+void tokenize_variable_array(const wcstring &val, wcstring_list_t &out) {
+    out.clear();  // ensure the output var is empty -- this will normally be a no-op
+
+    // Zero element arrays are internally encoded as this placeholder string.
+    if (val == ENV_NULL) return;
+
+    size_t pos = 0, end = val.size();
+    while (pos <= end) {
+        size_t next_pos = val.find(ARRAY_SEP, pos);
+        if (next_pos == wcstring::npos) {
+            next_pos = end;
+        }
+        out.resize(out.size() + 1);
+        out.back().assign(val, pos, next_pos - pos);
+        pos = next_pos + 1;  // skip the separator, or skip past the end
+    }
+}

@@ -4,8 +4,8 @@ string match: [
 string match: ^
 
 # string invalidarg
-string: Unknown subcommand 'invalidarg'
-Standard input (line 183): 
+string: Subcommand 'invalidarg' is not valid
+Standard input (line 251): 
 string invalidarg; and echo "unexpected exit 0" >&2
 ^
 
@@ -29,6 +29,6 @@ string repeat: Expected argument
 
 # string repeat -l fakearg 2>&1
 string repeat: Unknown option '-l'
-Standard input (line 284): 
+Standard input (line 352): 
 string repeat -l fakearg
 ^

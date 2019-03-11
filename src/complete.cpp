@@ -317,8 +317,6 @@ class completer_t {
     void complete_param_expand(const wcstring &str, bool do_file,
                                bool handle_as_special_cd = false);
 
-    void complete_special_cd(const wcstring &str);
-
     void complete_cmd(const wcstring &str, bool use_function, bool use_builtin, bool use_command,
                       bool use_implicit_cd);
 
@@ -1448,10 +1446,6 @@ void complete(const wcstring &cmd_with_subcmds, std::vector<completion_t> *out_c
                             }
                         }
                     }
-
-                    // If we have found no command specific completions at all, fall back to using
-                    // file completions.
-                    if (completer.empty()) do_file = true;
 
                     // Hack. If we're cd, handle it specially (issue #1059, others).
                     handle_as_special_cd = (current_command_unescape == L"cd");

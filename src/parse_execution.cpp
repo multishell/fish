@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "builtin.h"
+#include "builtin_function.h"
 #include "common.h"
 #include "complete.h"
 #include "env.h"
@@ -387,14 +388,13 @@ parse_execution_result_t parse_execution_context_t::run_function_statement(
     const wcstring contents_str =
         wcstring(this->src, contents_start, contents_end - contents_start);
     int definition_line_offset = this->line_offset_of_character_at_offset(contents_start);
-    wcstring error_str;
     io_streams_t streams;
-    int err = builtin_function(*parser, streams, argument_list, contents_str,
-                               definition_line_offset, &error_str);
+    int err =
+        builtin_function(*parser, streams, argument_list, contents_str, definition_line_offset);
     proc_set_last_status(err);
 
-    if (!error_str.empty()) {
-        this->report_error(header, L"%ls", error_str.c_str());
+    if (!streams.err.empty()) {
+        this->report_error(header, L"%ls", streams.err.buffer().c_str());
         result = parse_execution_errored;
     }
 
@@ -689,7 +689,7 @@ parse_execution_result_t parse_execution_context_t::report_errors(
 
         // Get a backtrace.
         wcstring backtrace_and_desc;
-        parser->get_backtrace(src, error_list, &backtrace_and_desc);
+        parser->get_backtrace(src, error_list, backtrace_and_desc);
 
         // Print it.
         if (!should_suppress_stderr_for_tests()) {
@@ -774,7 +774,7 @@ parse_execution_result_t parse_execution_context_t::handle_command_not_found(
         this->report_error(statement_node, msg, eval_cmd.c_str());
     } else if (err_code != ENOENT) {
         this->report_error(statement_node, _(L"The file '%ls' is not executable by this user"),
-                           cmd ? cmd : L"UNKNOWN");
+                           cmd);
     } else {
         // Handle unrecognized commands with standard command not found handler that can make better
         // error messages.
@@ -877,9 +877,7 @@ parse_execution_result_t parse_execution_context_t::populate_plain_process(
         process_type = function_exists(L"cd") ? INTERNAL_FUNCTION : INTERNAL_BUILTIN;
     } else {
         const globspec_t glob_behavior = (cmd == L"set" || cmd == L"count") ? nullglob : failglob;
-        // Form the list of arguments. The command is the first argument. TODO: count hack, where we
-        // treat 'count --help' as different from 'count $foo' that expands to 'count --help'. fish
-        // 1.x never successfully did this, but it tried to!
+        // Form the list of arguments. The command is the first argument.
         parse_execution_result_t arg_result =
             this->determine_arguments(statement, &argument_list, glob_behavior);
         if (arg_result != parse_execution_success) {

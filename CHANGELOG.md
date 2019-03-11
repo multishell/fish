@@ -1,3 +1,52 @@
+# fish 2.7b1 (released October 31, 2017)
+
+## Notable improvements
+- A new `cdh` (change directory using recent history) command provides a more friendly alternative to prevd/nextd and pushd/popd (#2847).
+- A new `argparse` command is available to allow fish script to parse arguments with the same behavior as builtin commands. This also includes the `fish_opt` helper command. (#4190).
+- Invalid array indexes are now silently ignored (#826, #4127).
+- Improvements to the debugging facility, including a prompt specific to the debugger (`fish_breakpoint_prompt`) and a `status is-breakpoint` subcommand (#1310).
+- `string` supports new `lower` and `upper` subcommands, for altering the case of strings (#4080). The case changing is not locale-aware yet.
+- `string escape` has a new `--style=xxx` flag where `xxx` can be `script`, `var`, or `url` (#4150), and can be reversed with `string unescape` (#3543).
+- History can now be split into sessions with the `fish_history` variable, or not saved to disk at all (#102).
+- Read history is now controlled by the `fish_history` variable rather than the `--mode-name` flag (#1504).
+- `command` now supports an `--all` flag to report all directories with the command. `which` is no longer a runtime dependency (#2778).
+- fish can run commands before starting an interactive session using the new `--init-command`/`-C` options (#4164).
+- `set` has a new `--show` option to show lots of information about variables (#4265).
+
+## Other significant changes
+- The `COLUMNS` and `LINES` environment variables are now correctly set the first time `fish_prompt` is run (#4141).
+- `complete`'s `--no-files` option works as intended (#112).
+- `echo -h` now correctly echoes `-h` in line with other shells (#4120).
+- The `export` compatibility function now returns zero on success, rather than always returning 1 (#4435).
+- Stop converting empty elements in MANPATH to "." (#4158). The behavior being changed was introduced in fish 2.6.0.
+- `count -h` and `count --help` now return 1 rather than produce command help output (#4189).
+- An attempt to `read` which stops because too much data is available still defines the variables given as parameters (#4180).
+- A regression in fish 2.4.0 which prevented `pushd +1` from working has been fixed (#4091).
+- A regression in fish 2.6.0 where multiple `read` commands in non-interactive scripts were broken has been fixed (#4206).
+- A regression in fish 2.6.0 involving universal variables with side-effects at startup such as `set -U fish_escape_delay_ms 10` has been fixed (#4196).
+- Added completions for:
+  - `as` (#4130)
+  - `cdh` (#2847)
+  - `dhcpd` (#4115)
+  - `ezjail-admin` (#4324)
+  - Fabric's `fab` (#4153)
+  - `grub-file` (#4119)
+  - `grub-install` (#4119)
+  - `jest` (#4142)
+  - `kdeconnect-cli`
+  - `magneto` (#4043, #4108)
+  - `mdadm` (#4198)
+  - `passwd` (#4209)
+  - `pip` and `pipenv` (#4448)
+  - `s3cmd` (#4332)
+  - `sbt` (#4347)
+  - `snap` (#4215)
+  - Sublime Text 3's `subl` (#4277)
+- Lots of improvements to completions.
+- Updated Chinese and French translations.
+
+---
+
 # fish 2.6.0 (released June 3, 2017)
 
 Since the beta release of fish 2.6b1, fish version 2.6.0 contains a number of minor fixes, new completions for `magneto` (#4043), and improvements to the documentation.
@@ -29,6 +78,7 @@ If you are upgrading from version 2.5.0 or before, please also review the releas
 - `read` will read up to 10 MiB by default, leaving the target variable empty and exiting with status 122 if the line is too long. You can set a different limit with the `FISH_READ_BYTE_LIMIT` variable.
 - `read` supports a new `--silent` option to hide the characters typed (#838), for when reading sensitive data from the terminal. `read` also now accepts simple strings for the prompt (rather than scripts) with the new `-P` and `--prompt-str` options (#802).
 - `export` and `setenv` now understand colon-separated `PATH`, `CDPATH` and `MANPATH` variables.
+- `setenv` is no longer a simple alias for `set -gx` and will complain, just like the csh version, if given more than one value (#4103).
 - `bind` supports a new `--list-modes` option (#3872).
 - `bg` will check all of its arguments before backgrounding any jobs; any invalid arguments will cause a failure, but non-existent (eg recently exited) jobs are ignored (#3909).
 - `funced` warns if the function being edited has not been modified (#3961).
@@ -36,7 +86,7 @@ If you are upgrading from version 2.5.0 or before, please also review the releas
 - `status` supports a new `current-function` subcommand to print the current function name (#1743).
 - `string` supports a new `repeat` subcommand (#3864). `string match` supports a new `--entire` option to emit the entire line matched by a pattern (#3957). `string replace` supports a new `--filter` option to only emit lines which underwent a replacement (#3348).
 - `test` supports the `-k` option to test for sticky bits (#733).
-- `umask` understands symbolic modes (#738). 
+- `umask` understands symbolic modes (#738).
 - Empty components in the `CDPATH`, `MANPATH` and `PATH` variables are now converted to "." (#2106, #3914).
 - New versions of ncurses (6.0 and up) wipe terminal scrollback buffers with certain commands; the `C-l` binding tries to avoid this (#2855).
 - Some systems' `su` implementations do not set the `USER` environment variable; it is now reset for root users (#3916).

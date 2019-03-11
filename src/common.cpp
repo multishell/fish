@@ -1,11 +1,13 @@
 // Various functions, mostly string utilities, that are used by most parts of fish.
 #include "config.h"
 
+#include <ctype.h>
 #include <cxxabi.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -73,6 +75,38 @@ static char *wcs2str_internal(const wchar_t *in, char *out);
 static void debug_shared(const wchar_t msg_level, const wcstring &msg);
 
 bool has_working_tty_timestamps = true;
+
+/// Convert a character to its integer equivalent if it is a valid character for the requested base.
+/// Return the integer value if it is valid else -1.
+long convert_digit(wchar_t d, int base) {
+    long res = -1;
+    if ((d <= L'9') && (d >= L'0')) {
+        res = d - L'0';
+    } else if ((d <= L'z') && (d >= L'a')) {
+        res = d + 10 - L'a';
+    } else if ((d <= L'Z') && (d >= L'A')) {
+        res = d + 10 - L'A';
+    }
+    if (res >= base) {
+        res = -1;
+    }
+
+    return res;
+}
+
+/// Test whether the char is a valid hex digit as used by the `escape_string_*()` functions.
+static bool is_hex_digit(int c) { return strchr("0123456789ABCDEF", c) != NULL; }
+
+/// This is a specialization of `convert_digit()` that only handles base 16 and only uppercase.
+long convert_hex_digit(wchar_t d) {
+    if ((d <= L'9') && (d >= L'0')) {
+        return d - L'0';
+    } else if ((d <= L'Z') && (d >= L'A')) {
+        return 10 + d - L'A';
+    }
+
+    return -1;
+}
 
 #ifdef HAVE_BACKTRACE_SYMBOLS
 // This function produces a stack backtrace with demangled function & method names. It is based on
@@ -453,14 +487,14 @@ wchar_t *quote_end(const wchar_t *pos) {
 }
 
 void fish_setlocale() {
-    // Use the Unicode "ellipsis" symbol if it can be encoded using the current locale.
-    ellipsis_char = can_be_encoded(L'\x2026') ? L'\x2026' : L'$';
-
-    // Use the Unicode "return" symbol if it can be encoded using the current locale.
-    omitted_newline_char = can_be_encoded(L'\x23CE') ? L'\x23CE' : L'~';
-
-    // solid circle unicode character if it is able, fallback to the hash character
-    obfuscation_read_char = can_be_encoded(L'\u25cf') ? L'\u25cf' : L'#';
+    // Use various Unicode symbols if they can be encoded using the current locale, else a simple
+    // ASCII char alternative. All of the can_be_encoded() invocations should return the same
+    // true/false value since the code points are in the BMP but we're going to be paranoid. This
+    // is also technically wrong if we're not in a Unicode locale but we expect (or hope)
+    // can_be_encoded() will return false in that case.
+    ellipsis_char = can_be_encoded(L'\u2026') ? L'\u2026' : L'$';          // "horizontal ellipsis"
+    omitted_newline_char = can_be_encoded(L'\u23CE') ? L'\u23CE' : L'~';   // "return"
+    obfuscation_read_char = can_be_encoded(L'\u25CF') ? L'\u25CF' : L'#';  // "black circle"
 }
 
 long read_blocked(int fd, void *buf, size_t count) {
@@ -565,16 +599,6 @@ void __attribute__((noinline)) debug(int level, const char *msg, ...) {
     errno = errno_old;
 }
 
-void read_ignore(int fd, void *buff, size_t count) {
-    size_t ignore __attribute__((unused));
-    ignore = read(fd, buff, count);
-}
-
-void write_ignore(int fd, const void *buff, size_t count) {
-    size_t ignore __attribute__((unused));
-    ignore = write(fd, buff, count);
-}
-
 void debug_safe(int level, const char *msg, const char *param1, const char *param2,
                 const char *param3, const char *param4, const char *param5, const char *param6,
                 const char *param7, const char *param8, const char *param9, const char *param10,
@@ -593,14 +617,14 @@ void debug_safe(int level, const char *msg, const char *param1, const char *para
         const char *end = strchr(cursor, '%');
         if (end == NULL) end = cursor + strlen(cursor);
 
-        write_ignore(STDERR_FILENO, cursor, end - cursor);
+        ignore_result(write(STDERR_FILENO, cursor, end - cursor));
 
         if (end[0] == '%' && end[1] == 's') {
             // Handle a format string.
             assert(param_idx < sizeof params / sizeof *params);
             const char *format = params[param_idx++];
             if (!format) format = "(null)";
-            write_ignore(STDERR_FILENO, format, strlen(format));
+            ignore_result(write(STDERR_FILENO, format, strlen(format)));
             cursor = end + 2;
         } else if (end[0] == '\0') {
             // Must be at the end of the string.
@@ -612,7 +636,7 @@ void debug_safe(int level, const char *msg, const char *param1, const char *para
     }
 
     // We always append a newline.
-    write_ignore(STDERR_FILENO, "\n", 1);
+    ignore_result(write(STDERR_FILENO, "\n", 1));
 
     errno = errno_old;
 }
@@ -745,11 +769,131 @@ wcstring reformat_for_screen(const wcstring &msg) {
     return buff;
 }
 
-/// Escape a string, storing the result in out_str.
-static void escape_string_internal(const wchar_t *orig_in, size_t in_len, wcstring *out_str,
-                                   escape_flags_t flags) {
-    assert(orig_in != NULL);
+/// Escape a string in a fashion suitable for using as a URL. Store the result in out_str.
+static void escape_string_url(const wchar_t *orig_in, wcstring &out) {
+    const std::string &in = wcs2string(orig_in);
+    for (auto c1 : in) {
+        // This silliness is so we get the correct result whether chars are signed or unsigned.
+        unsigned int c2 = (unsigned int)c1 & 0xFF;
+        if (!(c2 & 0x80) &&
+            (isalnum(c2) || c2 == '/' || c2 == '.' || c2 == '~' || c2 == '-' || c2 == '_')) {
+            // The above characters don't need to be encoded.
+            out.push_back((wchar_t)c2);
+        } else {
+            // All other chars need to have their UTF-8 representation encoded in hex.
+            wchar_t buf[4];
+            swprintf(buf, sizeof buf / sizeof buf[0], L"%%%02X", c2);
+            out.append(buf);
+        }
+    }
+}
 
+/// Reverse the effects of `escape_string_url()`. By definition the string has consist of just ASCII
+/// chars.
+static bool unescape_string_url(const wchar_t *in, wcstring *out) {
+    std::string result;
+    result.reserve(out->size());
+    for (wchar_t c = *in; c; c = *++in) {
+        if (c > 0x7F) return false;  // invalid character means we can't decode the string
+        if (c == '%') {
+            int c1 = in[1];
+            if (c1 == 0) return false;  // found unexpected end of string
+            if (c1 == '%') {
+                result.push_back('%');
+                in++;
+            } else {
+                int c2 = in[2];
+                if (c2 == 0) return false;  // string ended prematurely
+                long d1 = convert_digit(c1, 16);
+                if (d1 < 0) return false;
+                long d2 = convert_digit(c2, 16);
+                if (d2 < 0) return false;
+                result.push_back(16 * d1 + d2);
+                in += 2;
+            }
+        } else {
+            result.push_back(c);
+        }
+    }
+
+    *out = str2wcstring(result);
+    return true;
+}
+
+/// Escape a string in a fashion suitable for using as a fish var name. Store the result in out_str.
+static void escape_string_var(const wchar_t *orig_in, wcstring &out) {
+    bool prev_was_hex_encoded = false;
+    const std::string &in = wcs2string(orig_in);
+    for (auto c1 : in) {
+        // This silliness is so we get the correct result whether chars are signed or unsigned.
+        unsigned int c2 = (unsigned int)c1 & 0xFF;
+        if (!(c2 & 0x80) && isalnum(c2) && (!prev_was_hex_encoded || !is_hex_digit(c2))) {
+            // ASCII alphanumerics don't need to be encoded.
+            if (prev_was_hex_encoded) {
+                out.push_back(L'_');
+                prev_was_hex_encoded = false;
+            }
+            out.push_back((wchar_t)c2);
+        } else if (c2 == '_') {
+            // Underscores are encoded by doubling them.
+            out.append(L"__");
+            prev_was_hex_encoded = false;
+        } else {
+            // All other chars need to have their UTF-8 representation encoded in hex.
+            wchar_t buf[4];
+            swprintf(buf, sizeof buf / sizeof buf[0], L"_%02X", c2);
+            out.append(buf);
+            prev_was_hex_encoded = true;
+        }
+    }
+    if (prev_was_hex_encoded) {
+        out.push_back(L'_');
+    }
+}
+
+/// Reverse the effects of `escape_string_var()`. By definition the string has consist of just ASCII
+/// chars.
+static bool unescape_string_var(const wchar_t *in, wcstring *out) {
+    std::string result;
+    result.reserve(out->size());
+    bool prev_was_hex_encoded = false;
+    for (wchar_t c = *in; c; c = *++in) {
+        if (c > 0x7F) return false;  // invalid character means we can't decode the string
+        if (c == '_') {
+            int c1 = in[1];
+            if (c1 == 0) {
+                if (prev_was_hex_encoded) break;
+                return false;  // found unexpected escape char at end of string
+            }
+            if (c1 == '_') {
+                result.push_back('_');
+                in++;
+            } else if (is_hex_digit(c1)) {
+                int c2 = in[2];
+                if (c2 == 0) return false;  // string ended prematurely
+                long d1 = convert_hex_digit(c1);
+                if (d1 < 0) return false;
+                long d2 = convert_hex_digit(c2);
+                if (d2 < 0) return false;
+                result.push_back(16 * d1 + d2);
+                in += 2;
+                prev_was_hex_encoded = true;
+            }
+            // No "else" clause because if the first char after an underscore is not another
+            // underscore or a valid hex character then the underscore is there to improve
+            // readability after we've encoded a character not valid in a var name.
+        } else {
+            result.push_back(c);
+        }
+    }
+
+    *out = str2wcstring(result);
+    return true;
+}
+
+/// Escape a string in a fashion suitable for using in fish script. Store the result in out_str.
+static void escape_string_script(const wchar_t *orig_in, size_t in_len, wcstring &out,
+                                 escape_flags_t flags) {
     const wchar_t *in = orig_in;
     bool escape_all = static_cast<bool>(flags & ESCAPE_ALL);
     bool no_quoted = static_cast<bool>(flags & ESCAPE_NO_QUOTED);
@@ -757,9 +901,6 @@ static void escape_string_internal(const wchar_t *orig_in, size_t in_len, wcstri
 
     int need_escape = 0;
     int need_complex_escape = 0;
-
-    // Avoid dereferencing all over the place.
-    wcstring &out = *out_str;
 
     if (!no_quoted && in_len == 0) {
         out.assign(L"''");
@@ -903,15 +1044,45 @@ static void escape_string_internal(const wchar_t *orig_in, size_t in_len, wcstri
     }
 }
 
-wcstring escape_string(const wchar_t *in, escape_flags_t flags) {
+wcstring escape_string(const wchar_t *in, escape_flags_t flags, escape_string_style_t style) {
     wcstring result;
-    escape_string_internal(in, wcslen(in), &result, flags);
+
+    switch (style) {
+        case STRING_STYLE_SCRIPT: {
+            escape_string_script(in, wcslen(in), result, flags);
+            break;
+        }
+        case STRING_STYLE_URL: {
+            escape_string_url(in, result);
+            break;
+        }
+        case STRING_STYLE_VAR: {
+            escape_string_var(in, result);
+            break;
+        }
+    }
+
     return result;
 }
 
-wcstring escape_string(const wcstring &in, escape_flags_t flags) {
+wcstring escape_string(const wcstring &in, escape_flags_t flags, escape_string_style_t style) {
     wcstring result;
-    escape_string_internal(in.c_str(), in.size(), &result, flags);
+
+    switch (style) {
+        case STRING_STYLE_SCRIPT: {
+            escape_string_script(in.c_str(), in.size(), result, flags);
+            break;
+        }
+        case STRING_STYLE_URL: {
+            DIE("STRING_STYLE_URL not implemented");
+            break;
+        }
+        case STRING_STYLE_VAR: {
+            escape_string_var(in.c_str(), result);
+            break;
+        }
+    }
+
     return result;
 }
 
@@ -1311,14 +1482,44 @@ bool unescape_string_in_place(wcstring *str, unescape_flags_t escape_special) {
     return success;
 }
 
-bool unescape_string(const wchar_t *input, wcstring *output, unescape_flags_t escape_special) {
-    bool success = unescape_string_internal(input, wcslen(input), output, escape_special);
+bool unescape_string(const wchar_t *input, wcstring *output, unescape_flags_t escape_special,
+                     escape_string_style_t style) {
+    bool success = false;
+    switch (style) {
+        case STRING_STYLE_SCRIPT: {
+            success = unescape_string_internal(input, wcslen(input), output, escape_special);
+            break;
+        }
+        case STRING_STYLE_URL: {
+            success = unescape_string_url(input, output);
+            break;
+        }
+        case STRING_STYLE_VAR: {
+            success = unescape_string_var(input, output);
+            break;
+        }
+    }
     if (!success) output->clear();
     return success;
 }
 
-bool unescape_string(const wcstring &input, wcstring *output, unescape_flags_t escape_special) {
-    bool success = unescape_string_internal(input.c_str(), input.size(), output, escape_special);
+bool unescape_string(const wcstring &input, wcstring *output, unescape_flags_t escape_special,
+                     escape_string_style_t style) {
+    bool success = false;
+    switch (style) {
+        case STRING_STYLE_SCRIPT: {
+            success = unescape_string_internal(input.c_str(), input.size(), output, escape_special);
+            break;
+        }
+        case STRING_STYLE_URL: {
+            success = unescape_string_url(input.c_str(), output);
+            break;
+        }
+        case STRING_STYLE_VAR: {
+            success = unescape_string_var(input.c_str(), output);
+            break;
+        }
+    }
     if (!success) output->clear();
     return success;
 }
@@ -1391,7 +1592,10 @@ static void export_new_termsize(struct winsize *new_termsize) {
     env_set(L"LINES", buf, ENV_GLOBAL | (lines.missing_or_empty() ? 0 : ENV_EXPORT));
 
 #ifdef HAVE_WINSIZE
-    ioctl(STDOUT_FILENO, TIOCSWINSZ, new_termsize);
+    // Only write the new terminal size if we are in the foreground (#4477)
+    if (tcgetpgrp(STDOUT_FILENO) == getpgrp()) {
+        ioctl(STDOUT_FILENO, TIOCSWINSZ, new_termsize);
+    }
 #endif
 }
 
@@ -1422,19 +1626,6 @@ struct winsize get_current_winsize() {
 int common_get_width() { return get_current_winsize().ws_col; }
 
 int common_get_height() { return get_current_winsize().ws_row; }
-
-void tokenize_variable_array(const wcstring &val, std::vector<wcstring> &out) {
-    size_t pos = 0, end = val.size();
-    while (pos <= end) {
-        size_t next_pos = val.find(ARRAY_SEP, pos);
-        if (next_pos == wcstring::npos) {
-            next_pos = end;
-        }
-        out.resize(out.size() + 1);
-        out.back().assign(val, pos, next_pos - pos);
-        pos = next_pos + 1;  // skip the separator, or skip past the end
-    }
-}
 
 bool string_prefixes_string(const wchar_t *proposed_prefix, const wcstring &value) {
     size_t prefix_size = wcslen(proposed_prefix);
@@ -1944,22 +2135,6 @@ char **make_null_terminated_array(const std::vector<std::string> &lst) {
     return make_null_terminated_array_helper(lst);
 }
 
-long convert_digit(wchar_t d, int base) {
-    long res = -1;
-    if ((d <= L'9') && (d >= L'0')) {
-        res = d - L'0';
-    } else if ((d <= L'z') && (d >= L'a')) {
-        res = d + 10 - L'a';
-    } else if ((d <= L'Z') && (d >= L'A')) {
-        res = d + 10 - L'A';
-    }
-    if (res >= base) {
-        res = -1;
-    }
-
-    return res;
-}
-
 /// Test if the specified character is in a range that fish uses interally to store special tokens.
 ///
 /// NOTE: This is used when tokenizing the input. It is also used when reading input, before
@@ -1986,7 +2161,7 @@ void redirect_tty_output() {
 }
 
 /// Display a failed assertion message, dump a stack trace if possible, then die.
-[[noreturn]] void __assert(const char *msg, const char *file, size_t line, int error) {
+[[noreturn]] void __fish_assert(const char *msg, const char *file, size_t line, int error) {
     if (error) {
         debug(0, L"%s:%zu: failed assertion: %s: errno %d (%s)", file, line, msg, error,
               strerror(error));

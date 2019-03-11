@@ -17,20 +17,22 @@ function __fish_print_hostnames -d "Print a list of known hostnames"
         string match -r '^\s*[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3]:|^[a-zA-Z\.]*:' </etc/fstab | string replace -r ':.*' ''
     end
 
-    # Check hosts known to ssh
-    set -l known_hosts ~/.ssh/known_hosts{,2} /etc/ssh/{,ssh_}known_hosts{,2} # Yes, seriously - the default specifies both with and without "2"
-    # Check default ssh configs
+    # Check hosts known to ssh.
+    # Yes, seriously - the default specifies both with and without "2".
+    set -l known_hosts ~/.ssh/known_hosts{,2} /etc/ssh/{,ssh_}known_hosts{,2}
+    # Check default ssh configs.
     set -l ssh_config
-    # Get alias and commandline options
-    set -l ssh_command (functions ssh | string split ' ') (commandline -cpo)
-    # Extract ssh config path from last -F short option
+    # Get alias and commandline options.
+    set -l ssh_func_tokens (functions ssh | string match '*command ssh *' | string split ' ')
+    set -l ssh_command $ssh_func_tokens (commandline -cpo)
+    # Extract ssh config path from last -F short option.
     if contains -- '-F' $ssh_command
         set -l ssh_config_path_is_next 1
         for token in $ssh_command
             if contains -- '-F' $token
                 set ssh_config_path_is_next 0
             else if test $ssh_config_path_is_next -eq 0
-                set ssh_config (eval "echo $token")
+                set ssh_config (echo "echo $token" | source)
                 set ssh_config_path_is_next 1
             end
         end
@@ -42,52 +44,75 @@ function __fish_print_hostnames -d "Print a list of known hostnames"
     function _ssh_include --argument-names ssh_config
         # Relative paths in Include directive use /etc/ssh or ~/.ssh depending on
         # system or user level config. -F will not override this behaviour
-        if test $ssh_config = '/etc/ssh/ssh_config'
+        set -l relative_path $HOME/.ssh
+        if string match '/etc/ssh/*' -- $ssh_config
             set relative_path '/etc/ssh'
-        else
-            set relative_path $HOME/.ssh
         end
 
         function _recursive --no-scope-shadowing
-            set paths
+            set -l orig_dir $PWD
+            set -l paths
             for config in $argv
-                set paths $paths (cat $config ^/dev/null \
-                # Keep only Include lines
-                | string match -r -i '^\s*Include\s+.+' \
-                # Remove Include syntax
-                | string replace -r -i '^\s*Include\s+' '' \
-                # Normalize whitespace
-                | string trim | string replace -r -a '\s+' ' ')
-            end
-            if test -n "$paths"
-                # Expand paths which may have globbing and tokenize
-                set paths (eval "echo $paths" | string split ' ')
-                for path_index in (seq (count $paths))
-                    # Resolve relative paths
-                    if string match -v '/*' $paths[$path_index] >/dev/null
-                        set paths[$path_index] $relative_path/$paths[$path_index]
-                    end
-                    echo $paths[$path_index]
+                if test -r "$config"
+                    set paths $paths (
+                    # Keep only Include lines and remove Include syntax
+                    string replace -rfi '^\s*Include\s+' '' <$config \
+                    # Normalize whitespace
+                    | string trim | string replace -r -a '\s+' ' ')
                 end
-                _recursive $paths
+            end
+
+            builtin cd $relative_path
+            set -l new_paths
+            for path in $paths
+                set -l expanded_path
+                echo "set expanded_path (printf \"%s\n\" $path)" | source
+                for path in $expanded_path
+                    # Resolve "relative" paths in accordance to ssh path resolution
+                    if string match -qv '/*' $path
+                        set path $relative_path/$path
+                    end
+                    echo $path
+                    set new_paths $new_paths $path
+                end
+            end
+            builtin cd $orig_dir
+
+            if test -n "$new_paths"
+                _recursive $new_paths
             end
         end
         _recursive $ssh_config
     end
-    set -l ssh_configs (_ssh_include /etc/ssh/ssh_config) (_ssh_include $ssh_config)
+    set -l ssh_configs /etc/ssh/ssh_config (_ssh_include /etc/ssh/ssh_config) $ssh_config (_ssh_include $ssh_config)
 
     for file in $ssh_configs
         if test -r $file
             # Print hosts from system wide ssh configuration file
-            string match -r -i '^\s*Host\s+\S+' <$file | string replace -r -i '^\s*Host\s+' '' | string trim | string replace -r '\s+' ' ' | string split ' ' | string match -v '*\**'
+            string replace -rfi '^\s*Host\s+' '' <$file | string trim | string replace -r '\s+' ' ' | string split ' ' | string match -v '*\**'
             # Extract known_host paths.
-            set known_hosts $known_hosts (string match -ri '^\s*UserKnownHostsFile|^\s*GlobalKnownHostsFile' <$file | string replace -ri '.*KnownHostsFile\s*' '')
+            set known_hosts $known_hosts (string replace -rfi '.*KnownHostsFile\s*' '' <$file)
         end
     end
-    for file in $known_hosts
-        # Ignore hosts that are hashed, commented or have custom ports (like [localhost]:2200)
-        test -r $file
-        and string replace -ra '(\S+) .*' '$1' <$file | string match -r '^[^#|[=]+$' | string split ","
+	for file in $known_hosts
+        if test -r $file
+          # Ignore hosts that are hashed, commented or @-marked and strip the key.
+          awk '$1 !~ /[|#@]/ {
+            n=split($1, entries, ",")
+            for (i=1; i<=n; i++) {
+              # Ignore negated/wildcarded hosts.
+              if (!match(entry=entries[i], "[!*?]")) {
+                # Extract hosts with custom port.
+                if (substr(entry, 1, 1) == "[") {
+                  if (pos=match(entry, "]:.*$")) {
+                    entry=substr(entry, 2, pos-2)
+                  }
+                }
+                print entry
+              }
+            }
+          }' $file
+        end
     end
     return 0
 end

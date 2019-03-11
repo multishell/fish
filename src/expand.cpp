@@ -492,7 +492,7 @@ static bool find_job(const wchar_t *proc, expand_flags_t flags,
     while (const job_t *j = jobs.next()) {
         if (j->command_is_empty()) continue;
 
-        size_t offset;
+        size_t offset = 0;
         if (match_pid(j->command(), proc, &offset)) {
             if (flags & EXPAND_FOR_COMPLETIONS) {
                 append_completion(completions, j->command_wcstr() + offset + wcslen(proc),
@@ -514,7 +514,7 @@ static bool find_job(const wchar_t *proc, expand_flags_t flags,
         for (const process_ptr_t &p : j->processes) {
             if (p->actual_cmd.empty()) continue;
 
-            size_t offset;
+            size_t offset = 0;
             if (match_pid(p->actual_cmd, proc, &offset)) {
                 if (flags & EXPAND_FOR_COMPLETIONS) {
                     append_completion(completions, wcstring(p->actual_cmd, offset + wcslen(proc)),
@@ -552,7 +552,7 @@ static void find_process(const wchar_t *proc, expand_flags_t flags,
     pid_t process_pid;
     process_iterator_t iterator;
     while (iterator.next_process(&process_name, &process_pid)) {
-        size_t offset;
+        size_t offset = 0;
         if (match_pid(process_name, proc, &offset)) {
             if (flags & EXPAND_FOR_COMPLETIONS) {
                 append_completion(out, process_name.c_str() + offset + wcslen(proc),
@@ -650,7 +650,7 @@ static size_t parse_slice(const wchar_t *in, wchar_t **end_ptr, std::vector<long
         }
         // debug( 0, L"Push idx %d", tmp );
 
-        long i1 = tmp > -1 ? tmp : (long)array_size + tmp + 1;
+        long i1 = tmp > -1 ? tmp : size + tmp + 1;
         pos = end - in;
         while (in[pos] == INTERNAL_SEPARATOR) pos++;
         if (in[pos] == L'.' && in[pos + 1] == L'.') {
@@ -667,6 +667,13 @@ static size_t parse_slice(const wchar_t *in, wchar_t **end_ptr, std::vector<long
 
             // debug( 0, L"Push range %d %d", tmp, tmp1 );
             long i2 = tmp1 > -1 ? tmp1 : size + tmp1 + 1;
+            // Clamp to array size, but only when doing a range,
+            // and only when just one is too high.
+            if (i1 > size && i2 > size) {
+                continue;
+            }
+            i1 = i1 < size ? i1 : size;
+            i2 = i2 < size ? i2 : size;
             // debug( 0, L"Push range idx %d %d", i1, i2 );
             short direction = i2 < i1 ? -1 : 1;
             for (long jjj = i1; jjj * direction <= i2 * direction; jjj += direction) {
@@ -796,29 +803,22 @@ static int expand_variables(const wcstring &instr, std::vector<completion_t> *ou
 
                 if (!all_vars) {
                     wcstring_list_t string_values(var_idx_list.size());
+                    size_t k = 0;
                     for (size_t j = 0; j < var_idx_list.size(); j++) {
                         long tmp = var_idx_list.at(j);
-                        // Check that we are within array bounds. If not, truncate the list to
-                        // exit.
-                        if (tmp < 1 || (size_t)tmp > var_item_list.size()) {
-                            size_t var_src_pos = var_pos_list.at(j);
-                            // The slice was parsed starting at stop_pos, so we have to add that
-                            // to the error position.
-                            append_syntax_error(errors, slice_start + var_src_pos,
-                                                ARRAY_BOUNDS_ERR);
-                            is_ok = false;
-                            var_idx_list.resize(j);
-                            break;
-                        } else {
-                            // Replace each index in var_idx_list inplace with the string value
-                            // at the specified index.
-                            // al_set( var_idx_list, j, wcsdup((const wchar_t *)al_get(
-                            // &var_item_list, tmp-1 ) ) );
-                            string_values.at(j) = var_item_list.at(tmp - 1);
+                        // Check that we are within array bounds. If not, skip the element. Note:
+                        // Negative indices (`echo $foo[-1]`) are already converted to positive ones
+                        // here, So tmp < 1 means it's definitely not in.
+                        if ((size_t)tmp > var_item_list.size() || tmp < 1) {
+                            continue;
                         }
+                        // Replace each index in var_idx_list inplace with the string value
+                        // at the specified index.
+                        string_values.at(k++) = var_item_list.at(tmp - 1);
                     }
 
-                    // string_values is the new var_item_list.
+                    // string_values is the new var_item_list. Resize to remove invalid elements.
+                    string_values.resize(k);
                     var_item_list = std::move(string_values);
                 }
             }
@@ -892,17 +892,6 @@ static int expand_variables(const wcstring &instr, std::vector<completion_t> *ou
                 return is_ok;
             }
             stop_pos = (slice_end - in);
-
-            // Validate that the parsed indexes are valid.
-            for (size_t j = 0; j < var_idx_list.size(); j++) {
-                long tmp = var_idx_list.at(j);
-                if (tmp != 1) {
-                    size_t var_src_pos = var_pos_list.at(j);
-                    append_syntax_error(errors, slice_start + var_src_pos, ARRAY_BOUNDS_ERR);
-                    is_ok = 0;
-                    return is_ok;
-                }
-            }
         }
 
         // Expand a non-existing variable.
@@ -959,8 +948,8 @@ static expand_error_t expand_brackets(const wcstring &instr, expand_flags_t flag
                     syntax_error = true;
                 } else if (bracket_count == 0) {
                     bracket_end = pos;
-                    break;
                 }
+                break;
             }
             case BRACKET_SEP: {
                 if (bracket_count == 1) last_sep = pos;
@@ -1090,10 +1079,8 @@ static int expand_cmdsubst(const wcstring &input, std::vector<completion_t> *out
         tail_begin = slice_end;
         for (i = 0; i < slice_idx.size(); i++) {
             long idx = slice_idx.at(i);
-            if (idx < 1 || (size_t)idx > sub_res.size()) {
-                size_t pos = slice_source_positions.at(i);
-                append_syntax_error(errors, slice_begin - in + pos, ARRAY_BOUNDS_ERR);
-                return 0;
+            if ((size_t)idx > sub_res.size() || idx < 1) {
+                continue;
             }
             idx = idx - 1;
 
@@ -1170,10 +1157,22 @@ static void expand_home_directory(wcstring &input) {
         wcstring username = get_home_directory_name(input, &tail_idx);
 
         bool tilde_error = false;
-        wcstring home;
+        env_var_t home;
         if (username.empty()) {
             // Current users home directory.
             home = env_get_string(L"HOME");
+            // If home is either missing or empty,
+            // treat it like an empty list.
+            // $HOME is defined to be a _path_,
+            // and those cannot be empty.
+            //
+            // We do not expand a string-empty var differently,
+            // because that results in bogus paths
+            // - ~/foo turns into /foo.
+            if (home.missing_or_empty()) {
+                input = ENV_NULL;
+                return;
+            }
             tail_idx = 1;
         } else {
             // Some other users home directory.

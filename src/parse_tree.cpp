@@ -29,12 +29,13 @@ static bool production_is_empty(const production_element_t *production) {
 /// Returns a string description of this parse error.
 wcstring parse_error_t::describe_with_prefix(const wcstring &src, const wcstring &prefix,
                                              bool is_interactive, bool skip_caret) const {
-    if (skip_caret || source_start >= src.size() || source_start + source_length > src.size()) {
-        return L"";
-    }
+    if (skip_caret && this->text.empty()) return L"";
 
     wcstring result = prefix;
     result.append(this->text);
+    if (skip_caret || source_start >= src.size() || source_start + source_length > src.size()) {
+        return result;
+    }
 
     // Locate the beginning of this line of source.
     size_t line_start = 0;
@@ -69,7 +70,7 @@ wcstring parse_error_t::describe_with_prefix(const wcstring &src, const wcstring
     }
 
     // Append the line of text.
-    result.push_back(L'\n');
+    if (!result.empty()) result.push_back(L'\n');
     result.append(src, line_start, line_end - line_start);
 
     // Append the caret line. The input source may include tabs; for that reason we
@@ -254,7 +255,7 @@ static inline parse_token_type_t parse_token_type_from_tokenizer_token(
     return result;
 }
 
-#if 0
+#if 1
 // Disabled for the 2.2.0 release: https://github.com/fish-shell/fish-shell/issues/1809.
 
 /// Helper function for parse_dump_tree().

@@ -131,11 +131,12 @@ def built_command(options, description):
     fish_options = []
     for optionstr in man_optionlist:
         option = re.sub(r"(\[.*\])", "", optionstr)
-        option = option.strip(" \t\n[]()")
+        option = option.strip(" \t\r\n[](){}.,:!")
 
 
         # Skip some problematic cases
         if option in ['-', '--']: continue
+        if any(c in "{}()" for c in option): continue
 
         if option.startswith('--'):
             # New style long option (--recursive)
@@ -528,7 +529,6 @@ class TypeDarwinManParser(ManParser):
         line = line.replace('.Nm', CMDNAME)
         line = line.replace('\\ ', ' ')
         line = line.replace('\& ', '')
-        line = line.replace(r'.\"', '')
         return line
 
     def is_option(self, line):
@@ -567,6 +567,9 @@ class TypeDarwinManParser(ManParser):
             desc_lines = []
             while lines and not self.is_option(lines[0]):
                 line = lossy_unicode(lines.pop(0).strip())
+                # Ignore comments
+                if line.startswith(r'.\"'):
+                    continue
                 if line.startswith('.'):
                     line = self.groff_replace_escapes(line)
                     line = self.trim_groff(line).strip()

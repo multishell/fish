@@ -26,6 +26,7 @@
 #include "common.h"
 #include "env.h"
 #include "fallback.h"  // IWYU pragma: keep
+#include "fish_version.h"
 #include "input.h"
 #include "input_common.h"
 #include "print_help.h"
@@ -92,9 +93,7 @@ static char *sequence_name(wchar_t wc) {
 
 /// Return true if the character must be escaped when used in the sequence of chars to be bound in
 /// a `bind` command.
-static bool must_escape(wchar_t wc) {
-    return wcschr(L"[]()<>{}*\\?$#;&|'\"", wc) != NULL;
-}
+static bool must_escape(wchar_t wc) { return wcschr(L"[]()<>{}*\\?$#;&|'\"", wc) != NULL; }
 
 static void ctrl_to_symbol(wchar_t *buf, int buf_len, wchar_t wc, bool bind_friendly) {
     if (ctrl_symbolic_names[wc]) {
@@ -283,9 +282,9 @@ static void setup_and_process_keys(bool continuous_mode) {
     is_interactive_session = 1;  // by definition this program is interactive
     set_main_thread();
     setup_fork_guards();
+    proc_push_interactive(1);
     env_init();
     reader_init();
-    proc_push_interactive(1);
     install_our_signal_handlers();
 
     if (continuous_mode) {
@@ -333,11 +332,12 @@ static bool parse_debug_frames_flag() {
 }
 
 static bool parse_flags(int argc, char **argv, bool *continuous_mode) {
-    const char *short_opts = "+cd:D:h";
+    const char *short_opts = "+cd:D:hv";
     const struct option long_opts[] = {{"continuous", no_argument, NULL, 'c'},
                                        {"debug-level", required_argument, NULL, 'd'},
                                        {"debug-stack-frames", required_argument, NULL, 'D'},
                                        {"help", no_argument, NULL, 'h'},
+                                       {"version", no_argument, NULL, 'v'},
                                        {NULL, 0, NULL, 0}};
     int opt;
     bool error = false;
@@ -359,6 +359,10 @@ static bool parse_flags(int argc, char **argv, bool *continuous_mode) {
             case 'D': {
                 error = !parse_debug_frames_flag();
                 break;
+            }
+            case 'v': {
+                fwprintf(stdout, L"%s\n", get_fish_version());
+                return false;
             }
             default: {
                 // We assume getopt_long() has already emitted a diagnostic msg.

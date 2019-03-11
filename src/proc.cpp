@@ -88,11 +88,12 @@ void print_jobs(void)
 }
 #endif
 
-int is_interactive_session = 0;
-int is_subshell = 0;
-int is_block = 0;
-int is_login = 0;
-int is_event = 0;
+bool is_interactive_session = false;
+bool is_subshell = false;
+bool is_block = false;
+bool is_breakpoint = false;
+bool is_login = false;
+int is_event = false;
 pid_t proc_last_bg_pid = 0;
 int job_control_mode = JOB_CONTROL_INTERACTIVE;
 int no_exec = 0;
@@ -485,22 +486,19 @@ static wcstring truncate_command(const wcstring &cmd) {
 }
 
 /// Format information about job status for the user to look at.
-///
-/// \param j the job to test
-/// \param status a string description of the job exit type
-static void format_job_info(const job_t *j, const wchar_t *status, size_t job_count) {
+typedef enum { JOB_STOPPED, JOB_ENDED } job_status_t;
+static void format_job_info(const job_t *j, job_status_t status) {
+    const wchar_t *msg = L"Job %d, '%ls' has ended";  // this is the most common status msg
+    if (status == JOB_STOPPED) msg = L"Job %d, '%ls' has stopped";
+
     fwprintf(stdout, L"\r");
-    if (job_count == 1) {
-        fwprintf(stdout, _(L"\'%ls\' has %ls"), truncate_command(j->command()).c_str(), status);
-    } else {
-        fwprintf(stdout, _(L"Job %d, \'%ls\' has %ls"), j->job_id,
-                 truncate_command(j->command()).c_str(), status);
-    }
+    fwprintf(stdout, _(msg), j->job_id, truncate_command(j->command()).c_str());
     fflush(stdout);
-    if (cur_term != NULL)
+    if (cur_term) {
         tputs(clr_eol, 1, &writeb);
-    else
+    } else {
         fwprintf(stdout, L"\e[K");
+    }
     fwprintf(stdout, L"\n");
 }
 
@@ -620,7 +618,7 @@ int job_reap(bool allow_interactive) {
         if (job_is_completed(j)) {
             if (!j->get_flag(JOB_FOREGROUND) && !j->get_flag(JOB_NOTIFIED) &&
                 !j->get_flag(JOB_SKIP_NOTIFICATION)) {
-                format_job_info(j, _(L"ended"), job_count);
+                format_job_info(j, JOB_ENDED);
                 found = 1;
             }
             proc_fire_event(L"JOB_EXIT", EVENT_EXIT, -j->pgid, 0);
@@ -630,7 +628,7 @@ int job_reap(bool allow_interactive) {
         } else if (job_is_stopped(j) && !j->get_flag(JOB_NOTIFIED)) {
             // Notify the user about newly stopped jobs.
             if (!j->get_flag(JOB_SKIP_NOTIFICATION)) {
-                format_job_info(j, _(L"stopped"), job_count);
+                format_job_info(j, JOB_STOPPED);
                 found = 1;
             }
             j->set_flag(JOB_NOTIFIED, true);
@@ -721,7 +719,7 @@ static int select_try(job_t *j) {
             // fwprintf( stderr, L"fd %d on job %ls\n", fd, j->command );
             FD_SET(fd, &fds);
             maxfd = maxi(maxfd, fd);
-            debug(3, L"select_try on %d\n", fd);
+            debug(3, L"select_try on %d", fd);
         }
     }
 
@@ -734,7 +732,7 @@ static int select_try(job_t *j) {
 
         retval = select(maxfd + 1, &fds, 0, 0, &tv);
         if (retval == 0) {
-            debug(3, L"select_try hit timeout\n");
+            debug(3, L"select_try hit timeout");
         }
         return retval > 0;
     }
@@ -758,7 +756,7 @@ static void read_try(job_t *j) {
     }
 
     if (buff) {
-        debug(3, L"proc::read_try('%ls')\n", j->command_wcstr());
+        debug(3, L"proc::read_try('%ls')", j->command_wcstr());
         while (1) {
             char b[BUFFER_SIZE];
             long l;
