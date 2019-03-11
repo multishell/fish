@@ -92,6 +92,8 @@
 
 #include "wgetopt.h"
 #include "wutil.h"
+#include "fallback.h"
+
 
 
 /* For communication from `getopt' to the caller.

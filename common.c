@@ -6,6 +6,7 @@ parts of fish.
 
 #include "config.h"
 
+
 #include <stdlib.h>
 #include <termios.h>
 #include <wchar.h>
@@ -50,7 +51,9 @@ parts of fish.
 #include <ncurses/term.h>
 #endif
 
+#include "fallback.h"
 #include "util.h"
+
 #include "wutil.h"
 #include "common.h"
 #include "expand.h"
@@ -297,19 +300,14 @@ char *wcs2str_internal( const wchar_t *in, char *out )
 		{
 			res = wcrtomb( &out[out_pos], in[in_pos], &state );
 			
-			switch( res )
+			if( res == (size_t)(-1) )
 			{
-				case (size_t)(-1):
-					{
-						debug( 1, L"Wide character has no narrow representation" );
-						memset( &state, 0, sizeof(state) );
-						break;
-					}
-				default:
-				{
-					out_pos += res;
-					break;
-				}
+				debug( 1, L"Wide character has no narrow representation" );
+				memset( &state, 0, sizeof(state) );
+			}
+			else
+			{
+				out_pos += res;
 			}
 		}
 		in_pos++;
@@ -1156,6 +1154,7 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 				{
 					switch( in[++in_pos] )
 					{
+						case '\\':
 						case L'\'':
 						{
 							in[out_pos]=in[in_pos];
@@ -1213,6 +1212,7 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 								return 0;
 							}
 							
+							case '\\':
 							case L'$':
 							case '"':
 							{

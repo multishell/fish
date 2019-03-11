@@ -36,8 +36,22 @@
 CC := @CC@
 INSTALL:=@INSTALL@
 
-# Compiler flags
-CFLAGS:=@CFLAGS@ -Wall -std=gnu99 -fno-strict-aliasing
+#
+# Compiler flags:
+#
+#
+# -fno-optimize-sibling-calls seems to work around a bug where sending
+# a SIGWINCH to fish on NetBSD causes fish to exit when compiled with
+# GCC 3.3.3. This is probably either a compiler bug or a libc bug, but
+# adding this flag seems to fix things for now. Long term, the real
+# problem should be tracked down and truly fixed, at which point we
+# can remove this silly flag. This bug has been verified to not exist
+# on Linux using GCC 3.3.3.
+#
+# -Wall is there to keep me on my toes
+#
+
+CFLAGS:=@CFLAGS@ -Wall -fno-optimize-sibling-calls
 CPPFLAGS=@CPPFLAGS@
 LDFLAGS:= @LIBS@ @LDFLAGS@ 
 
@@ -57,7 +71,7 @@ ETC_DIR_INSTALL = etc/fish_interactive.fish
 # Set to 1 if we have gettext
 HAVE_GETTEXT=@HAVE_GETTEXT@
 
-CORE_OBJS := util.o common.o halloc.o halloc_util.o 
+CORE_OBJS := util.o common.o halloc.o halloc_util.o fallback.o
 
 # All objects used by fish, that are compiled from an ordinary .c file
 # using an ordinary .h file.
@@ -94,7 +108,7 @@ FISHD_OBJS := fishd.o env_universal_common.o wutil.o	\
 
 # All objects needed to build mimedb
 MIME_OBJS := mimedb.o xdgmimealias.o xdgmime.o xdgmimeglob.o		\
-	xdgmimeint.o xdgmimemagic.o xdgmimeparent.o wutil.o
+	xdgmimeint.o xdgmimemagic.o xdgmimeparent.o wutil.o $(CORE_OBJS)
 
 #
 # Files containing documentation for builtins. Should be listed
@@ -197,7 +211,7 @@ all: $(PROGRAMS) user_doc
 .PHONY: all
 
 debug:
-	make fish CFLAGS="-O0 -Wno-unused -Werror -g -Wall -std=gnu99 -fno-strict-aliasing"
+	make fish CFLAGS="-O0 -Wno-unused -Werror -g -Wall -fno-optimize-sibling-calls"
 .PHONY: debug
 
 # User documentation, describing the features of the fish shell.
@@ -268,8 +282,8 @@ doc.h:$(BUILTIN_DOC_SRC) $(CMD_DOC_SRC) doc_src/doc.hdr
 # Create a template translation object
 messages.pot: *.c *.h etc/*.in share/fish share/completions/*.fish share/functions/*.fish seq
 	if test $(HAVE_GETTEXT) = 1;then \
-		xgettext -k_ -kN_ -kcomplete_desc *.c *.h -o messages.pot; \
-		if ! xgettext -j -k_ -LShell etc/*.in share/fish share/completions/*.fish share/functions/*.fish seq -o messages.pot; then \
+		xgettext -k_ -kN_ *.c *.h -o messages.pot; \
+		if ! xgettext -j -k_ -kN_ -LShell etc/*.in share/fish share/completions/*.fish share/functions/*.fish seq -o messages.pot; then \
 			echo "Your xgettext version is too old to build the messages.pot file"\
 			rm messages.pot\
 			false;\
@@ -447,6 +461,7 @@ uninstall-legacy: uninstall
 	fi;
 	rmdir $(DESTDIR)$(sysconfdir)/fish.d/completions; true
 	rmdir $(DESTDIR)$(sysconfdir)/fish.d; true
+	@echo The previous fish installation has been removed. 
 
 install-translations: $(TRANSLATIONS)
 	if test $(HAVE_GETTEXT) = 1; then \
@@ -483,8 +498,8 @@ fish_tests: $(FISH_TESTS_OBJS)
 	$(CC) $(FISH_TESTS_OBJS) $(LDFLAGS) -o $@
 
 
-mimedb: $(MIME_OBJS) util.o common.o doc_src/mimedb.c
-	$(CC) ${MIME_OBJS} util.o common.o doc_src/mimedb.c $(LDFLAGS) -o $@
+mimedb: $(MIME_OBJS) doc_src/mimedb.c
+	$(CC) ${MIME_OBJS} doc_src/mimedb.c $(LDFLAGS) -o $@
 
 set_color: set_color.o doc_src/set_color.c 
 	$(CC) set_color.o doc_src/set_color.c $(LDFLAGS) -o $@
@@ -553,7 +568,7 @@ rpm: fish-@PACKAGE_VERSION@.tar.bz2
 
 distclean: clean
 	rm -f fish.spec doc_src/fish.1 doc_src/Doxyfile 
-	rm -f etc/fish etc/fish_interactive.fish share/fish
+	rm -f etc/fish etc/fish_interactive.fish seq
 	rm -f config.status config.log config.h Makefile
 .PHONY: distclean
 
@@ -561,7 +576,7 @@ clean:
 	rm -f *.o doc.h doc_src/*.doxygen doc_src/*.c builtin_help.c 
 	rm -f tests/tmp.err tests/tmp.out tests/tmp.status tests/foo.txt
 	rm -f tokenizer_test fish key_reader set_color gen_hdr2 mimedb
-	rm -f fishd fish_pager count 
+	rm -f fishd fish_pager count fish_tests 
 	rm -f fish-@PACKAGE_VERSION@.tar 
 	rm -f fish-@PACKAGE_VERSION@.tar.gz 
 	rm -f fish-@PACKAGE_VERSION@.tar.bz2
