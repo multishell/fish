@@ -75,8 +75,9 @@ if not set -q fish_greeting
 	set -U fish_greeting $line1\n$line2
 end
 
-echo $fish_greeting
-
+if test "$fish_greeting"
+	echo $fish_greeting
+end
 
 #
 # Set exit message
@@ -95,7 +96,7 @@ end
 # by including them when found.
 #
 
-for i in ~/$config_dir/fish/fish_inputrc @sysconfdir@/fish/fish_inputrc ~/.inputrc /etc/inputrc
+for i in $configdir/fish/fish_inputrc @sysconfdir@/fish/fish_inputrc ~/.inputrc /etc/inputrc
 	if test -f $i
 		set -xg INPUTRC $i
 		break

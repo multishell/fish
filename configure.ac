@@ -9,7 +9,7 @@
 # configure the build process.
 #
 
-AC_INIT(fish,1.22.0,fish-users@lists.sf.net)
+AC_INIT(fish,1.22.1,fish-users@lists.sf.net)
 
 
 #
@@ -145,6 +145,29 @@ AC_PROG_INSTALL
 #
 
 AC_CHECK_PROG( SEQ_FALLBACK, seq, [ ], [seq])
+
+
+if test "$SEQ_FALLBACK"; then
+
+	#
+	# We already have seq. Check if the seq version is installed by an
+	# earlier fish version. If it is, we'll replace it.
+	#
+
+	file=`which seq`
+	if test -f "$file"; then
+
+		AC_MSG_CHECKING([if seq comes from a previous fish version])
+		shebang=`grep "\(^#!/.*/fish\|^#!/usr/bin/env fish\)" $file`
+
+		if test "$shebang"; then
+			AC_SUBST( SEQ_FALLBACK, seq )
+			AC_MSG_RESULT(yes, replace it)
+		else
+			AC_MSG_RESULT(no, keep it)
+		fi
+	fi
+fi
 
 
 #
@@ -399,6 +422,7 @@ AC_SEARCH_LIBS( gettext, intl,,)
 AC_SEARCH_LIBS( connect, socket, , [AC_MSG_ERROR([Cannot find the socket library, needed to build this package.] )] )
 AC_SEARCH_LIBS( nanosleep, rt, , [AC_MSG_ERROR([Cannot find the rt library, needed to build this package.] )] )
 AC_SEARCH_LIBS( setupterm, [ncurses curses], , [AC_MSG_ERROR([Could not find a curses implementation, needed to build fish])] )
+AC_SEARCH_LIBS( iconv_open, iconv, , [AC_MSG_ERROR([Could not find an iconv implementation, needed to build fish])] )
 
 
 #

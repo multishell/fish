@@ -73,17 +73,15 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 */
 static int read_init()
 {
-	char cwd[4096];
-	wchar_t *wcwd;
-
+	wchar_t cwd[4096];
 	wchar_t *config_dir;
 	wchar_t *config_dir_escaped;
 	void *context;
 	string_buffer_t *eval_buff;
 	
-	if( !getcwd( cwd, 4096 ) )
+	if( !wgetcwd( cwd, 4096 ) )
 	{
-		wperror( L"getcwd" );		
+		wperror( L"wgetcwd" );		
 		return 0;
 	}
 
@@ -103,20 +101,17 @@ static int read_init()
 	halloc_free( context );
 	free( config_dir_escaped );
 	
-	if( chdir( cwd ) == -1 )
+	if( wchdir( cwd ) == -1 )
 	{
 		/*
 		  If we can't change back to previos directory, we go to
 		  ~. Should be a sane default behavior.
 		*/
 		eval( L"builtin cd", 0, TOP );
-	}	
-	
-	wcwd = str2wcs( cwd );
-	if( wcwd )
+	}
+	else
 	{
-		env_set( L"PWD", wcwd, ENV_EXPORT );
-		free( wcwd );
+		env_set( L"PWD", cwd, ENV_EXPORT );
 	}
 
 	return 1;
@@ -290,6 +285,7 @@ int main( int argc, char **argv )
 	is_interactive_session=1;
 	program_name=L"fish";
 
+
 	my_optind = fish_parse_opt( argc, argv, &cmd );
 
 	/*
@@ -382,7 +378,6 @@ int main( int argc, char **argv )
 	}
 
 	proc_fire_event( L"PROCESS_EXIT", EVENT_EXIT, getpid(), res );
-	
 
 	history_destroy();
 	proc_destroy();
@@ -399,6 +394,5 @@ int main( int argc, char **argv )
 
 	intern_free_all();
 
-
-	return res;	
+	return res?STATUS_UNKNOWN_COMMAND:proc_get_last_status();	
 }

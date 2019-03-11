@@ -4,7 +4,7 @@
 
 # Test if we are using GNU ls
 
-function __fish_complete_ls -d "Compleletions for ls and it's aliases"
+function __fish_complete_ls -d "Compleletions for ls and its aliases"
 	
 	set -l is_gnu 
 	command ls --version >/dev/null ^/dev/null; and set is_gnu --is-gnu
@@ -44,8 +44,13 @@ function __fish_complete_ls -d "Compleletions for ls and it's aliases"
 	
 	if test -n "$is_gnu"
 	   
-	   	# GNU specific features
+	   	# GNU specific ls switches
 	
+		complete $cmds -l hide -d (N_ "Do not list implied entries matching specified shell pattern") -r
+		complete $cmds -l lcontext -d (N_ "Display security context")
+		complete $cmds -l context -s Z -d (N_ "Display  security  context  so  it fits on most displays")
+		complete $cmds -l scontext -d (N_ "Display only security context and file name")
+
 		complete $cmds -l author -d (N_ "Print author")
 		complete $cmds -l blocksize -x -d (N_ "Set block size")
 		complete $cmds -s B -l ignore-backups -d (N_ "Ignore files ending with ~")
