@@ -1,23 +1,38 @@
-# fish 2.3b1
+# fish 2.3b2 (released May 5, 2016)
+
+## Significant changes
+
+- A new `fish_realpath` builtin and associated function to allow the use of `realpath` even on those platforms that don't ship an appropriate command (#2932).
+- Alt-# toggles the current command line between commented and uncommented states, making it easy to save a command in history without executing it.
+- The `fish_vi_mode` function is now deprecated in favour of `fish_vi_key_bindings`.
+
+## Other notable fixes and improvements
+
+- Fix the build on Cygwin (#2952) and RedHat Enterprise Linux/CentOS 5 (#2955).
+- Avoid confusing the terminal line driver with non-printing characters in `fish_title` (#2453).
+- Improved completions for busctl, git (#2585, #2879, #2984), and netctl.
+
+# fish 2.3b1 (released April 19, 2016)
 
 ## Significant Changes
 
-- A new `string` builtin to handle... strings! (#2296)
-- Allow using escape as the Meta modifier key, by waiting after seeing an escape character wait up to 300ms for an additional character. This is consistent with readline (e.g. bash) and can be configured via the fish_escape_delay_ms variable. This allows using escape as the Meta modifier. (#1356)
+- A new `string` builtin to handle... strings! This builtin will measure, split, search and replace text strings, including using regular expressions. It can also be used to turn lists into plain strings using `join`. `string` can be used in place of `sed`, `grep`, `tr`, `cut`, and `awk` in many situations. (#2296)
+- Allow using escape as the Meta modifier key, by waiting after seeing an escape character wait up to 300ms for an additional character. This is consistent with readline (e.g. bash) and can be configured via the `fish_escape_delay_ms variable`. This allows using escape as the Meta modifier. (#1356)
 - Add new directories for vendor functions and configuration snippets (#2500)
+- A new `fish_realpath` builtin and associated `realpath` function should allow scripts to resolve path names via `realpath` regardless of whether there is an external command of that name; albeit with some limitations. See the associated documentation.
 
-# Backward-incompatible changes
+## Backward-incompatible changes
 
 - Unmatched globs will now cause an error, except when used with `for`, `set` or `count` (#2719)
 - `and` and `or` will now bind to the closest `if` or `while`, allowing compound conditions without `begin` and `end` (#1428)
 - `set -ql` now searches up to function scope for variables (#2502)
 - `status -f` will now behave the same when run as the main script or using `source` (#2643)
 - `source` no longer puts the file name in `$argv` if no arguments are given (#139)
+- History files are stored under the `XDG_DATA_HOME` hierarchy (by default, in `~/.local/share`), and existing history will be moved on first use (#744)
 
-# Other notable fixes and improvements
+## Other notable fixes and improvements
 
 - Fish no longer silences errors in config.fish (#2702)
-- Move the history file to $XDG_DATA_HOME/fish (or ~/.local/share if it has not been set)
 - Directory autosuggestions will now descend as far as possible if there is only one child directory (#2531)
 - Add support for bright colors (#1464)
 - Allow Ctrl-J (\cj) to be bound separately from Ctrl-M (\cm) (#217)
@@ -43,14 +58,14 @@
 - A rewrite of the completions for cd, fixing a few bugs (#2299, #2300, #562)
 - Linux VTs now run in a simplified mode to avoid issues (#2311)
 - The vi-bindings now inherit from the emacs bindings
-- Fish will also execute fish_user_key_bindings when in vi-mode
+- Fish will also execute `fish_user_key_bindings` when in vi-mode
 - `funced` will now also check $VISUAL (#2268)
 - A new `suspend` function (#2269)
 - Subcommand completion now works better with split /usr (#2141)
-- The command-not-found-handler can now be overridden by defining a function called __fish_command_not_found_handler in config.fish (#2332)
+- The command-not-found-handler can now be overridden by defining a function called `__fish_command_not_found_handler` in config.fish (#2332)
 - A few fixes to the Sorin theme
-- PWD shortening in the prompt can now be configured via the fish_prompt_pwd_dir_length variable, set to the length per path component (#2473)
-- fish now ships a skeleton file for /etc/fish/config.fish that only contains some documentation, the included code has been moved to the corresponding file in /usr (#2799)
+- PWD shortening in the prompt can now be configured via the `fish_prompt_pwd_dir_length` variable, set to the length per path component (#2473)
+- fish no longer requires `/etc/fish/config.fish` to correctly start, and now ships a skeleton file that only contains some documentation (#2799)
 
 # fish 2.2.0 (released July 12, 2015)
 

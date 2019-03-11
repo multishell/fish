@@ -11,13 +11,13 @@ function __fish_git_commits
 end
 
 function __fish_git_branches
-	command git branch --no-color -a ^/dev/null | string match -r -v ' -> ' | string trim -c "* " | string replace -r "^remotes/" ""
+	command git branch --no-color -a $argv ^/dev/null | string match -r -v ' -> ' | string trim -c "* " | string replace -r "^remotes/" ""
 end
 
 function __fish_git_unique_remote_branches
 	# Allow all remote branches with one remote without the remote part
 	# This is useful for `git checkout` to automatically create a remote-tracking branch
-	command git branch --no-color -a ^/dev/null | string match -r -v ' -> ' | string trim -c "* " | string replace -r "^remotes/[^/]*/" "" | sort | uniq -u
+	command git branch --no-color -a $argv ^/dev/null | string match -r -v ' -> ' | string trim -c "* " | string replace -r "^remotes/[^/]*/" "" | sort | uniq -u
 end
 
 function __fish_git_tags
@@ -171,12 +171,29 @@ function __fish_git_custom_commands
     end
 end
 
+# Suggest branches for the specified remote - returns 1 if no known remote is specified
+function __fish_git_branch_for_remote
+	set -l remotes (__fish_git_remotes)
+	set -l remote
+	set -l cmd (commandline -opc)
+	for r in $remotes
+		if contains -- $r $cmd
+			set remote $r
+			break
+		end
+	end
+	set -q remote[1]; or return 1
+	__fish_git_branches | string match -- "$remote/*" | string replace -- "$remote/" ''
+end
+
 # general options
-complete -f -c git -n 'not __fish_git_needs_command' -l help -d 'Display the manual of a git command'
+complete -f -c git -l help -d 'Display the manual of a git command'
 
 #### fetch
 complete -f -c git -n '__fish_git_needs_command' -a fetch -d 'Download objects and refs from another repository'
-complete -f -c git -n '__fish_git_using_command fetch' -a '(__fish_git_remotes)' -d 'Remote'
+# Suggest "repository", then "refspec" - this also applies to e.g. push/pull
+complete -f -c git -n '__fish_git_using_command fetch; and not __fish_git_branch_for_remote' -a '(__fish_git_remotes)' -d 'Remote'
+complete -f -c git -n '__fish_git_using_command fetch; and __fish_git_branch_for_remote' -a '(__fish_git_branch_for_remote)' -d 'Branch'
 complete -f -c git -n '__fish_git_using_command fetch' -s q -l quiet -d 'Be quiet'
 complete -f -c git -n '__fish_git_using_command fetch' -s v -l verbose -d 'Be verbose'
 complete -f -c git -n '__fish_git_using_command fetch' -s a -l append -d 'Append ref names and object names'
@@ -292,8 +309,8 @@ complete -f -c git -n '__fish_git_using_command branch' -l no-merged -d 'List br
 
 ### cherry-pick
 complete -f -c git -n '__fish_git_needs_command' -a cherry-pick -d 'Apply the change introduced by an existing commit'
-complete -f -c git -n '__fish_git_using_command cherry-pick' -a '(__fish_git_branches)' -d 'Branch'
-complete -f -c git -n '__fish_git_using_command cherry-pick' -a '(__fish_git_unique_remote_branches)' -d 'Remote branch'
+complete -f -c git -n '__fish_git_using_command cherry-pick' -a '(__fish_git_branches --no-merged)' -d 'Branch'
+complete -f -c git -n '__fish_git_using_command cherry-pick' -a '(__fish_git_unique_remote_branches --no-merged)' -d 'Remote branch'
 complete -f -c git -n '__fish_git_using_command cherry-pick' -s e -l edit -d 'Edit the commit message prior to committing'
 complete -f -c git -n '__fish_git_using_command cherry-pick' -s x -d 'Append info in generated commit on the origin of the cherry-picked change'
 complete -f -c git -n '__fish_git_using_command cherry-pick' -s n -l no-commit -d 'Apply changes without making any commit'
@@ -393,15 +410,17 @@ complete -f -c git -n '__fish_git_using_command pull' -s k -l keep -d 'Keep down
 complete -f -c git -n '__fish_git_using_command pull' -l no-tags -d 'Disable automatic tag following'
 # TODO --upload-pack
 complete -f -c git -n '__fish_git_using_command pull' -l progress -d 'Force progress status'
-complete -f -c git -n '__fish_git_using_command pull' -a '(git remote)' -d 'Remote alias'
-complete -f -c git -n '__fish_git_using_command pull' -a '(__fish_git_branches)' -d 'Branch'
-complete -f -c git -n '__fish_git_using_command pull' -a '(__fish_git_unique_remote_branches)' -d 'Remote branch'
+complete -f -c git -n '__fish_git_using_command pull; and not __fish_git_branch_for_remote' -a '(__fish_git_remotes)' -d 'Remote alias'
+complete -f -c git -n '__fish_git_using_command pull; and __fish_git_branch_for_remote' -a '(__fish_git_branch_for_remote)' -d 'Branch'
 # TODO other options
 
 ### push
 complete -f -c git -n '__fish_git_needs_command' -a push -d 'Update remote refs along with associated objects'
-complete -f -c git -n '__fish_git_using_command push' -a '(git remote)' -d 'Remote alias'
-complete -f -c git -n '__fish_git_using_command push' -a '(__fish_git_branches)' -d 'Branch'
+complete -f -c git -n '__fish_git_using_command push; and not __fish_git_branch_for_remote' -a '(__fish_git_remotes)' -d 'Remote alias'
+# The "refspec" here is an optional "+" to signify a force-push (implemented)
+# then src:dest (where both src and dest are git objects, so we most likely want to complete branches (not implemented)
+complete -f -c git -n '__fish_git_using_command push; and __fish_git_branch_for_remote' -a '(__fish_git_branches)' -d 'Branch'
+complete -f -c git -n '__fish_git_using_command push; and __fish_git_branch_for_remote; and string match -q "+*" -- (commandline -ct)' -a '+(__fish_git_branches)' -d 'Force-push branch'
 complete -f -c git -n '__fish_git_using_command push' -l all -d 'Push all refs under refs/heads/'
 complete -f -c git -n '__fish_git_using_command push' -l prune -d "Remove remote branches that don't have a local counterpart"
 complete -f -c git -n '__fish_git_using_command push' -l mirror -d 'Push all refs under refs/'
@@ -418,7 +437,7 @@ complete -f -c git -n '__fish_git_using_command push' -l progress -d 'Force prog
 
 ### rebase
 complete -f -c git -n '__fish_git_needs_command' -a rebase -d 'Forward-port local commits to the updated upstream head'
-complete -f -c git -n '__fish_git_using_command rebase' -a '(git remote)' -d 'Remote alias'
+complete -f -c git -n '__fish_git_using_command rebase' -a '(__fish_git_remotes)' -d 'Remote alias'
 complete -f -c git -n '__fish_git_using_command rebase' -a '(__fish_git_branches)' -d 'Branch'
 complete -f -c git -n '__fish_git_using_command rebase' -l continue -d 'Restart the rebasing process'
 complete -f -c git -n '__fish_git_using_command rebase' -l abort -d 'Abort the rebase operation'
