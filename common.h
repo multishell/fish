@@ -212,7 +212,7 @@ size_t wcslen(const wchar_t *in);
 int wcscasecmp( const wchar_t *a, const wchar_t *b );
 #endif
 
-#ifndef HAVE_WCSNCASECMP
+#ifndef HAVE_WCSNCASECMP_SKIP_THIS
 /**
    Case insensitive string compare function. Wide string version of
    strncasecmp.
@@ -224,7 +224,7 @@ int wcscasecmp( const wchar_t *a, const wchar_t *b );
    fish and guaranteed to be a sane, english word. Using wcsncasecmp on
    a user-supplied string should be considered a bug.
 */
-int wcsncasecmp( const wchar_t *a, const wchar_t *b, int count );
+int wcsncasecmp_fish( const wchar_t *a, const wchar_t *b, int count );
 #endif
 
 /**
