@@ -228,7 +228,7 @@ int wcscasecmp( const wchar_t *a, const wchar_t *b );
    fish and guaranteed to be a sane, english word. Using wcsncasecmp on
    a user-supplied string should be considered a bug.
 */
-int wcsncasecmp( const wchar_t *a, const wchar_t *b, int count );
+int wcsncasecmp_fish( const wchar_t *a, const wchar_t *b, int count );
 
 /**
    Returns a newly allocated wide character string wich is a copy of
