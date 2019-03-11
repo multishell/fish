@@ -45,7 +45,12 @@ commence.
 #include <termio.h>
 #endif
 
+#if HAVE_TERM_H
 #include <term.h>
+#elif HAVE_NCURSES_TERM_H
+#include <ncurses/term.h>
+#endif
+
 #include <signal.h>
 #include <fcntl.h>
 #include <dirent.h>
@@ -272,7 +277,15 @@ static struct termios saved_modes;
 */
 static pid_t original_pid;
 
+/**
+   This variable is set to true by the signal handler when ^C is pressed
+*/
 static int interupted=0;
+
+/**
+   Original terminal mode when fish was started
+*/
+static struct termios old_modes;
 
 /*
   Prototypes for a bunch of functions defined later on.
@@ -282,8 +295,10 @@ static void reader_save_status();
 static void reader_check_status();
 static void reader_super_highlight_me_plenty( wchar_t * buff, int *color, int pos, array_list_t *error );
 
-static struct termios old_modes;
 
+/**
+   Give up control of terminal
+*/
 static void term_donate()
 {
 	tcgetattr(0,&old_modes);        /* get the current terminal modes */
@@ -308,6 +323,9 @@ static void term_donate()
 	
 }
 
+/**
+   Grab control of terminal
+*/
 static void term_steal()
 {	
 
@@ -367,7 +385,7 @@ void reader_handle_int( int sig )
 
 wchar_t *reader_current_filename()
 {
-	return (wchar_t *)al_peek( &current_filename );
+	return al_get_count( &current_filename )?(wchar_t *)al_peek( &current_filename ):0;
 }
 
 
@@ -1723,6 +1741,9 @@ void reader_current_subshell_extent( wchar_t **a, wchar_t **b )
 		*b = end;
 }
 
+/**
+   Get the beginning and dend of the job or process definition under the cursor
+*/
 static void reader_current_job_or_process_extent( wchar_t **a, 
 												  wchar_t **b, 
 												  int process )
@@ -1992,6 +2013,9 @@ static int contains( const wchar_t *needle,
 	
 }
 
+/**
+   Reset the data structures associated with the token search
+*/
 static void reset_token_history()
 {
 	wchar_t *begin, *end;
@@ -2525,8 +2549,8 @@ static int read_i()
 		{
 			prev_end_loop=0;
 		}
-
 		error_reset();
+
 	}
 	reader_pop();
 	return 0;
@@ -2829,7 +2853,7 @@ wchar_t *reader_readline()
 				break;
 			}
 			
-			/* exit, but only if line is empty or the previous keypress was also an exit call */
+			/* exit, but only if line is empty */
 			case R_EXIT:
 			{
 				if( data->buff_len == 0 )

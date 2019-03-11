@@ -9,6 +9,7 @@
 #include <signal.h>
 
 #include "config.h"
+#include "wutil.h"
 #include "util.h"
 #include "function.h"
 #include "proc.h"
@@ -16,6 +17,7 @@
 #include "common.h"
 #include "intern.h"
 #include "event.h"
+#include "reader.h"
 
 
 /**
@@ -27,6 +29,8 @@ typedef struct
 	wchar_t *cmd;
 	/** Function description */
 	wchar_t *desc;	
+	const wchar_t *definition_file;
+	int definition_offset;	
 	int is_binding;
 }
 	function_data_t;
@@ -61,6 +65,19 @@ void function_destroy()
 	hash_destroy( &function );
 }
 
+static int count_lineno( const wchar_t *str, int len )
+{
+	int res = 0;
+	int i;
+	for( i=0; i<len; i++ )
+	{
+		if( str[i] == L'\n' )
+			res++;
+	}
+	return res;
+}
+
+
 void function_add( const wchar_t *name, 
 				   const wchar_t *val,
 				   const wchar_t *desc,
@@ -74,18 +91,22 @@ void function_add( const wchar_t *name,
 	if( function_exists( name ) )
 		function_remove( name );
 	
+
+	
 	function_data_t *d = malloc( sizeof( function_data_t ) );
+	d->definition_offset = count_lineno( parser_get_buffer(), current_block->tok_pos );
 	d->cmd = wcsdup( val );
 	cmd_end = d->cmd + wcslen(d->cmd)-1;
 	while( (cmd_end>d->cmd) && wcschr( L"\n\r\t ", *cmd_end ) )
 	{
-		*cmd_end--=0;
+		*cmd_end-- = 0;
 	}
 	
 	d->desc = desc?wcsdup( desc ):0;
 	d->is_binding = is_binding;
+	d->definition_file = reader_current_filename()?intern(reader_current_filename()):0;
 	hash_put( &function, intern(name), d );
-
+	
 	for( i=0; i<al_get_count( events ); i++ )
 	{
 		event_add_handler( (event_t *)al_get( events, i ) );
@@ -135,7 +156,7 @@ const wchar_t *function_get_desc( const wchar_t *argv )
 	if( data == 0 )
 		return 0;
 	
-	return data->desc?data->desc:data->cmd;
+	return data->desc;
 }
 
 void function_set_desc( const wchar_t *name, const wchar_t *desc )
@@ -170,4 +191,27 @@ void function_get_names( array_list_t *list, int get_hidden )
 		hash_foreach2( &function, &get_names_internal, list );
 	
 }
+
+const wchar_t *function_get_definition_file( const wchar_t *argv )
+{
+	function_data_t *data = 
+		(function_data_t *)hash_get( &function, argv );
+	if( data == 0 )
+		return 0;
+	
+	return data->definition_file;
+}
+
+
+int function_get_definition_offset( const wchar_t *argv )
+{
+	function_data_t *data = 
+		(function_data_t *)hash_get( &function, argv );
+	if( data == 0 )
+		return -1;
+	
+	return data->definition_offset;
+}
+
+
 

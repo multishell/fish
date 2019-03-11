@@ -7,6 +7,7 @@
 
 #include <wchar.h>
 #include <stdarg.h>
+#include <unistd.h>
 
 /**
    Data structure for an automatically resizing dynamically allocated queue,
@@ -165,19 +166,29 @@ float minf( float a, float b );
 */
 void q_init( dyn_queue_t *q );
 
-/** Destroy the queue */
+/**
+   Destroy the queue 
+*/
 void q_destroy( dyn_queue_t *q );
 
-/** Insert element into queue */
+/**
+   Insert element into queue 
+*/
 int q_put( dyn_queue_t *q, void *e );
 
-/** Remove and return next element from queue */
+/**
+   Remove and return next element from queue 
+*/
 void *q_get( dyn_queue_t *q);
 
-/** Return next element from queue without removing it */
+/**
+   Return next element from queue without removing it 
+*/
 void *q_peek( dyn_queue_t *q);
 
-/** Returns 1 if the queue is empty, 0 otherwise */
+/**
+   Returns 1 if the queue is empty, 0 otherwise 
+*/
 int q_empty( dyn_queue_t *q );
 
 /**
@@ -251,15 +262,15 @@ void hash_get_keys( hash_table_t *h,
 void hash_get_data( hash_table_t *h,
 					array_list_t *arr );
 
-/** 
-	Call the function func for each key/data pair in the table
+/**
+   Call the function func for each key/data pair in the table
 */
 void hash_foreach( hash_table_t *h, 
 				   void (*func)( const void *, const void * ) );
 
-/** 
-	Same as hash_foreach, but the function func takes an additional
-	argument, which is provided by the caller in the variable aux 
+/**
+   Same as hash_foreach, but the function func takes an additional
+   argument, which is provided by the caller in the variable aux 
 */
 void hash_foreach2( hash_table_t *h, void (*func)( const void *, 
 												 const void *, 
@@ -273,7 +284,8 @@ int hash_str_func( const void *data );
 /**
    Hash comparison function suitable for character strings
 */
-int hash_str_cmp( const void *a, const void *b );
+int hash_str_cmp( const void *a,
+				  const void *b );
 
 /**
    Hash function suitable for wide character strings. 
@@ -283,7 +295,8 @@ int hash_wcs_func( const void *data );
 /**
    Hash comparison function suitable for wide character strings
 */
-int hash_wcs_cmp( const void *a, const void *b );
+int hash_wcs_cmp( const void *a, 
+				  const void *b );
 
 /** 
 	Initialize the priority queue
@@ -296,12 +309,12 @@ void pq_init( priority_queue_t *q,
 /**
    Add element to the queue
 
- \param q the queue
- \param e the new element
+   \param q the queue
+   \param e the new element
  
 */
 int pq_put( priority_queue_t *q,
-			 void *e );
+			void *e );
 /**
   Removes and returns the last entry in the priority queue
 */
@@ -445,11 +458,18 @@ void al_foreach2( array_list_t *l, void (*func)(const void *, void *), void *aux
 int wcsfilecmp( const wchar_t *a, const wchar_t *b );
 
 
+/*
+  String buffer functions
+*/
+
 /**
    Initialize the specified string_buffer
 */
 void sb_init( string_buffer_t * );
 
+/**
+   Allocate memory for storing a stringbuffer and init it
+*/
 string_buffer_t *sb_new();
 
 /**
@@ -500,6 +520,9 @@ void sb_destroy( string_buffer_t * );
 */
 void sb_clear( string_buffer_t * );
 
+/*
+  Buffer functions
+*/
 
 /**
    Initialize the specified buffer_t

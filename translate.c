@@ -8,22 +8,46 @@ Translation library, internally uses catgets
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <wchar.h>
+
+#if HAVE_LIBINTL_H
 #include <libintl.h>
+#endif
 
 #include "common.h"
 #include "util.h"
 
 #if HAVE_GETTEXT
 
+/**
+   Number of string_buffer_t in the ring of buffers
+*/
 #define BUFF_COUNT 64
 
+/**
+   The ring of string_buffer_t
+*/
 static string_buffer_t buff[BUFF_COUNT];
+/**
+   Current position in the ring
+*/
 static int curr_buff=0;
 
+/**
+   Buffer used by translate_wcs2str
+*/
 static char *wcs2str_buff=0;
+/**
+   Size of buffer used by translate_wcs2str
+*/
 static size_t wcs2str_buff_count=0;
 
-char *translate_wcs2str( const wchar_t *in )
+/**
+   Wide to narrow character conversion. Internal implementation that
+   avoids exessive calls to malloc
+*/
+static char *translate_wcs2str( const wchar_t *in )
 {
 	size_t len = MAX_UTF8_BYTES*wcslen(in)+1;
 	if( len > wcs2str_buff_count )
@@ -89,6 +113,8 @@ void translate_destroy()
 }
 
 #else
+
+int _nl_msg_cat_cntr=0;
 
 const wchar_t *wgettext( const wchar_t *in )
 {

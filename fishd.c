@@ -2,11 +2,45 @@
 
 The universal variable server. fishd is automatically started by fish
 if a fishd server isn't already running. fishd reads any saved
-variables from ~/.fishd, and takes care of commonication between fish
+variables from ~/.fishd, and takes care of communication between fish
 instances. When no clients are running, fishd will automatically shut
 down and save.
 
+\subsection fishd-commands Commands
+
+Fishd works by sending and receiving commands. Each command is ended
+with a newline. These are the commands supported by fishd:
+
+<pre>set KEY:VALUE
+set_export KEY:VALUE
+</pre>
+
+These commands update the value of a variable. The only difference
+between the two is that <tt>set_export</tt>-variables should be
+exported to children of the process using them. The variable value may
+be escaped using C-style backslash escapes. In fact, this is required
+for newline characters, which would otherwise be interpreted as end of
+command.
+
+<pre>erase KEY
+</pre>
+
+Erase the variable with the specified name.
+
+<pre>barrier
+barrier_reply
+</pre>
+
+A \c barrier command will result in a barrier_reply being added to
+the end of the senders queue of unsent messages. These commands are
+used to synchronize clients, since once the reply for a barrier
+message returns, the sender can know that any updates available at the
+time the original barrier request was sent have been received.
+
 */
+
+#include "config.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <wchar.h>
@@ -18,6 +52,10 @@ down and save.
 #include <sys/un.h>
 #include <pwd.h>
 #include <fcntl.h>
+
+#ifdef HAVE_GETOPT_H
+#include <getopt.h>
+#endif
 
 #include <errno.h>
 #include <locale.h>
@@ -33,6 +71,15 @@ down and save.
 */
 #ifndef UNIX_PATH_MAX 
 #define UNIX_PATH_MAX 100
+#endif
+
+/**
+   Fallback if MSG_DONTWAIT isn't defined. That's actually prerry bad,
+   and may lead to strange fishd behaviour, but at least it should
+   work most of the time.
+*/
+#ifndef MSG_DONTWAIT
+#define MSG_DONTWAIT 0
 #endif
 
 /**
@@ -74,6 +121,11 @@ static int sock;
    Set to one when fishd should save and exit
 */
 static int quit=0;
+
+/**
+   Dynamically generated function, made from the documentation in doc_src.
+*/
+void print_help();
 
 /**
    Constructs the fish socket filename
@@ -396,11 +448,9 @@ static void save()
 */
 static void init()
 {
-	program_name=L"fishd";
 
 	sock = get_socket();
 	daemonize();	
-	wsetlocale( LC_ALL, L"" );	
 	env_universal_common_init( &broadcast );
 	
 	load();	
@@ -419,8 +469,68 @@ int main( int argc, char ** argv )
 	
 	fd_set read_fd, write_fd;
 	
-	init();
+	program_name=L"fishd";
+	wsetlocale( LC_ALL, L"" );	
+
+	/*
+	  Parse options
+	*/
+	while( 1 )
+	{
+#ifdef HAVE_GETOPT_LONG
+		static struct option
+			long_options[] =
+			{
+				{
+					"help", no_argument, 0, 'h' 
+				}
+				,
+				{
+					"version", no_argument, 0, 'v' 
+				}
+				,
+				{ 
+					0, 0, 0, 0 
+				}
+			}
+		;
+		
+		int opt_index = 0;
+		
+		int opt = getopt_long( argc,
+							   argv, 
+							   "hv",
+							   long_options, 
+							   &opt_index );
+		
+#else	
+		int opt = getopt( argc,
+						  argv, 
+						  "hv" );
+#endif
+		if( opt == -1 )
+			break;
+		
+		switch( opt )
+		{
+			case 0:
+				break;				
+
+			case 'h':
+				print_help();
+				exit(0);				
+								
+			case 'v':
+				debug( 0, L"%ls, version %s\n", program_name, PACKAGE_VERSION );
+				exit( 0 );				
+				
+			case '?':
+				return 1;
+				
+		}		
+	}
 	
+	init();
 	while(1) 
 	{
 		connection_t *c;

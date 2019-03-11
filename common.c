@@ -45,8 +45,11 @@ parts of fish.
 #include <termio.h>
 #endif
 
+#if HAVE_TERM_H
 #include <term.h>
-
+#elif HAVE_NCURSES_TERM_H
+#include <ncurses/term.h>
+#endif
 
 #include "util.h"
 #include "wutil.h"
@@ -85,8 +88,6 @@ int error_max=1;
 
 wchar_t ellipsis_char;
 
-static int c1=0, c2=0, c3=0, c4=0, c5;
-
 char *profile=0;
 
 wchar_t *program_name;
@@ -104,6 +105,9 @@ static struct winsize termsize;
 */
 static int block_count=0;
 
+/**
+   String buffer used by the wsetlocale function
+*/
 static string_buffer_t *setlocale_buff=0;
 
 
@@ -114,8 +118,6 @@ void common_destroy()
 		sb_destroy( setlocale_buff );
 		free( setlocale_buff );
 	}
-	
-	debug( 3, L"Calls: wcsdupcat %d, wcsdupcat2 %d, wcsndup %d, str2wcs %d, wcs2str %d", c1, c2, c3, c4, c5 );
 }
 
 
@@ -253,8 +255,6 @@ void sort_list( array_list_t *comp )
 
 wchar_t *str2wcs( const char *in )
 {
-	c4++;
-	
 	wchar_t *res;
 	
 	res = malloc( sizeof(wchar_t)*(strlen(in)+1) );
@@ -296,9 +296,8 @@ void error_reset()
 
 char *wcs2str( const wchar_t *in )
 {
-	c5++;
-
 	char *res = malloc( MAX_UTF8_BYTES*wcslen(in)+1 );
+
 	if( res == 0 )
 	{
 		die_mem();
@@ -308,7 +307,7 @@ char *wcs2str( const wchar_t *in )
 			  in,
 			  MAX_UTF8_BYTES*wcslen(in)+1 );
 
-//	res = realloc( res, strlen( res )+1 );
+	res = realloc( res, strlen( res )+1 );
 
 	return res;
 }
@@ -337,15 +336,11 @@ char **wcsv2strv( const wchar_t **in )
 
 wchar_t *wcsdupcat( const wchar_t *a, const wchar_t *b )
 {
-	c1++;
-
 	return wcsdupcat2( a, b, 0 );
 }
 
 wchar_t *wcsdupcat2( const wchar_t *a, ... )
 {
-	c2++;
-	
 	int len=wcslen(a);
 	int pos;
 	va_list va, va2;
@@ -400,87 +395,6 @@ wchar_t **strv2wcsv( const char **in )
 
 }
 
-
-#ifndef HAVE_WCSNDUP
-wchar_t *wcsndup( const wchar_t *in, int c )
-{
-	c3++;
-	
-	wchar_t *res = malloc( sizeof(wchar_t)*(c+1) );
-	if( res == 0 )
-	{
-		die_mem();
-	}
-	wcsncpy( res, in, c );
-	res[c] = L'\0';	
-	return res;	
-}
-#endif
-
-long convert_digit( wchar_t d, int base )
-{
-	long res=-1;
-	if( (d <= L'9') && (d >= L'0') )
-	{
-		res = d - L'0';
-	}
-	else if( (d <= L'z') && (d >= L'a') )
-	{
-		res = d + 10 - L'a';		
-	}
-	else if( (d <= L'Z') && (d >= L'A') )
-	{
-		res = d + 10 - L'A';		
-	}
-	if( res >= base )
-	{
-		res = -1;
-	}
-	
-	return res;
-}
-
-
-long wcstol(const wchar_t *nptr, 
-			wchar_t **endptr,
-			int base)
-{
-	long long res=0;
-	int is_set=0;
-	if( base > 36 )
-	{
-		errno = EINVAL;
-		return 0;
-	}
-
-	while( 1 )
-	{
-		long nxt = convert_digit( *nptr, base );
-		if( endptr != 0 )
-			*endptr = (wchar_t *)nptr;
-		if( nxt < 0 )
-		{
-			if( !is_set )
-			{
-				errno = EINVAL;
-			}
-			return res;			
-		}
-		res = (res*base)+nxt;
-		is_set = 1;
-		if( res > LONG_MAX )
-		{
-			errno = ERANGE;
-			return LONG_MAX;
-		}
-		if( res < LONG_MIN )
-		{
-			errno = ERANGE;
-			return LONG_MIN;
-		}
-		nptr++;
-	}
-}
 
 /*$OpenBSD: strlcat.c,v 1.11 2003/06/17 21:56:24 millert Exp $*/
 
@@ -583,75 +497,6 @@ wcslcpy(wchar_t *dst, const wchar_t *src, size_t siz)
 	/* count does not include NUL */
 }
 
-#ifndef HAVE_WCSDUP
-wchar_t *wcsdup( const wchar_t *in )
-{
-	size_t len=wcslen(in);
-	wchar_t *out = malloc( sizeof( wchar_t)*(len+1));
-	if( out == 0 )
-	{
-		die_mem();
-	}
-
-	memcpy( out, in, sizeof( wchar_t)*(len+1));
-	return out;
-	
-}
-#endif
-
-#ifndef HAVE_WCSLEN
-size_t wcslen(const wchar_t *in)
-{
-	const wchar_t *end=in;
-	while( *end )
-		end++;
-	return end-in;
-}
-#endif
-
-
-#ifndef HAVE_WCSCASECMP
-int wcscasecmp( const wchar_t *a, const wchar_t *b )
-{
-	if( *a == 0 )
-	{
-		return (*b==0)?0:-1;
-	}
-	else if( *b == 0 )
-	{
-		return 1;
-	}
-	int diff = towlower(*a)-towlower(*b);
-	if( diff != 0 )
-		return diff;
-	else
-		return wcscasecmp( a+1,b+1);
-}
-#endif
-
-
-#ifndef HAVE_WCSNCASECMP
-int wcsncasecmp( const wchar_t *a, const wchar_t *b, int count )
-{
-	if( count == 0 )
-		return 0;
-	
-	if( *a == 0 )
-	{
-		return (*b==0)?0:-1;
-	}
-	else if( *b == 0 )
-	{
-		return 1;
-	}
-	int diff = towlower(*a)-towlower(*b);
-	if( diff != 0 )
-		return diff;
-	else
-		return wcsncasecmp( a+1,b+1, count-1);
-}
-#endif
-
 int wcsvarname( wchar_t *str )
 {
 	while( *str )
@@ -667,23 +512,6 @@ int wcsvarname( wchar_t *str )
 	
 }
 
-#if !HAVE_WCWIDTH
-/**
-   Return the number of columns used by a character. 
-
-   In locales without a native wcwidth, Unicode is probably so broken
-   that it isn't worth trying to implement a real wcwidth. This
-   wcwidth assumes any printing character takes up one column.
-*/
-int wcwidth( wchar_t c )
-{
-	if( c < 32 )
-		return 0;
-	if ( c == 127 )
-		return 0;
-	return 1;
-}
-#endif
 
 /** 
 	The glibc version of wcswidth seems to hang on some strings. fish uses this replacement.

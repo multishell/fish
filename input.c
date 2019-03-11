@@ -32,7 +32,12 @@ implementation in fish is as of yet incomplete.
 #include <termio.h>
 #endif
 
+#if HAVE_TERM_H
 #include <term.h>
+#elif HAVE_NCURSES_TERM_H
+#include <ncurses/term.h>
+#endif
+
 #include <signal.h>
 #include <dirent.h>
 #include <wctype.h>
@@ -191,7 +196,18 @@ const wchar_t code_arr[] =
 */
 static hash_table_t all_mappings;
 
-static array_list_t *current_mode_mappings, *current_application_mappings, *global_mappings;
+/**
+   Mappings for the current input mode
+*/
+static array_list_t *current_mode_mappings; 
+/**
+   Mappings for the current application
+*/
+static array_list_t *current_application_mappings;
+/**
+   Global mappings
+*/
+static array_list_t *global_mappings;
 
 /**
    Number of nested conditional statement levels that are not evaluated
@@ -1292,12 +1308,32 @@ static int interrupt_handler()
 	  Fire any pending events
 	*/
 	event_fire( 0 );	
+	
+	/*
+	  Reap stray processes, including printing exit status messages
+	*/
 	if( job_reap( 1 ) )
 		repaint();
+	
+	/*
+	  Check if we should exit
+	*/
+	if( exit_status() )
+	{
+		return R_EXIT;
+	}
+	
+	/*
+	  Tell the reader an event occured
+	*/
 	if( reader_interupted() )
 	{
+		/*
+		  Return 3, i.e. the character read by a Control-C.
+		*/
 		return 3;
 	}
+
 	return 0;	
 }
 

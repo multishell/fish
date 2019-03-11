@@ -9,8 +9,11 @@ Implementation file for the low level input library
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <sys/time.h>
+#include <sys/types.h>
 #include <unistd.h>
 #include <wchar.h>
+
 
 #include "util.h"
 #include "common.h"

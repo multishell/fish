@@ -209,6 +209,9 @@ static hash_table_t *condition_cache=0;
 */
 static hash_table_t *loaded_completions=0;
 
+/**
+   String buffer used by complete_get_desc
+*/
 static string_buffer_t *get_desc_buff=0;
 
 
@@ -435,9 +438,9 @@ void complete_add( const wchar_t *cmd,
 	opt->result_mode = result_mode;
 	opt->old_mode=old_mode;
 
-	opt->comp = intern(comp);
-	opt->condition = intern(condition);
-	opt->long_opt = intern( long_opt );
+	opt->comp = intern(comp?comp:L"");
+	opt->condition = intern(condition?condition:L"");
+	opt->long_opt = intern( long_opt?long_opt:L"" );
 
 	if( desc && wcslen( desc ) )
 	{
@@ -895,6 +898,7 @@ static const wchar_t *complete_get_desc_suffix( const wchar_t *suff_orig )
 const wchar_t *complete_get_desc( const wchar_t *filename )
 {
 	struct stat buf;
+			
 	if( !get_desc_buff )
 	{
 		get_desc_buff = malloc(sizeof(string_buffer_t) );
@@ -971,21 +975,21 @@ const wchar_t *complete_get_desc( const wchar_t *filename )
 	if( wcslen((wchar_t *)get_desc_buff->buff) == 0 )
 	{
 		wchar_t *suffix = wcsrchr( filename, L'.' );
-		if( suffix != 0 )
+		if( suffix != 0 && !wcsrchr( suffix, L'/' ) )
 		{
-			if( !wcsrchr( suffix, L'/' ) )
-			{
-				sb_printf( get_desc_buff,
-						   L"%lc%ls",
-						   COMPLETE_SEP,
-						   complete_get_desc_suffix( suffix ) );			
-			}
+			sb_printf( get_desc_buff,
+					   L"%lc%ls",
+					   COMPLETE_SEP,
+					   complete_get_desc_suffix( suffix ) );			
 		}
 		else
+		{ 
 			sb_printf( get_desc_buff,
 					   L"%lc%ls", 
 					   COMPLETE_SEP, 
-					   COMPLETE_FILE_DESC );			
+					   COMPLETE_FILE_DESC );
+		}
+		
 	}
 
 	return (wchar_t *)get_desc_buff->buff;
@@ -1143,7 +1147,7 @@ static void complete_cmd_desc( const wchar_t *cmd, array_list_t *comp )
 			val_begin++;
 		}
 		
-		if( !val_begin )
+		if( !*val_begin )
 		{
 			continue;
 		}
@@ -1212,6 +1216,17 @@ static void complete_cmd_desc( const wchar_t *cmd, array_list_t *comp )
 	free( apropos_cmd );
 }
 
+static const wchar_t *complete_function_desc( const wchar_t *fn )
+{
+	const wchar_t *res = function_get_desc( fn );
+
+	if( !res )
+		res = function_get_definition( fn );
+
+	return res;
+}
+
+
 /**
    Complete the specified command name. Search for executables in the
    path, executables defined using an absolute path, functions,
@@ -1219,7 +1234,7 @@ static void complete_cmd_desc( const wchar_t *cmd, array_list_t *comp )
 
    \param cmd the command string to find completions for
 
-   B\param comp the list to add all completions to
+   \param comp the list to add all completions to
 */
 static void complete_cmd( const wchar_t *cmd,
 						  array_list_t *comp )
@@ -1291,7 +1306,7 @@ static void complete_cmd( const wchar_t *cmd,
 
 		al_init( &possible_comp );
 		function_get_names( &possible_comp, cmd[0] == L'_' );
-		copy_strings_with_prefix( comp, cmd, COMPLETE_FUNCTION_DESC, &function_get_desc, &possible_comp );
+		copy_strings_with_prefix( comp, cmd, COMPLETE_FUNCTION_DESC, &complete_function_desc, &possible_comp );
 		al_truncate( &possible_comp, 0 );
 
 		builtin_get_names( &possible_comp );
@@ -1549,13 +1564,6 @@ void complete_load( wchar_t *cmd,
 				wchar_t *esc = expand_escape( (wchar_t *)path.buff, 1 );
 				wchar_t *src_cmd = wcsdupcat( L". ", esc );
 				
-/*				if( tm )
-					debug( 0, L"Reload %ls completions, old time was %d, new time is %d",
-						   cmd,
-						   tm?*tm:-1, 
-						   buf.st_mtime);
-*/			
-
 				if( !tm )
 				{
 					tm = malloc(sizeof(time_t));
@@ -1567,7 +1575,6 @@ void complete_load( wchar_t *cmd,
 				hash_put( loaded_completions,
 						  intern( cmd ),
 						  tm );
-				
 				
 				free( esc );
 				
@@ -1591,8 +1598,6 @@ void complete_load( wchar_t *cmd,
 	*/
 	if( !tm )
 	{
-//		debug( 0, L"Insert null timestamp for command %ls", cmd );
-		
 		tm = malloc(sizeof(time_t));		
 		if( !tm )
 			die_mem();
@@ -1645,7 +1650,7 @@ static int complete_param( wchar_t *cmd_orig,
 		if( str[0] == L'-' )
 		{
 			/* Check if we are entering a combined option and argument
-			 * (like --color=auto or -I/usr/include) */
+			   (like --color=auto or -I/usr/include) */
 			for( o = i->first_option; o; o=o->next )
 			{
 				wchar_t *arg;
@@ -1663,7 +1668,7 @@ static int complete_param( wchar_t *cmd_orig,
 		else if( popt[0] == L'-' )
 		{
 			/* Check if the previous option has any specified
-			 * arguments to match against */
+			   arguments to match against */
 			int found_old = 0;
 
 			/*

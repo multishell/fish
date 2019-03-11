@@ -11,6 +11,9 @@
 #include "util.h"
 #include "parser.h"
 
+/**
+   event_block_t represents a block on events of the specified type
+*/
 typedef struct event_block
 {
 	/**
@@ -60,7 +63,7 @@ typedef struct block
 		wchar_t *for_variable; /**< Name of the variable to loop over */
 		int if_state; /**< The state of the if block */
 		wchar_t *switch_value; /**< The value to test in a switch block */
-		wchar_t *function_name; /**< The name of the function to define */
+		wchar_t *function_name; /**< The name of the function to define or the function called*/
 	} param1;
 
 	/**
@@ -71,6 +74,7 @@ typedef struct block
 		array_list_t for_vars; /**< List of values for a for block */	
 		int switch_taken; /**< Whether a switch match has already been found */
 		wchar_t *function_description; /**< The description of the function to define */
+		array_list_t function_vars;		/**< List of arguments for a function call */
 	} param2;
 
 	/**
@@ -79,6 +83,7 @@ typedef struct block
 	union
 	{
 		int function_is_binding; /**< Whether a function is a keybinding */
+		int function_lineno; /**< Function invocation line number */		 
 	} param3;
 
 	/**
@@ -87,6 +92,7 @@ typedef struct block
 	union
 	{
 		array_list_t *function_events;
+		wchar_t *function_filename;
 	} param4;
 	
 	/**
@@ -193,10 +199,10 @@ wchar_t *get_filename( const wchar_t *cmd );
   Evaluate the expressions contained in cmd.
 
   \param cmd the string to evaluate
-  \param out buffer to insert output to. May be null.
-  \param the type of block to push onto the scope stack
+  \param io io redirections to perform on all started jobs
   \param block_type The type of block to push on the block stack
-  \return 0 on success.
+
+  \return 0 on success, 1 otherwise
 */
 int eval( const wchar_t *cmd, io_data_t *io, int block_type );
 
@@ -235,10 +241,10 @@ int parser_is_subcommand( const wchar_t *cmd );
    command scope, like 'for', 'end' or 'command' or 'exec'. These
    functions may not be overloaded, so their names are reserved.
 
-   \param cmd The command name to test
+   \param word The command name to test
    \return 1 of the command parameter is a command, 0 otherwise
 */
-int parser_is_reserved( wchar_t *word);
+int parser_is_reserved( wchar_t *word );
 
 /**
    Returns a string describing the current parser pisition in the format 'FILENAME (line LINE_NUMBER): LINE'.
@@ -247,6 +253,11 @@ int parser_is_reserved( wchar_t *word);
    init.fish (line 127): ls|grep pancake
 */
 wchar_t *parser_current_line();
+
+/**
+   Returns the current line number
+*/
+int parser_get_lineno();
 
 /**
    Returns the current position in the latest string of the tokenizer.
@@ -327,5 +338,13 @@ void parser_destroy();
    \param min_match is the minimum number of characters that must match in a long style option, i.e. the longest common prefix between --help and any other option. If less than 3, 3 will be assumed.
 */
 int parser_is_help( wchar_t *s, int min_match );
+
+/**
+   Returns the file currently evaluated by the parser. This can be
+   different than reader_current_filename, e.g. if we are evaulating a
+   function defined in a different file than the one curently read.
+*/
+const wchar_t *parser_current_filename();
+
 
 #endif

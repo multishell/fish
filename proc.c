@@ -36,7 +36,11 @@ Some of the code in this file is based on code from the Glibc manual.
 #include <termio.h>
 #endif
 
+#if HAVE_TERM_H
 #include <term.h>
+#elif HAVE_NCURSES_TERM_H
+#include <ncurses/term.h>
+#endif
 
 #include "util.h"
 #include "wutil.h"
@@ -646,13 +650,18 @@ int job_reap( int interactive )
 
 
 #ifdef HAVE__PROC_SELF_STAT
+
+/**
+   Maximum length of a /proc/[PID]/stat filename
+*/
+#define FN_SIZE 256
+
 /**
    Get the CPU time for the specified process
 */
 unsigned long proc_get_jiffies( process_t *p )
 {
-	wchar_t fn[256];
-	//char stat_line[1024];
+	wchar_t fn[FN_SIZE];
 
 	char state;
 	int pid, ppid, pgrp, 
@@ -674,7 +683,7 @@ unsigned long proc_get_jiffies( process_t *p )
 	if( p->pid <= 0 )
 		return 0;
 	
-	swprintf( fn, 512, L"/proc/%d/stat", p->pid );
+	swprintf( fn, FN_SIZE, L"/proc/%d/stat", p->pid );
 	
 	FILE *f = wfopen( fn, "r" );
 	if( !f )
@@ -846,22 +855,6 @@ static void read_try( job_t *j )
 	}
 }
 
-/**
-   Test if a specified job contains external commands
-
-   \param j the job to test
-*/
-static int job_is_external( job_t *j )
-{
-	process_t *p;
-	for( p=j->first_process; p; p=p->next )
-	{
-		if( p->type == EXTERNAL )
-			return 1;
-	}
-	return 0;
-}
-
 
 void job_continue (job_t *j, int cont)
 {
@@ -873,7 +866,7 @@ void job_continue (job_t *j, int cont)
 	first_job = j;
 	j->notified = 0;
 	
-	debug( 3,
+	debug( 4,
 		   L"Continue on job %d (%ls), %ls, %ls",
 		   j->job_id, 
 		   j->command, 
@@ -882,7 +875,7 @@ void job_continue (job_t *j, int cont)
 
 	if( !job_is_completed( j ) )
 	{
-		if( is_interactive  && job_is_external( j ) )
+		if( j->terminal )
 		{
 							
 			/* Put the job into the foreground.  */
@@ -937,6 +930,7 @@ void job_continue (job_t *j, int cont)
 		{
 			int quit = 0;
 		
+//			debug( 1, L"wait loop" );	
 			/* 
 			   Wait for job to report. Looks a bit ugly because it has to
 			   handle the possibility that a signal is dispatched while
@@ -953,7 +947,7 @@ void job_continue (job_t *j, int cont)
 				if( !quit )
 				{
 					
-					debug( 3, L"select_try()" );	
+//					debug( 1, L"select_try()" );	
 					switch( select_try(j) )
 					{
 						case 1:			
@@ -973,6 +967,7 @@ void job_continue (job_t *j, int cont)
 							  short-lived jobs.
 							*/
 							int status;						
+//							debug( 1, L"waitpid" );	
 							pid_t pid = waitpid(-1, &status, WUNTRACED );
 							if( pid > 0 )
 								handle_child_status( pid, status );
@@ -1010,7 +1005,7 @@ void job_continue (job_t *j, int cont)
 		/* 
 		   Put the shell back in the foreground.  
 		*/
-		if( is_interactive  && job_is_external( j ) )
+		if( j->terminal )
 		{
 			signal_block();
 			if( tcsetpgrp (0, getpid()) )

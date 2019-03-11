@@ -278,17 +278,22 @@ void get_desc( wchar_t *fn, string_buffer_t *sb, int is_cmd )
 	}
 						
 	desc = complete_get_desc( fn );
-	
+
+	if( wcschr( desc, COMPLETE_SEP )==0 )
+	{
+		sb_append( sb, COMPLETE_SEP_STR );
+	}
+		
 	if( sz >= 0 && S_ISDIR(buf.st_mode) )
 	{
-		sb_append2( sb, desc, (void *)0 );							
+		sb_append( sb, desc );
 	}
 	else
 	{							
 		sb_append2( sb, desc, L", ", (void *)0 );
 		if( sz < 0 )
 		{
-			sb_append( sb, _(L"unknown") );
+			sb_append( sb, L"unknown" );
 		}
 		else if( sz < 1 )
 		{

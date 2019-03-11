@@ -17,6 +17,7 @@ set -g IFS \ \t\n
 
 set -l path_list /bin /usr/bin /usr/X11R6/bin @PREFIX@/bin
 
+# Root should also have the sbin directories in the path
 set -l uid (id -u 2>/dev/null)
 if test "$uid" = 0
 	set path_list $path_list /sbin /usr/sbin /usr/local/sbin
@@ -31,10 +32,9 @@ for i in $path_list
 end
 
 
-
-
 #
-# Set some value for LANG if nothing was set before
+# Set some value for LANG if nothing was set before, and this is a
+# login shell. Also check for i18n information in /etc/sysconfig/i18n
 #
 
 if status --is-login
@@ -71,8 +71,20 @@ for i in DISPLAY
 	end
 end
 
-function _ -d "Alias for the gettext command"
-	gettext fish $argv
+#
+# Alias for gettext (or a fallback if gettext isn't installed) This
+# needs to be defined here and not in fish_function.fish, since it is
+# used by other init files.
+#
+
+if test 1 = "@HAVE_GETTEXT@"; and which gettext >/dev/null ^/dev/null
+	function _ -d "Alias for the gettext command"
+		gettext fish $argv
+	end
+else
+	function _ -d "Alias for the gettext command"
+		printf "%s" $argv
+	end
 end
 
 #

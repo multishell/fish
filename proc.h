@@ -14,6 +14,7 @@
 #include <wchar.h>
 #include <signal.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 #include "util.h"
 #include "io.h"
@@ -154,7 +155,10 @@ typedef struct job
 	
 	/** Skip executing this job. This flag is set by the short-circut builtins, i.e. and and or */
 	int skip;
-	
+
+	/** Whether this job wants to have control of the terminal when it is in the foreground */
+	int terminal;
+		
 	/** Pointer to the next job */
 	struct job *next;           
 } 
@@ -207,6 +211,9 @@ extern job_t *first_job;
 */
 extern int proc_had_barrier;
 
+/**
+   Pid of last process to be started in the background
+*/
 extern pid_t proc_last_bg_pid;
 
 /**
@@ -303,7 +310,7 @@ void proc_sanity_check();
 */
 void proc_fire_event( const wchar_t *msg, int type, pid_t pid, int status );
 
-/*
+/**
   Initializations
 */
 void proc_init();

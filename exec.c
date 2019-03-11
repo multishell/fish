@@ -385,15 +385,15 @@ static int handle_child_io( io_data_t *io, int exit_on_error )
    IO redirections and other file descriptor actions are performed.
 
    \param j the job to set up the IO for
-   \param exit_on_error whether to call exit() on errors
+   \param p the child process to set up
 
    \return 1 on sucess, 0 on failiure
 */
 static int setup_child_process( job_t *j, process_t *p )
 {
 	int res;
-	
-	if( is_interactive  && p->type==EXTERNAL )
+
+	if( j->terminal )
     {
 		pid_t pid;
 		/* 
@@ -442,6 +442,7 @@ static int setup_child_process( job_t *j, process_t *p )
 */
 static void launch_process( process_t *p )
 {
+//	debug( 1, L"exec '%ls'", p->argv[0] );
 		
 	execve (wcs2str(p->actual_cmd), wcsv2strv( (const wchar_t **) p->argv), env_export_arr( 0 ) );
 	debug( 0, 
@@ -601,7 +602,7 @@ static void internal_exec_helper( const wchar_t *def,
 static int handle_new_child( job_t *j, process_t *p )
 {
 	
-	if( is_interactive  && p->type==EXTERNAL )
+	if( j->terminal )
 	{
 		int new_pgid=0;
 		
@@ -678,7 +679,7 @@ void exec( job_t *j )
 	int exec_error=0;
 
 	
-	debug( 4, L"Exec job %ls with id %d", j->command, j->job_id );	
+	debug( 4, L"Exec job '%ls' with id %d", j->command, j->job_id );	
 	
 	if( j->first_process->type==INTERNAL_EXEC )
 	{
@@ -704,8 +705,7 @@ void exec( job_t *j )
 			return;
 		}
 		
-	}
-	
+	}	
 
 	pipe_read.fd=0;
 	pipe_write.fd=1;
@@ -806,7 +806,7 @@ void exec( job_t *j )
 				wchar_t **arg;
 				int i;
 				string_buffer_t sb;
-			
+				
 				const wchar_t * def = function_get_definition( p->argv[0] );
 //			fwprintf( stderr, L"run function %ls\n", argv[0] );
 				if( def == 0 )
@@ -814,14 +814,29 @@ void exec( job_t *j )
 					debug( 0, _( L"Unknown function '%ls'" ), p->argv[0] );
 					break;
 				}
+				
+				/*
+				  These two lines must be called before the new block is pushed
+				*/
+				int lineno = parser_get_lineno();
+				wchar_t *file = parser_current_filename()?wcsdup(parser_current_filename()):0;
+				
 				parser_push_block( FUNCTION_CALL );
 				
+				al_init( &current_block->param2.function_vars );
+				current_block->param1.function_name = wcsdup( p->argv[0] );
+				current_block->param3.function_lineno = lineno;
+				current_block->param4.function_filename = file;
+												
 				if( builtin_count_args(p->argv)>1 )
 				{
 					sb_init( &sb );
 				
 					for( i=1, arg=p->argv+1; *arg; i++, arg++ )
 					{
+						al_push( &current_block->param2.function_vars, 
+								 escape(*arg, 1) );
+
 						if( i != 1 )
 							sb_append( &sb, ARRAY_SEP_STR );
 						sb_append( &sb, *arg );
@@ -830,6 +845,11 @@ void exec( job_t *j )
 					env_set( L"argv", (wchar_t *)sb.buff, ENV_LOCAL );
 					sb_destroy( &sb );
 				}
+				else
+				{
+					env_set( L"argv", 0, ENV_LOCAL );
+				}
+				
 				parser_forbid_function( p->argv[0] );
 
 				if( p->next )
@@ -1014,6 +1034,7 @@ void exec( job_t *j )
 				if( io_buffer->param2.out_buffer->used != 0 )
 				{
 					pid = fork();
+
 					if( pid == 0 )
 					{
 						/*
@@ -1309,5 +1330,6 @@ int exec_subshell( const wchar_t *cmd,
 	}
 	
 	io_buffer_destroy( io_buffer );
+
 	return status;	
 }

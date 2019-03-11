@@ -276,16 +276,10 @@ static int builtin_block( wchar_t **argv )
 	}
 	;
 
-	
-	
 	int scope=UNSET;
-	
 	int erase = 0;
-	
 	int argc=builtin_count_args( argv );
-	
-	int type = (1<<EVENT_ANY);
-	
+	int type = (1<<EVENT_ANY);	
 
 	woptind=0;
 
@@ -646,6 +640,10 @@ static int builtin_exec( wchar_t **argv )
 	return 1;
 }
 
+/**
+   Print the definition of the given function to sb_out
+   stringbuffer. Used by the functions builtin.
+*/
 static void functions_def( wchar_t *name )
 {
 	const wchar_t *desc = function_get_desc( name );
@@ -653,15 +651,15 @@ static void functions_def( wchar_t *name )
 	
 	array_list_t ev;
 	event_t search;
-	
+
 	int i;
-	
+
 	search.function_name = name;
 	search.type = EVENT_ANY;
-	
+
 	al_init( &ev );
 	event_get( &search, &ev );
-	
+
 	sb_append2( sb_out,
 				L"function ",
 				name,
@@ -670,11 +668,11 @@ static void functions_def( wchar_t *name )
 	if( desc && wcslen(desc) )
 	{
 		wchar_t *esc_desc = escape( desc, 1 );
-		
+	
 		sb_append2( sb_out, L" --description ", esc_desc, (void *)0 );
 		free( esc_desc );
 	}
-	
+
 	for( i=0; i<al_get_count( &ev); i++ )
 	{
 		event_t *next = (event_t *)al_get( &ev, i );
@@ -685,7 +683,7 @@ static void functions_def( wchar_t *name )
 				sb_printf( sb_out, L" --on-signal %ls", sig2wcs( next->param1.signal ) );
 				break;
 			}
-			
+
 			case EVENT_VARIABLE:
 			{
 				sb_printf( sb_out, L" --on-variable %ls", next->param1.variable );
@@ -710,17 +708,17 @@ static void functions_def( wchar_t *name )
 			}
 
 		}
-				
+	
 	}
-	
+
 	al_destroy( &ev );
-	
+
 	sb_append2( sb_out,
 				L"\n\t",
 				def,
 				L"\nend\n\n",
 				(void *)0);
-	
+
 }
 
 
@@ -740,7 +738,7 @@ static int builtin_functions( wchar_t **argv )
 	int list=0;
 	int show_hidden=0;	
 	int res = 0;
-		
+
 	woptind=0;
 
 	const static struct woption
@@ -771,7 +769,7 @@ static int builtin_functions( wchar_t **argv )
 	while( 1 )
 	{
 		int opt_index = 0;
-		
+
 		int opt = wgetopt_long( argc,
 								argv, 
 								L"ed:na", 
@@ -779,7 +777,7 @@ static int builtin_functions( wchar_t **argv )
 								&opt_index );
 		if( opt == -1 )
 			break;
-			
+
 		switch( opt )
 		{
 			case 0:
@@ -816,10 +814,8 @@ static int builtin_functions( wchar_t **argv )
 				return 1;
 				
 		}
-		
-	}		
 
-
+	}
 
 	/*
 	  Erase, desc and list are mutually exclusive
@@ -829,13 +825,12 @@ static int builtin_functions( wchar_t **argv )
 		sb_printf( sb_err,
 				   _( L"%ls: Invalid combination of options\n" ),
 				   argv[0] );
-		
+
 
 		builtin_print_help( argv[0], sb_err );
-		
+
 		return 1;
 	}
-	
 
 	if( erase )
 	{
@@ -911,7 +906,7 @@ static int builtin_functions( wchar_t **argv )
 							(void *)0 );			
 			}
 		}
-		
+
 		free( names_arr );
 		al_destroy( &names );			
 		return 0;
@@ -933,16 +928,14 @@ static int builtin_functions( wchar_t **argv )
 			for( i=0; i<al_get_count( &names ); i++ )
 			{
 				functions_def( names_arr[i] );
-				
 			}
 			free( names_arr );
 			al_destroy( &names );			
 			break;
 		}
-		
+
 		default:
 		{
-			
 			for( i=woptind; i<argc; i++ )
 			{
 				if( !function_exists( argv[i] ) )
@@ -952,13 +945,11 @@ static int builtin_functions( wchar_t **argv )
 					functions_def( argv[i] );
 				}
 			}
-			
-			
+
 			break;
 		}
 	}
 	return res;
-	
 	
 }
 
@@ -966,9 +957,7 @@ static int builtin_functions( wchar_t **argv )
    Test whether the specified string is a valid name for a keybinding
 */
 static int wcsbindingname( wchar_t *str )
-{
-	
-	
+{	
 	while( *str )
 	{
 		if( (!iswalnum(*str)) && (*str != L'-' ) )
@@ -1063,10 +1052,9 @@ static int builtin_function( wchar_t **argv )
                            argv[0],
                            long_options[opt_index].name );
 				builtin_print_help( argv[0], sb_err );
-				
+
 				res = 1;
-				break;
-				
+				break;			
 				
 			case 'd':		
 				desc=woptarg;				
@@ -1960,258 +1948,7 @@ static int builtin_cd( wchar_t **argv )
 	return res;
 }
 
-/**
-   The complete builtin. Used for specifying programmable
-   tab-completions. Calls the functions in complete.c for any heavy
-   lifting.
-*/
-static int builtin_complete( wchar_t **argv )
-{
-	
-	int argc=0;
-	int result_mode=SHARED, long_mode=0;
-	int cmd_type=-1;
-	int remove = 0;
-	int authorative = 1;
-	
-	wchar_t *cmd=0, short_opt=L'\0', *long_opt=L"", *comp=L"", *desc=L"", *condition=L"", *load=0;
-	
-	argc = builtin_count_args( argv );	
-	
-	woptind=0;
-	
-	while( 1 )
-	{
-		const static struct woption
-			long_options[] =
-			{
-				{
-					L"exclusive", no_argument, 0, 'x' 
-				}
-				,
-				{
-					L"no-files", no_argument, 0, 'f' 
-				}
-				,
-				{
-					L"require-parameter", no_argument, 0, 'r' 
-				}
-				,
-				{
-					L"path", required_argument, 0, 'p'
-				}
-				,					
-				{
-					L"command", required_argument, 0, 'c' 
-				}
-				,					
-				{
-					L"short-option", required_argument, 0, 's' 
-				}
-				,
-				{
-					L"long-option", required_argument, 0, 'l'				}
-				,
-				{
-					L"old-option", required_argument, 0, 'o' 
-				}
-				,
-				{
-					L"description", required_argument, 0, 'd'
-				}
-				,
-				{
-					L"arguments", required_argument, 0, 'a'
-				}
-				,
-				{
-					L"erase", no_argument, 0, 'e'
-				}
-				,
-				{
-					L"unauthorative", no_argument, 0, 'u'
-				}
-				,
-				{
-					L"condition", required_argument, 0, 'n'
-				}
-				,
-				{
-					L"load", required_argument, 0, 'y'
-				}
-				,
-				{ 
-					0, 0, 0, 0 
-				}
-			}
-		;		
-		
-		int opt_index = 0;
-		
-		int opt = wgetopt_long( argc,
-								argv, 
-								L"a:c:p:s:l:o:d:frxeun:y:", 
-								long_options, 
-								&opt_index );
-		if( opt == -1 )
-			break;
-			
-		switch( opt )
-		{
-			case 0:
-				if(long_options[opt_index].flag != 0)
-					break;
-                sb_printf( sb_err,
-                           BUILTIN_ERR_UNKNOWN,
-                           argv[0],
-                           long_options[opt_index].name );
-				sb_append( sb_err, 
-						   parser_current_line() );
-//				builtin_print_help( argv[0], sb_err );
 
-				
-				return 1;
-				
-				
-			case 'x':					
-				result_mode |= EXCLUSIVE;
-				break;
-					
-			case 'f':					
-				result_mode |= NO_FILES;
-				break;
-				
-			case 'r':					
-				result_mode |= NO_COMMON;
-				break;
-					
-			case 'p':					
-				cmd_type = PATH;
-				cmd = expand_unescape( woptarg, 1);
-				break;
-					
-			case 'c':
-				cmd_type = COMMAND;
-				cmd = expand_unescape( woptarg, 1);
-				break;
-				
-			case 'd':
-				desc = woptarg;
-				break;
-				
-			case 'u':
-				authorative=0;
-				break;
-				
-			case 's':
-				if( wcslen( woptarg ) > 1 )
-				{
-					sb_printf( sb_err,
-							   _( L"%ls: Parameter '%ls' is too long\n" ),
-							   argv[0],
-							   woptarg );
-					
-					sb_append( sb_err, 
-							   parser_current_line() );
-//				builtin_print_help( argv[0], sb_err );
-					
-					return 1;
-				}
-				
-				short_opt = woptarg[0];
-				break;
-					
-			case 'l':
-				long_opt = woptarg;
-				break;
-				
-			case 'o':
-				long_mode=1;				
-				long_opt = woptarg;
-				break;
-
-			case 'a':
-				comp = woptarg;
-				break;
-				
-
-			case 'e':
-				remove = 1;
-				
-				break;
-
-			case 'n':
-				condition = woptarg;
-				break;
-				
-			case 'y':
-				load = woptarg;
-				break;
-				
-
-			case '?':
-				//	builtin_print_help( argv[0], sb_err );
-				
-				return 1;
-				
-		}
-		
-	}
-	
-	if( woptind != argc )
-	{
-		sb_printf( sb_err, 
-				   _( L"%ls: Too many arguments\n" ),
-				   argv[0] );
-		sb_append( sb_err, 
-				   parser_current_line() );
-		//			builtin_print_help( argv[0], sb_err );
-
-		return 1;
-	}
-
-	if( load )
-	{
-		complete_load( load, 1 );		
-		return 0;		
-	}
-	
-
-	if( cmd == 0 )
-	{
-		/* No arguments specified, meaning we print the definitions of
-		 * all specified completions to stdout.*/
-		complete_print( sb_out );		
-	}
-	else
-	{
-		if( remove )
-		{
-			/* Remove the specified completion */
-			complete_remove( cmd, 
-							 cmd_type, 
-							 short_opt,
-							 long_opt );
-		}
-		else
-		{
-			/* Add the specified completion */
-			complete_add( cmd, 
-						  cmd_type, 
-						  short_opt,
-						  long_opt,
-						  long_mode, 
-						  result_mode, 
-						  authorative,
-						  condition,
-						  comp,
-						  desc ); 
-		}
-		free( cmd );
-		
-	}	
-	return 0;
-}
 
 /**
    The  . (dot) builtin, sometimes called source. Evaluates the contents of a file. 
@@ -2321,14 +2058,20 @@ static int builtin_fg( wchar_t **argv )
 	if( argv[1] == 0 )
 	{
 		/*
-		  Last constructed job in the job que by default
+		  Select last constructed job (I.e. first job in the job que) that is possible to put in the foreground 
 		*/
-		for( j=first_job; ((j!=0) && (!j->constructed)); j=j->next )
-			;
-		sb_printf( sb_err,
-				   _( L"%ls: There are no jobs\n" ),
-				   argv[0] );
-		builtin_print_help( argv[0], sb_err );
+		for( j=first_job; j; j=j->next )
+		{
+			if( j->constructed && (!job_is_completed(j)) && (job_is_stopped(j) || !j->fg))
+				break;
+		}			
+		if( !j )
+		{
+			sb_printf( sb_err,
+					   _( L"%ls: There are no suitable jobs\n" ),
+					   argv[0] );
+			builtin_print_help( argv[0], sb_err );
+		}
 	}
 	else if( argv[2] != 0 )
 	{
@@ -2355,20 +2098,24 @@ static int builtin_fg( wchar_t **argv )
 		}
 		builtin_print_help( argv[0], sb_err );
 		
-		return 1;
+		j=0;
+		
 	}
 	else
 	{
 		int pid = abs(wcstol( argv[1], 0, 10 ));
 		j = job_get_from_pid( pid );
-		sb_printf( sb_err,
-				   _( L"%ls: No suitable job: %d\n" ),
-				   argv[0],
-				   pid );
-		builtin_print_help( argv[0], sb_err );
+		if( !j )
+		{
+			sb_printf( sb_err,
+					   _( L"%ls: No suitable job: %d\n" ),
+					   argv[0],
+					   pid );
+			builtin_print_help( argv[0], sb_err );
+		}
 	}
-
-	if( j != 0 )
+	
+	if( j )
 	{
 		if( builtin_err_redirect )
 		{
@@ -2389,26 +2136,25 @@ static int builtin_fg( wchar_t **argv )
 					  j->job_id, 
 					  j->command );
 		}
-	}
-	
-	wchar_t *ft = tok_first( j->command );
-	if( ft != 0 )
-		env_set( L"_", ft, ENV_EXPORT );
-	free(ft);
-	reader_write_title();
 
-	make_first( j );
-	j->fg=1;
-	
+		wchar_t *ft = tok_first( j->command );
+		if( ft != 0 )
+			env_set( L"_", ft, ENV_EXPORT );
+		free(ft);
+		reader_write_title();
 		
-	job_continue( j, job_is_stopped(j) );
-	return 0;
+		make_first( j );
+		j->fg=1;
+		
+		job_continue( j, job_is_stopped(j) );
+	}
+	return j != 0;
 }
 
 /**
    Helper function for builtin_bg()
 */
-static void send_to_bg( job_t *j, const wchar_t *name )
+static int send_to_bg( job_t *j, const wchar_t *name )
 {
 	if( j == 0 )
 	{
@@ -2417,7 +2163,7 @@ static void send_to_bg( job_t *j, const wchar_t *name )
 				   L"bg",
 				   name );
 		builtin_print_help( L"bg", sb_err );
-		return;
+		return 1;
 	}	
 	else
 	{
@@ -2429,6 +2175,7 @@ static void send_to_bg( job_t *j, const wchar_t *name )
 	make_first( j );
 	j->fg=0;
 	job_continue( j, job_is_stopped(j) );
+	return 0;
 }
 
 
@@ -2437,20 +2184,38 @@ static void send_to_bg( job_t *j, const wchar_t *name )
 */
 static int builtin_bg( wchar_t **argv )
 {
+	int res = 0;
+	
 	if( argv[1] == 0 )
 	{
   		job_t *j;
-		for( j=first_job; ((j!=0) && (!j->constructed) && (!job_is_stopped(j))); j=j->next )
-			;
-		send_to_bg( j, _(L"(default)" ) );
-		return 0;
+		for( j=first_job; j; j=j->next )
+		{
+			if( job_is_stopped(j) )
+				break;
+		}
+		
+		if( !j )
+		{
+			sb_printf( sb_err,
+					   _( L"%ls: There are no suitable jobs\n" ),
+					   argv[0] );
+			res = 1;
+		}
+		else
+		{
+			res = send_to_bg( j, _(L"(default)" ) );
+		}
 	}
-	for( argv++; *argv != 0; argv++ )
+	else
 	{
-		int pid = wcstol( *argv, 0, 10 );
-		send_to_bg( job_get_from_pid( pid ), *argv);
+		for( argv++; !res && *argv != 0; argv++ )
+		{
+			int pid = wcstol( *argv, 0, 10 );
+			res |= send_to_bg( job_get_from_pid( pid ), *argv);
+		}
 	}
-	return 0;
+	return res;
 }
 
 
@@ -2483,6 +2248,9 @@ static int cpu_use( job_t *j )
 }
 #endif
 
+/**
+   Print information about the specified job
+*/
 static void builtin_jobs_print( job_t *j, int mode, int header )
 {
 	process_t *p;

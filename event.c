@@ -13,6 +13,7 @@
 
 #include "config.h"
 #include "util.h"
+#include "wutil.h"
 #include "function.h"
 #include "proc.h"
 #include "parser.h"
@@ -154,7 +155,9 @@ static event_t *event_copy( event_t *event, int copy_arguments )
 	return e;
 }
 
-
+/**
+   Test if specified event is blocked
+*/
 static int event_is_blocked( event_t *e )
 {
 	block_t *block;
@@ -325,7 +328,6 @@ static void event_fire_internal( event_t *event )
 	array_list_t *fire=0;
 
 	int was_subshell = is_subshell;
-//	int was_interactive = is_interactive;
 	
 	/*
 	  First we free all events that have been removed
@@ -402,7 +404,6 @@ static void event_fire_internal( event_t *event )
 		  they are marked as non-interactive and as a subshell
 		*/
 		is_subshell=1;
-//		is_interactive=0;		
 		eval( (wchar_t *)b->buff, 0, TOP );
 		
 	}
@@ -411,7 +412,6 @@ static void event_fire_internal( event_t *event )
 	  Restore interactivity flags
 	*/
 	is_subshell = was_subshell;
-//	is_interactive = was_interactive;
 
 	if( b )
 	{
@@ -531,7 +531,6 @@ void event_fire( event_t *event )
 			sig_list[active_list].signal[sig_list[active_list].count++]=event->param1.signal;
 		else
 			sig_list[active_list].overflow=1;
-		
 	}
 	else
 	{

@@ -25,7 +25,12 @@
 #include <termio.h>
 #endif
 
+#if HAVE_TERM_H
 #include <term.h>
+#elif HAVE_NCURSES_TERM_H
+#include <ncurses/term.h>
+#endif
+
 #include <errno.h>
 
 #include "util.h"
@@ -144,19 +149,6 @@ static buffer_t export_buffer;
 static int has_changed = 1;
 
 /**
-   Free hash key and hash value
-*/
-static void clear_hash_entry( const void *key, const void *data )
-{
-	var_entry_t *entry = (var_entry_t *)data;	
-	if( entry->export )
-		has_changed = 1;
-	
-	free( (void *)key );
-	free( (void *)data );
-}
-
-/**
    This stringbuffer is used to store the value of dynamically
    generated variables, such as history.
 */
@@ -174,6 +166,36 @@ static int get_names_show_exported;
 static int get_names_show_unexported;
 
 /**
+   List of all locale variable names
+*/
+static const wchar_t *locale_variable[] =
+{
+	L"LANG",
+	L"LC_ALL",
+	L"LC_COLLATE",
+	L"LC_CTYPE",
+	L"LC_MESSAGES",
+	L"LC_MONETARY",
+	L"LC_NUMERIC",
+	L"LC_TIME",
+	(void *)0
+}
+	;
+
+/**
+   Free hash key and hash value
+*/
+static void clear_hash_entry( const void *key, const void *data )
+{
+	var_entry_t *entry = (var_entry_t *)data;	
+	if( entry->export )
+		has_changed = 1;
+	
+	free( (void *)key );
+	free( (void *)data );
+}
+
+/**
    When fishd isn't started, this function is provided to
    env_universal as a callback, it tries to start up fishd. It's
    implementation is a bit of a hack, since it evaluates a bit of
@@ -184,7 +206,7 @@ static void start_fishd()
 {
 	string_buffer_t cmd;
 	struct passwd *pw;
-		
+	
 	sb_init( &cmd );
 	pw = getpwuid(getuid());
 	
@@ -216,15 +238,6 @@ static mode_t get_umask()
 }
 
 /**
-   List of all locale variable names
-*/
-static const wchar_t *locale_variable[] =
-{
-	L"LANG", L"LC_ALL", L"LC_COLLATE", L"LC_CTYPE", L"LC_MESSAGES", L"LC_MONETARY", L"LC_NUMERIC", L"LC_TIME", (void *)0
-}
-	;
-
-/**
    Checks if the specified variable is a locale variable
 */
 static int is_locale( const wchar_t *key )
@@ -251,7 +264,14 @@ static void handle_locale()
 	*/
 	static const int cat[] = 
 		{
-			0, LC_ALL, LC_COLLATE, LC_CTYPE, LC_MESSAGES, LC_MONETARY, LC_NUMERIC, LC_TIME
+			0, 
+			LC_ALL, 
+			LC_COLLATE,
+			LC_CTYPE,
+			LC_MESSAGES,
+			LC_MONETARY,
+			LC_NUMERIC,
+			LC_TIME
 		}
 	;
 	
@@ -277,18 +297,23 @@ static void handle_locale()
 	
 	if( wcscmp( wsetlocale( LC_MESSAGES, (void *)0 ), old ) != 0 )
 	{
-		/* Make change known to gettext.  */
+
+		/* Try to make change known to gettext.  */
+#ifdef HAVE__NL_MSG_CAT_CNTR
 		{
-			extern int  _nl_msg_cat_cntr;
+			extern int _nl_msg_cat_cntr;
 			++_nl_msg_cat_cntr;
-		}			
-		
+		}
+#elif HAVE_DCGETTEXT
+		dcgettext("fish","Changing language to English",LC_MESSAGES);
+#endif		
+
 		if( is_interactive )
 		{
 			complete_destroy();
 			complete_init();
 			
-			debug( 0, _(L"Changing language to english") );
+			debug( 0, _(L"Changing language to English") );
 		}
 	}
 	free( old );
@@ -339,22 +364,99 @@ static void universal_callback( int type,
 	}
 }
 
+/**
+   Make sure the PATH variable contains the essaential directories
+*/
+static void setup_path()
+{
+	wchar_t *path;
+	
+	int i, j;
+	array_list_t l;
+
+	const wchar_t *path_el[] = 
+		{
+			L"/bin",
+			L"/usr/bin",
+			PREFIX L"/bin",
+			0
+		}
+	;
+
+	path = env_get( L"PATH" );
+	if( !path )
+	{
+		env_set( L"PATH", 0, ENV_EXPORT | ENV_GLOBAL | ENV_USER );
+		path=0;
+	}	
+		
+	al_init( &l );
+	
+	if( path )
+		expand_variable_array( path, &l );
+	
+	for( j=0; path_el[j]; j++ )
+	{
+		int has_el=0;
+		
+		for( i=0; i<al_get_count( &l); i++ )
+		{
+			wchar_t * el = (wchar_t *)al_get( &l, i );
+			size_t len = wcslen( el );
+			while( (len > 0) && (el[len-1]==L'/') )
+				len--;
+			if( (wcslen( path_el[j] ) == len) && (wcsncmp( el, path_el[j], len)==0) )
+			{
+				has_el = 1;
+			}
+		}
+		
+		if( !has_el )
+		{
+			string_buffer_t b;
+
+			debug( 3, L"directory %ls was missing", path_el[j] );
+
+			sb_init( &b );
+			if( path )
+			{
+				sb_append( &b, path );
+			}
+			
+			sb_append2( &b,
+						ARRAY_SEP_STR,
+						path_el[j],
+						(void *)0 );
+			
+			env_set( L"PATH", (wchar_t *)b.buff, ENV_GLOBAL | ENV_EXPORT );
+			
+			sb_destroy( &b );
+			
+			al_foreach( &l, (void (*)(const void *))&free );
+			path = env_get( L"PATH" );
+			al_truncate( &l, 0 );
+			expand_variable_array( path, &l );			
+		}
+	}
+	
+	al_foreach( &l, (void (*)(const void *))&free );
+	al_destroy( &l );
+}
+
 void env_init()
 {
 	char **p;
 	struct passwd *pw;
-	wchar_t *uname, *path;
+	wchar_t *uname;
 
 	sb_init( &dyn_var );
-
 	b_init( &export_buffer );
-	
 	
 	/*
 	  These variables can not be altered directly by the user
 	*/
 	hash_init( &env_read_only, &hash_wcs_func, &hash_wcs_cmp );
-
+	
 	hash_put( &env_read_only, L"status", L"" );
 	hash_put( &env_read_only, L"history", L"" );
 	hash_put( &env_read_only, L"_", L"" );
@@ -387,6 +489,11 @@ void env_init()
 	hash_init( &top->env, &hash_wcs_func, &hash_wcs_cmp );
 	global_env = top;
 	global = &top->env;	
+
+	/*
+	  Now the environemnt variable handling is set up, the next step
+	  is to insert valid data
+	*/
 	
 	/*
 	  Import environment variables
@@ -424,77 +531,14 @@ void env_init()
 		free(key);
 	}
 
-	path = env_get( L"PATH" );
-	if( !path )
-	{
-		env_set( L"PATH", L"/bin" ARRAY_SEP_STR L"/usr/bin", ENV_EXPORT | ENV_GLOBAL );
-		path = env_get( L"PATH" );
-	}
-	else
-	{
-		int i, j;
-		array_list_t l;
-		
-		al_init( &l );
-		expand_variable_array( path, &l );
+	/*
+	  Set up the PATH variable
+	*/
+	setup_path();
 
-		debug( 3, L"PATH is %ls", path );
-		
-		
-		const wchar_t *path_el[] = 
-			{
-				L"/bin",
-				L"/usr/bin",
-				PREFIX L"/bin",
-				0
-			}
-		;
-		
-		for( j=0; path_el[j]; j++ )
-		{
-			int has_el=0;
-
-			debug( 3, L"Check directory %ls", path_el[j] );
-		
-			
-			for( i=0; i<al_get_count( &l); i++ )
-			{
-				wchar_t * el = (wchar_t *)al_get( &l, i );
-				size_t len = wcslen( el );
-				while( (len > 0) && (el[len-1]==L'/') )
-					len--;
-				if( (wcslen( path_el[j] ) == len) && (wcsncmp( el, path_el[j], len)==0) )
-				{
-					has_el = 1;
-				}
-			}
-			
-			if( !has_el )
-			{
-				string_buffer_t b;
-				debug( 3, L"directory %ls was missing", path_el[j] );
-				sb_init( &b );
-				sb_append2( &b, path,
-							ARRAY_SEP_STR,
-							path_el[j],
-							(void *)0 );
-								
-				env_set( L"PATH", (wchar_t *)b.buff, ENV_GLOBAL | ENV_EXPORT );
-				sb_destroy( &b );
-				path = env_get( L"PATH" );
-				
-			}
-		}
-		
-		debug( 3, L"After: PATH is %ls", path );
-
-		al_foreach( &l, (void (*)(const void *))&free );
-		al_destroy( &l );
-		
-	}
-	
-	
-	
+	/*
+	  Set up the USER variable
+	*/
 	pw = getpwuid( getuid() );
 	if( pw )
 	{
@@ -609,7 +653,7 @@ void env_set( const wchar_t *key,
 	/*
 	  Zero element arrays are internaly not coded as null but as this placeholder string
 	*/
-	if( !val && ( var_mode & ENV_USER ) )
+	if( !val )
 	{
 		val = ENV_NULL;
 	}
@@ -696,7 +740,8 @@ void env_set( const wchar_t *key,
 				else
 				{
 					/*
-					  New variable with unspecified scope. The default scope is the innermost scope that is shadowing
+					  New variable with unspecified scope. The default
+					  scope is the innermost scope that is shadowing
 					*/
 					node = top;
 					while( node->next && !node->new_scope )
@@ -763,8 +808,6 @@ void env_set( const wchar_t *key,
 	}
 		
 }
-
-
 
 
 /**
@@ -1038,7 +1081,9 @@ static void add_key_to_hash( const void *key,
 	var_entry_t *e = (var_entry_t *)data;
 	if( ( e->export && get_names_show_exported) || 
 		( !e->export && get_names_show_unexported) )
+	{
 		hash_put( (hash_table_t *)aux, key, 0 );
+	}
 }
 
 /**

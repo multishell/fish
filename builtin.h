@@ -47,8 +47,14 @@ enum
 */
 #define BUILTIN_ERR_UNKNOWN	_( L"%ls: Unknown option '%ls'\n" )
 
+/**
+   Error message for invalid character in variable name
+*/
 #define BUILTIN_ERR_VARCHAR _( L"%ls: Invalid character '%lc' in variable name. Only alphanumerical characters and underscores are valid in a variable name.\n" )
 
+/**
+   Error message for invalid (empty) variable name
+*/
 #define BUILTIN_ERR_VARNAME_ZERO _( L"%ls: Variable name can not be the empty string\n" )
 
 /**
@@ -145,6 +151,13 @@ int builtin_commandline(wchar_t **argv);
    The ulimit builtin, used for setting resource limits. Defined in builtin_ulimit.c.
 */
 int builtin_ulimit(wchar_t **argv);
+
+/**
+   The complete builtin. Used for specifying programmable
+   tab-completions. Calls the functions in complete.c for any heavy
+   lifting.
+*/
+int builtin_complete(wchar_t **argv);
 
 /** 
 	This function works like wperror, but it prints its result into
