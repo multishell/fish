@@ -42,9 +42,29 @@ parameter expansion.
 #include "signal.h"
 #include "tokenizer.h"
 #include "complete.h"
-#include "translate.h"
+
 #include "parse_util.h"
 #include "halloc_util.h"
+
+/**
+   Error issued on invalid variable name
+*/
+#define COMPLETE_VAR_DESC _( L"The '$' character begins a variable name. The character '%lc', which directly followed a '$', is not allowed as a part of a variable name, and variable names may not be zero characters long. To learn more about variable expansion in fish, type 'help expand-variable'.")
+
+/**
+   Error issued on invalid variable name
+*/
+#define COMPLETE_VAR_NULL_DESC _( L"The '$' begins a variable name. It was given at the end of an argument. Variable names may not be zero characters long. To learn more about variable expansion in fish, type 'help expand-variable'.")
+
+/**
+   Error issued on invalid variable name
+*/
+#define COMPLETE_VAR_BRACKET_DESC _( L"Did you mean %ls{$%ls}%ls? The '$' character begins a variable name. A bracket, which directly followed a '$', is not allowed as a part of a variable name, and variable names may not be zero characters long. To learn more about variable expansion in fish, type 'help expand-variable'." )
+
+/**
+   Error issued on invalid variable name
+*/
+#define COMPLETE_VAR_PARAN_DESC _( L"Did you mean (COMMAND)? In fish, the '$' character is only used for accessing variables. To learn more about command substitution in fish, type 'help expand-command-substitution'.")
 
 /**
    Description for child process
@@ -575,12 +595,9 @@ static int expand_pid( wchar_t *in,
 					   array_list_t *out )
 {
 
-	if( !in || !out)
-	{
-		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
-		return 0;		
-	}
-
+	CHECK( in, 0 );
+	CHECK( out, 0 );
+	
 	if( *in != PROCESS_EXPAND )
 	{
 		al_push( out, in );
@@ -649,6 +666,83 @@ static int expand_pid( wchar_t *in,
 	return 1;
 }
 
+
+void expand_variable_error( const wchar_t *token, int token_pos, int error_pos )
+{
+	int stop_pos = token_pos+1;
+	
+	switch( token[stop_pos] )
+	{
+		case BRACKET_BEGIN:
+		{
+			wchar_t *cpy = wcsdup( token );
+			*(cpy+token_pos)=0;
+			wchar_t *name = &cpy[stop_pos+1];
+			wchar_t *end = wcschr( name, BRACKET_END );
+			wchar_t *post;
+			int is_var=0;
+			if( end )
+			{
+				post = end+1;
+				*end = 0;
+				
+				if( !wcsvarname( name ) )
+				{
+					is_var = 1;
+				}
+			}
+			
+			if( is_var )
+			{
+				error( SYNTAX_ERROR,
+					   error_pos,
+					   COMPLETE_VAR_BRACKET_DESC,
+					   cpy,
+					   name,
+					   post );				
+			}
+			else
+			{
+				error( SYNTAX_ERROR,
+					   error_pos,
+					   COMPLETE_VAR_BRACKET_DESC,
+					   L"",
+					   L"VARIABLE",
+					   L"" );
+			}
+			free( cpy );
+			
+			break;
+		}
+		
+		case INTERNAL_SEPARATOR:
+		{
+			error( SYNTAX_ERROR,
+				   error_pos,
+				   COMPLETE_VAR_PARAN_DESC );	
+			break;
+		}
+		
+		case 0:
+		{
+			error( SYNTAX_ERROR,
+				   error_pos,
+				   COMPLETE_VAR_NULL_DESC );
+			break;
+		}
+		
+		default:
+		{
+			error( SYNTAX_ERROR,
+				   error_pos,
+				   COMPLETE_VAR_DESC,
+				   token[stop_pos] );
+			break;
+		}
+	}
+}
+
+
 /**
    Expand all environment variables in the string *ptr.
 
@@ -674,12 +768,9 @@ static int expand_variables( wchar_t *in, array_list_t *out, int last_idx )
 	static string_buffer_t *var_tmp = 0;
 	static array_list_t *var_idx_list = 0;
 
-	if( !in || !out)
-	{
-		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
-		return 0;		
-	}
-
+	CHECK( in, 0 );
+	CHECK( out, 0 );
+	
 	if( !var_tmp )
 	{
 		var_tmp = sb_halloc( global_context );
@@ -735,43 +826,8 @@ static int expand_variables( wchar_t *in, array_list_t *out, int last_idx )
 
 			if( var_len == 0 )
 			{
-				switch( in[stop_pos] )
-				{
-					case BRACKET_BEGIN:
-					{
-						error( SYNTAX_ERROR,
-							   -1,
-							   COMPLETE_VAR_BRACKET_DESC );
-						break;
-					}
-
-					case INTERNAL_SEPARATOR:
-					{
-						error( SYNTAX_ERROR,
-							   -1,
-							   COMPLETE_VAR_PARAN_DESC );
-						break;
-					}
-
-					case 0:
-					{
-						error( SYNTAX_ERROR,
-							   -1,
-							   COMPLETE_VAR_NULL_DESC );
-						break;
-					}
-
-					default:
-					{
-						error( SYNTAX_ERROR,
-							   -1,
-							   COMPLETE_VAR_DESC,
-							   in[stop_pos] );
-						break;
-					}
-				}
-
-
+				expand_variable_error( in, stop_pos-1, -1 );				
+				
 				is_ok = 0;
 				break;
 			}
@@ -1002,13 +1058,10 @@ static int expand_brackets( wchar_t *in, int flags, array_list_t *out )
 
 	wchar_t *item_begin;
 	int len1, len2, tot_len;
-	
-	if( !in || !out)
-	{
-		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
-		return 0;		
-	}
 
+	CHECK( in, 0 );
+	CHECK( out, 0 );
+	
 	for( pos=in;
 		 (*pos) && !syntax_error;
 		 pos++ )
@@ -1139,12 +1192,9 @@ static int expand_subshell( wchar_t *in, array_list_t *out )
 	int i, j;
 	const wchar_t *item_begin;
 
-	if( !in || !out)
-	{
-		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
-		return 0;		
-	}
-
+	CHECK( in, 0 );
+	CHECK( out, 0 );
+	
 	switch( parse_util_locate_cmdsubst(in,
 									   &paran_begin,
 									   &paran_end,
@@ -1246,6 +1296,8 @@ static wchar_t *expand_unescape( const wchar_t * in, int escape_special )
 static wchar_t * expand_tilde_internal( wchar_t *in )
 {
 
+	CHECK( in, 0 );
+
 	if( in[0] == HOME_DIRECTORY )
 	{
 		int tilde_error = 0;
@@ -1332,12 +1384,14 @@ wchar_t *expand_tilde( wchar_t *in)
 
 /**
    Remove any internal separators. Also optionally convert wildcard characters to
-   regular equivalents. This is done to support EXPAN_SKIP_WILDCARDS.
+   regular equivalents. This is done to support EXPAND_SKIP_WILDCARDS.
 */
 static void remove_internal_separator( const void *s, int conv )
 {
 	wchar_t *in = (wchar_t *)s;
 	wchar_t *out=in;
+	
+	CHECK( s, );
 
 	while( *in )
 	{

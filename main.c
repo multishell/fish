@@ -58,7 +58,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "exec.h"
 #include "event.h"
 #include "output.h"
-#include "translate.h"
+
 #include "halloc_util.h"
 #include "history.h"
 
@@ -81,11 +81,9 @@ static int read_init()
 		return 0;
 	}
 
-	env_set( L"__fish_help_dir", DOCDIR, 0);	
-
-	eval( L"builtin cd " DATADIR L"/fish 2>/dev/null; and . fish 2>/dev/null", 0, TOP );
-	eval( L"builtin cd " SYSCONFDIR L" 2>/dev/null; and . fish 2>/dev/null", 0, TOP );
-	eval( L"builtin cd 2>/dev/null; and . .fish 2>/dev/null", 0, TOP );
+	eval( L"builtin cd " DATADIR L"/fish 2>/dev/null; and builtin . fish 2>/dev/null", 0, TOP );
+	eval( L"builtin cd " SYSCONFDIR L" 2>/dev/null; and builtin . fish 2>/dev/null", 0, TOP );
+	eval( L"builtin cd 2>/dev/null; and builtin . .fish 2>/dev/null", 0, TOP );
 
 	if( chdir( cwd ) == -1 )
 	{
@@ -186,13 +184,17 @@ int main( int argc, char **argv )
 		switch( opt )
 		{
 			case 0:
+			{
 				break;
-				
+			}
+			
 			case 'c':		
+			{
 				cmd = optarg;				
 				is_interactive_session = 0;
 				break;
-
+			}
+			
 			case 'd':		
 			{
 				char *end;
@@ -210,35 +212,49 @@ int main( int argc, char **argv )
 			}
 			
 			case 'h':
+			{
 				cmd = "help";
 				break;
-
+			}
+			
 			case 'i':
+			{
 				force_interactive = 1;
 				break;				
-				
+			}
+			
 			case 'l':
+			{
 				is_login=1;
 				break;				
-				
+			}
+			
 			case 'n':
+			{
 				no_exec=1;
 				break;				
-				
+			}
+			
 			case 'p':
+			{
 				profile = optarg;
 				break;				
-				
+			}
+			
 			case 'v':
+			{
 				fwprintf( stderr, 
 						  _(L"%s, version %s\n"), 
 						  PACKAGE_NAME,
 						  PACKAGE_VERSION );
 				exit( 0 );				
-
+			}
+			
 			case '?':
+			{
 				return 1;
-				
+			}
+			
 		}		
 	}
 
@@ -268,7 +284,6 @@ int main( int argc, char **argv )
 	builtin_init();
 	function_init();
 	env_init();
-	complete_init();
 	reader_init();
 	history_init();
 
@@ -342,10 +357,9 @@ int main( int argc, char **argv )
 
 	proc_fire_event( L"PROCESS_EXIT", EVENT_EXIT, getpid(), res );
 	
+
 	history_destroy();
-	complete_destroy();
 	proc_destroy();
-	env_destroy();
 	builtin_destroy();
 	function_destroy();
 	reader_destroy();
@@ -354,6 +368,9 @@ int main( int argc, char **argv )
 	event_destroy();
 
 	halloc_util_destroy();
+
+	env_destroy();
+
 	intern_free_all();
 
 

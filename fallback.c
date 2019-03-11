@@ -2,6 +2,10 @@
    This file only contains fallback implementations of functions which
    have been found to be missing or broken by the configuration
    scripts.
+
+   Many of these functions are more or less broken and
+   incomplete. lrand28_r internally uses the regular (bad) rand_r
+   function, the gettext function doesn't actually do anything, etc.
 */
 
 #include "config.h"
@@ -65,7 +69,11 @@ int tputs(const char *str, int affcnt, int (*fish_putc)(tputs_arg_t))
 
 #ifdef INTERNAL_FWPRINTF
 
-void pad( void (*writer)(wchar_t), int count)
+/**
+   Internal function for the wprintf fallbacks. USed to write the
+   specified number of spaces.
+*/
+static void pad( void (*writer)(wchar_t), int count)
 {
 	
 	int i;
@@ -1029,6 +1037,42 @@ int futimes(int fd, const struct timeval *times)
 	return -1;
 }
 
+#endif
+
+#ifndef HAVE_GETTEXT
+
+char * gettext (const char * msgid)
+{
+	return (char *)msgid;
+}
+
+char * bindtextdomain (const char * domainname, const char * dirname)
+{
+	return 0;
+}
+
+char * textdomain (const char * domainname)
+{
+	return 0;
+}
+
+#endif
+
+#ifndef HAVE_DCGETTEXT
+
+char * dcgettext ( const char * domainname,
+				   const char * msgid,
+				   int category)
+{
+	return (char *)msgid;
+}
+
+
+#endif
+
+#ifndef HAVE__NL_MSG_CAT_CNTR
+
+int _nl_msg_cat_cntr=0;
 
 #endif
 

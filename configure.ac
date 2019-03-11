@@ -1,5 +1,5 @@
 # Process this file with autoconf to produce a configure script.
-AC_INIT(fish,1.21.9,fish-users@lists.sf.net)
+AC_INIT(fish,1.21.10,fish-users@lists.sf.net)
 
 # If needed, run autoconf to regenerate the configure file
 AC_MSG_CHECKING([if autoconf needs to be run])
@@ -81,15 +81,6 @@ AC_CONFIG_HEADERS(config.h)
 AC_PROG_CC
 AC_PROG_CPP
 AC_PROG_INSTALL
-
-# Check for doxygen, which is needed to build
-AC_CHECK_PROG( has_doxygen, [doxygen], "true")
-
-if ! test "$has_doxygen" = "true"; then
-	AC_MSG_ERROR( [cannot find the Doxygen program in your path.
-This program is needed to build fish.
-Please install it and try again.])
-fi
 
 # Check for seq command. If missing, make sure fallback shellscript
 # implementation is installed
@@ -221,17 +212,11 @@ fi
 # it can make sure the fish installation directory is in the path
 # during startup.
 if [[ "$prefix" = NONE ]]; then
-	AC_DEFINE_UNQUOTED( [PREFIX], L"/usr/local", [Installation directory])
-	AC_SUBST( PREFIX, /usr/local)
 	export prefix=/usr/local
+	AC_SUBST( prefix, /usr/local)
 else
-	AC_DEFINE_UNQUOTED( [PREFIX], L"$prefix", [Installation directory])
-	AC_SUBST( PREFIX, [$prefix])
+	AC_SUBST( prefix, [$prefix])
 fi
-AC_DEFINE_UNQUOTED( SYSCONFDIR, [L"$(eval echo $sysconfdir)"], [System configuration directory] )
-AC_DEFINE_UNQUOTED( DATADIR, [L"$(eval echo $datadir)"], [System configuration directory] )
-AC_SUBST( SYSCONFDIR, ["$(eval echo $sysconfdir)"] )
-AC_SUBST( DATADIR, ["$(eval echo $datadir)"] )
 
 
 # Set up the directory where the documentation files should be
@@ -239,16 +224,14 @@ AC_SUBST( DATADIR, ["$(eval echo $datadir)"] )
 AC_ARG_VAR( [docdir], [Documentation direcotry] )
 
 if test -z $docdir; then
-   AC_SUBST(docdir,[$datadir/doc/fish])
+   AC_SUBST(docdir, [$datadir/doc/fish] )
+else
+   AC_SUBST(docdir, [$docdir])
 fi
-
-AC_DEFINE_UNQUOTED( DOCDIR, [L"$(eval echo $docdir)"], [Documentation directory] )
-
 
 # Set up locale directory. This is where the .po files will be
 # installed.
-AC_DEFINE_UNQUOTED( [LOCALEDIR], "$(eval echo $datadir)/locale", [Locale directory])
-AC_SUBST( [LOCALEDIR], [$datadir/locale])
+AC_SUBST( [localedir], [$datadir/locale])
 
 # See if Linux procfs is present. This is used to get extra
 # information about running processes.
@@ -261,22 +244,25 @@ AC_DEFINE([HAVE_TRANSLATE_H], [1],
 			  [Define to 1 if the wgettext function should be used for translating strings.])
 
 # Check for presense of various libraries
-AC_SEARCH_LIBS( gettext, intl, AC_SUBST( HAVE_GETTEXT, [1] ), AC_SUBST( HAVE_GETTEXT, [0] ) )
+AC_SEARCH_LIBS( gettext, intl,,)
 AC_SEARCH_LIBS( connect, socket, , [AC_MSG_ERROR([Cannot find the socket library, needed to build this package.] )] )
 AC_SEARCH_LIBS( nanosleep, rt, , [AC_MSG_ERROR([Cannot find the rt library, needed to build this package.] )] )
 AC_SEARCH_LIBS( setupterm, [ncurses curses], , [AC_MSG_ERROR([Could not find a curses implementation, needed to build fish])] )
 
 # Check for presense of various header files
-AC_CHECK_HEADERS([getopt.h termio.h sys/resource.h term.h ncurses/term.h libintl.h ncurses.h curses.h])
+AC_CHECK_HEADERS([getopt.h termio.h sys/resource.h term.h ncurses/term.h libintl.h ncurses.h curses.h stropts.h])
 
 AC_CHECK_HEADER([regex.h],
 				[AC_DEFINE([HAVE_REGEX_H], [1], [Define to 1 if you have the <regex.h> header file.])],
 				[AC_MSG_ERROR([Could not find the header regex.h, needed to build fish])])
 
 # Check for presense of various functions
-AC_CHECK_FUNCS( wcsdup wcsndup wcslen wcscasecmp wcsncasecmp gettext fwprintf )
+AC_CHECK_FUNCS( gettext wcsdup wcsndup wcslen wcscasecmp wcsncasecmp fwprintf )
 AC_CHECK_FUNCS( futimes wcwidth wcswidth getopt_long wcstok fputwc fgetwc )
 AC_CHECK_FUNCS( wcstol dcgettext wcslcat wcslcpy lrand48_r)
+
+# The Makefile also needs to know if we have gettext, so it knows if the translations should be installed.
+AC_CHECK_FUNC( gettext, AC_SUBST( HAVE_GETTEXT, 1 ), AC_SUBST( HAVE_GETTEXT, 0 ) )
 
 # Here follows a list of small programs used to test for various
 # features that Autoconf doesn't tell us about
@@ -357,7 +343,7 @@ case $target_os in
 esac
 
 # Tell the world what we know
-AC_CONFIG_FILES([Makefile fish.spec doc_src/fish.1 doc_src/Doxyfile etc/fish etc/fish_interactive.fish share/fish seq])
+AC_CONFIG_FILES([Makefile fish.spec doc_src/fish.1 doc_src/Doxyfile seq])
 AC_OUTPUT
 
 echo "fish is now configured."

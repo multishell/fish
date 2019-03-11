@@ -3,12 +3,14 @@
 # common helper functions for the command completions. All actual
 # completions are located in the completions subdirectory.
 #
+# @configure_input@
 
-#
-# Assign a temporary value here for performance reasons. The real value should be set in /etc/fish.
-#
+# Assign a temporary value here for performance reasons. The real
+# value should be set in /etc/fish.
 
-set -g fish_function_path $PWD/functions/
+set -g fish_function_path @datadir@/fish/functions/
+set __fish_help_dir @docdir@
+
 
 #
 # Make sure there are no invalid entries in the PATH
@@ -33,7 +35,7 @@ end
 # want this even for text-only terminals.
 #
 
-set -l path_list /bin /usr/bin /usr/X11R6/bin @PREFIX@/bin @optbindirs@
+set -l path_list /bin /usr/bin /usr/X11R6/bin @prefix@/bin @optbindirs@
 
 # Root should also have the sbin directories in the path
 if test "$USER" = root

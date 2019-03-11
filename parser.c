@@ -37,7 +37,7 @@ The fish parser. Contains functions for parsing code.
 #include "sanity.h"
 #include "env_universal.h"
 #include "event.h"
-#include "translate.h"
+
 #include "intern.h"
 #include "parse_util.h"
 #include "halloc.h"
@@ -140,7 +140,7 @@ The fish parser. Contains functions for parsing code.
 /**
    Error message for Posix-style assignment
 */
-#define COMMAND_ASSIGN_ERR_MSG _( L"Unknown command '%ls'. Did you mean 'set VARIABLE VALUE'? For information on setting variable values, see the help section on the set command by typing 'help set'.")
+#define COMMAND_ASSIGN_ERR_MSG _( L"Unknown command '%ls'. Did you mean 'set %ls %ls'? For information on assigning values to variables, see the help section on the set command by typing 'help set'.")
 
 /**
    Error for invalid redirection token
@@ -1372,7 +1372,8 @@ wchar_t *parser_current_line()
 //	lineno = current_tokenizer_pos;
 	
 
-	current_line_width=printed_width(whole_str+current_line_start, current_tokenizer_pos-current_line_start );
+	current_line_width=printed_width( whole_str+current_line_start,
+									  current_tokenizer_pos-current_line_start );
 
 	if( (function_name = is_function()) )
 	{
@@ -1467,8 +1468,10 @@ int parser_is_help( wchar_t *s, int min_match )
 {
 	int len = wcslen(s);
 
+	min_match = maxi( min_match, 3 );
+		
 	return ( wcscmp( L"-h", s ) == 0 ) ||
-		( len >= 3 && (wcsncmp( L"--help", s, len ) == 0) );
+		( len >= min_match && (wcsncmp( L"--help", s, len ) == 0) );
 }
 
 /**
@@ -1696,8 +1699,9 @@ static void parse_job_main_loop( process_t *p,
 								   tok_last( tok ) );
 
 						}
+						break;
 					}
-					break;
+
 					default:
 						error( SYNTAX_ERROR,
 							   tok_get_pos( tok ),
@@ -1738,6 +1742,7 @@ static void parse_job_main_loop( process_t *p,
 							break;
 
 						case TOK_REDIRECT_FD:
+						{
 							if( wcscmp( target, L"-" ) == 0 )
 							{
 								new_io->io_mode = IO_CLOSE;
@@ -1760,6 +1765,8 @@ static void parse_job_main_loop( process_t *p,
 								}
 							}
 							break;
+						}
+
 					}
 				}
 
@@ -1820,6 +1827,7 @@ static void parse_job_main_loop( process_t *p,
 }
 
 
+	
 /**
    Fully parse a single job. Does not call exec on it, but any command substitutions in the job will be executed.
 
@@ -2065,7 +2073,7 @@ static int parse_job( process_t *p,
 			*/
 			continue;
 		}
-
+		
 		if( use_function && !current_block->skip )
 		{
 			int nxt_forbidden;
@@ -2161,7 +2169,7 @@ static int parse_job( process_t *p,
 						wchar_t *cmd = (wchar_t *)al_get( args, 0 );
 						
 						/* 
-						   We couln't find the specified command.
+						   We couldn't find the specified command.
 						   
 						   What we want to happen now is that the
 						   specified job won't get executed, and an
@@ -2176,9 +2184,16 @@ static int parse_job( process_t *p,
 						*/
 						if( wcschr( cmd, L'=' ) )
 						{
+							wchar_t *cpy = halloc_wcsdup( j, cmd );
+							wchar_t *valpart = wcschr( cpy, L'=' );
+							*valpart++=0;
+							
 							debug( 0,
 								   COMMAND_ASSIGN_ERR_MSG,
-								   (wchar_t *)al_get( args, 0 ) );
+								   cmd,
+								   cpy,
+								   valpart);
+							
 						}
 						else if(cmd[0]==L'$')
 						{
@@ -2750,7 +2765,7 @@ static const wchar_t *parser_get_block_command( int type )
 
 /**
    Test if this argument contains any errors. Detected errors include
-   syntax errors in command substitutions, imporoper escaped
+   syntax errors in command substitutions, improperly escaped
    characters and improper use of the variable expansion operator.
 */
 static int parser_test_argument( const wchar_t *arg, string_buffer_t *out, const wchar_t *prefix, int offset )
@@ -2843,70 +2858,18 @@ static int parser_test_argument( const wchar_t *arg, string_buffer_t *out, const
 				case VARIABLE_EXPAND:
 				case VARIABLE_EXPAND_SINGLE:
 				{
-					switch( *(pos+1))
+					wchar_t n = *(pos+1);
+						
+					if( n != VARIABLE_EXPAND &&
+						n != VARIABLE_EXPAND_SINGLE &&
+						!wcsvarchr(n) )
 					{
-						case BRACKET_BEGIN:
+						err=1;
+						if( out )
 						{
-							err=1;
-							if( out )
-							{
-								error( SYNTAX_ERROR,
-									   offset,
-									   COMPLETE_VAR_BRACKET_DESC );
-
-								print_errors( out, prefix);
-							}
-							break;
+							expand_variable_error( unesc, pos-unesc, offset );
+							print_errors( out, prefix);
 						}
-
-						case INTERNAL_SEPARATOR:
-						{
-							err=1;
-							if( out )
-							{
-								error( SYNTAX_ERROR,
-									   offset,
-									   COMPLETE_VAR_PARAN_DESC );
-								print_errors( out, prefix);
-							}
-							break;
-						}
-
-						case 0:
-						{
-							err=1;
-							if( out )
-							{
-								error( SYNTAX_ERROR,
-									   offset,
-									   COMPLETE_VAR_NULL_DESC );
-								print_errors( out, prefix);
-							}
-							break;
-						}
-
-						default:
-						{
-							wchar_t n = *(pos+1);
-						
-							if( n != VARIABLE_EXPAND &&
-								n != VARIABLE_EXPAND_SINGLE &&
-								!wcsvarchr(n) )
-							{
-								err=1;
-								if( out )
-								{
-									error( SYNTAX_ERROR,
-										   offset,
-										   COMPLETE_VAR_DESC,
-										   *(pos+1) );
-									print_errors( out, prefix);
-								}
-							}
-						
-							break;
-						}
-					
 					}
 				
 					break;
@@ -3012,17 +2975,39 @@ int parser_test( const  wchar_t * buff,
 	int previous_pos=current_tokenizer_pos;
 	static int block_pos[BLOCK_MAX_COUNT];
 	static int block_type[BLOCK_MAX_COUNT];
+
+	/*
+	  Set to 1 if the current command is inside a pipeline
+	*/
 	int is_pipeline = 0;
+
 	/*
 	  Set to one if the currently specified process can not be used inside a pipeline
 	*/
 	int forbid_pipeline = 0;
+
 	/* 
 	   Set to one if an additional process specification is needed 
 	*/
 	int needs_cmd=0; 
+
+	/*
+	  halloc context used for calls to expand() and other memory
+	  allocations. Free'd at end of this function.
+	*/
 	void *context;
+
+	/*
+	  Counter on the number of arguments this function has encountered
+	  so far. Is set to -1 when the count is unknown, i.e. after
+	  encountering an argument that contains substitutions that can
+	  expand to more/less arguemtns then 1.
+	*/
 	int arg_count=0;
+	
+	/*
+	  The currently validated command.
+	*/
 	wchar_t *cmd=0;
 		
 	CHECK( buff, 1 );
@@ -3046,7 +3031,7 @@ int parser_test( const  wchar_t * buff,
 					int mark = tok_get_pos( &tok );
 					had_cmd = 1;
 					arg_count=0;
-							
+					
 					if( !(cmd = expand_one( context, 
 											wcsdup( tok_last( &tok ) ), 
 											EXPAND_SKIP_SUBSHELL | EXPAND_SKIP_VARIABLES ) ) )
@@ -3191,11 +3176,16 @@ int parser_test( const  wchar_t * buff,
 
 							if( out )
 							{
+								char *h;
+
 								error( SYNTAX_ERROR,
 									   tok_get_pos( &tok ),
 									   INVALID_CASE_ERR_MSG );
 
 								print_errors( out, prefix);
+								h = builtin_help_get( L"case" );
+								if( h )
+									sb_printf( out, L"%s", h );
 							}
 						}
 					}
