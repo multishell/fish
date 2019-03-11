@@ -1382,8 +1382,8 @@ static int handle_completions( array_list_t *comp )
 					   0,
 					   0 );
 
-			len = &data->buff[data->buff_pos]-prefix_start;
-
+			len = &data->buff[data->buff_pos]-prefix_start+1;
+			
 			if( len <= PREFIX_MAX_LEN )
 			{
 				prefix = malloc( sizeof(wchar_t)*(len+1) );
@@ -1400,7 +1400,7 @@ static int handle_completions( array_list_t *comp )
 				;
 				
 				prefix = wcsdupcat( tmp,
-									prefix_start + (len - PREFIX_MAX_LEN+1) );
+									prefix_start + (len - PREFIX_MAX_LEN) );
 				prefix[PREFIX_MAX_LEN] = 0;
 				
 			}
@@ -2586,10 +2586,13 @@ wchar_t *reader_readline()
 
 			case R_BACKWARD_KILL_LINE:
 			{
-				wchar_t prev = data->buff[data->buff_pos];
-				data->buff[data->buff_pos]=0;
-				kill_add( data->buff );
-				data->buff[data->buff_pos]=prev;
+				wchar_t *str = wcsndup( data->buff, data->buff_pos );
+				if( !str )
+					die_mem();
+				
+				kill_add( str );
+				free( str );
+				
 				data->buff_len = wcslen(data->buff +data->buff_pos);
 				memmove( data->buff, data->buff +data->buff_pos, sizeof(wchar_t)*data->buff_len );
 				data->buff[data->buff_len]=L'\0';
