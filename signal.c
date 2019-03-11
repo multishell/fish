@@ -245,7 +245,7 @@ static struct lookup_entry lookup[] =
 static int match_signal_name( const wchar_t *canonical, 
 							  const wchar_t *name )
 {
-	if( wcsncasecmp( name, L"sig", 3 )==0)
+	if( wcsncasecmp_fish( name, L"sig", 3 )==0)
 		name +=3;
 
 	return wcscasecmp( canonical+3,name ) == 0;	
