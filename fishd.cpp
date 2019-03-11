@@ -159,6 +159,32 @@ static int quit=0;
 */
 static std::string get_socket_filename(void)
 {
+    std::string dir = common_get_runtime_path();
+
+    if (dir == "") {
+        debug(0, L"Cannot access desired socket path.");
+        exit(EXIT_FAILURE);
+    }
+
+    std::string name;
+    name.reserve(dir.length() + strlen(SOCK_FILENAME) + 1);
+    name.append(dir);
+    name.push_back('/');
+    name.append(SOCK_FILENAME);
+
+    if (name.size() >= UNIX_PATH_MAX)
+    {
+        debug(1, L"Filename too long: '%s'", name.c_str());
+        exit(EXIT_FAILURE);
+    }
+    return name;
+}
+
+/**
+    Constructs the legacy socket filename
+*/
+static std::string get_old_socket_filename(void)
+{
     const char *dir = getenv("FISHD_SOCKET_DIR");
     char *uname = getenv("USER");
 
@@ -174,10 +200,9 @@ static std::string get_socket_filename(void)
     }
 
     std::string name;
-    name.reserve(strlen(dir)+ strlen(uname)+ strlen(SOCK_FILENAME) + 1);
+    name.reserve(strlen(dir)+ strlen(uname)+ strlen("fishd.socket.") + 1);
     name.append(dir);
-    name.push_back('/');
-    name.append(SOCK_FILENAME);
+    name.append("/fishd.socket.");
     name.append(uname);
 
     if (name.size() >= UNIX_PATH_MAX)
@@ -541,6 +566,7 @@ repeat:
     int exitcode = EXIT_FAILURE;
     struct sockaddr_un local;
     const std::string sock_name = get_socket_filename();
+    const std::string old_sock_name = get_old_socket_filename();
 
     /*
        Start critical section protected by lock
@@ -596,6 +622,19 @@ repeat:
     {
         wperror(L"listen");
         doexit = 1;
+    }
+
+    // Attempt to hardlink the old socket name so that old versions of fish keep working on upgrade
+    // Not critical if it fails
+    if (unlink(old_sock_name.c_str()) != 0 && errno != ENOENT)
+    {
+        debug(0, L"Could not create legacy socket path");
+        wperror(L"unlink");
+    }
+    else if (link(sock_name.c_str(), old_sock_name.c_str()) != 0)
+    {
+        debug(0, L"Could not create legacy socket path");
+        wperror(L"link");
     }
 
 unlock:
@@ -667,13 +706,14 @@ static void daemonize()
             setup_fork_guards();
 
             /*
-              Make fishd ignore the HUP signal.
+              Make fishd ignore the HUP and PIPE signals.
             */
             struct sigaction act;
             sigemptyset(& act.sa_mask);
             act.sa_flags=0;
             act.sa_handler=SIG_IGN;
             sigaction(SIGHUP, &act, 0);
+            sigaction(SIGPIPE, &act, 0);
 
             /*
               Make fishd save and exit on the TERM signal.
@@ -873,6 +913,18 @@ static void init()
 }
 
 /**
+   Clean up behind ourselves
+*/
+static void cleanup()
+{
+    if (unlink(get_old_socket_filename().c_str()) != 0)
+    {
+        debug(0, L"Could not remove legacy socket path");
+        wperror(L"unlink");
+    }
+}
+
+/**
    Main function for fishd
 */
 int main(int argc, char ** argv)
@@ -973,6 +1025,7 @@ int main(int argc, char ** argv)
             if (quit)
             {
                 save();
+                cleanup();
                 exit(0);
             }
 
@@ -982,6 +1035,7 @@ int main(int argc, char ** argv)
             if (errno != EINTR)
             {
                 wperror(L"select");
+                cleanup();
                 exit(1);
             }
         }
@@ -994,6 +1048,7 @@ int main(int argc, char ** argv)
                                &t)) == -1)
             {
                 wperror(L"accept");
+                cleanup();
                 exit(1);
             }
             else
@@ -1070,6 +1125,7 @@ int main(int argc, char ** argv)
         {
             debug(0, L"No more clients. Quitting");
             save();
+            cleanup();
             break;
         }
 

@@ -17,7 +17,7 @@ else:
     from urllib.parse import parse_qs
 import webbrowser
 import subprocess
-import re, socket, os, sys, cgi, select, time, glob
+import re, socket, os, sys, cgi, select, time, glob, random, string, binascii
 try:
     import json
 except ImportError:
@@ -250,6 +250,16 @@ class FishVar:
         if self.exported: flags.append('exported')
         return [self.name, self.value, ', '.join(flags)]
 
+class FishConfigTCPServer(SocketServer.TCPServer):
+    """TCPServer that only accepts connections from localhost (IPv4/IPv6)."""
+    WHITELIST = set(['::1', '::ffff:127.0.0.1', '127.0.0.1'])
+
+    address_family = socket.AF_INET6
+
+    def verify_request(self, request, client_address):
+        return client_address[0] in FishConfigTCPServer.WHITELIST
+
+
 class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
 
     def write_to_wfile(self, txt):
@@ -461,6 +471,14 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
                 # Ignore unreadable files, etc
                 pass
         return result
+
+    def secure_startswith(self, haystack, needle):
+        if len(haystack) < len(needle):
+            return False
+        bits = 0
+        for x,y in zip(haystack, needle):
+            bits |= ord(x) ^ ord(y)
+        return bits == 0
         
     def font_size_for_ansi_prompt(self, prompt_demo_ansi):
         width = ansi_prompt_line_width(prompt_demo_ansi)
@@ -475,9 +493,16 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
         else: font_size = '18pt'
         return font_size
 
-
     def do_GET(self):
         p = self.path
+
+        authpath = '/' + authkey
+        if self.secure_startswith(p, authpath):
+            p = p[len(authpath):]
+        else:
+            return self.send_error(403)
+        self.path = p
+
         if p == '/colors/':
             output = self.do_get_colors()
         elif p == '/functions/':
@@ -509,6 +534,14 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
 
     def do_POST(self):
         p = self.path
+
+        authpath = '/' + authkey
+        if self.secure_startswith(p, authpath):
+            p = p[len(authpath):]
+        else:
+            return self.send_error(403)
+        self.path = p
+
         if IS_PY2:
             ctype, pdict = cgi.parse_header(self.headers.getheader('content-type'))
         else: # Python 3
@@ -572,7 +605,19 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
     def log_request(self, code='-', size='-'):
         """ Disable request logging """
         pass
-        
+
+redirect_template_html = """
+<!DOCTYPE html>
+<html>
+ <head>
+  <meta http-equiv="refresh" content="0;URL='%s'" />
+ </head>
+ <body>
+  <p><a href="%s">Start the Fish Web config</a></p>
+ </body>
+</html>
+"""
+
 # find fish
 fish_bin_dir = os.environ.get('__fish_bin_dir')
 fish_bin_path = None
@@ -608,12 +653,15 @@ initial_wd = os.getcwd()
 where = os.path.dirname(sys.argv[0])
 os.chdir(where)
 
+# Generate a 16-byte random key as a hexadecimal string
+authkey = binascii.b2a_hex(os.urandom(16)).decode('ascii')
+
 # Try to find a suitable port
 PORT = 8000
 while PORT <= 9000:
     try:
         Handler = FishConfigHTTPRequestHandler
-        httpd = SocketServer.TCPServer(("", PORT), Handler)
+        httpd = FishConfigTCPServer(("::", PORT), Handler)
         # Success
         break
     except socket.error:
@@ -637,9 +685,36 @@ if len(sys.argv) > 1:
             initial_tab = '#' + tab
             break
 
-url = 'http://localhost:%d/%s' % (PORT, initial_tab)
-print("Web config started at '%s'. Hit enter to stop." % url)
-webbrowser.open(url)
+url = 'http://localhost:%d/%s/%s' % (PORT, authkey, initial_tab)
+
+# Create temporary file to hold redirect to real server
+# This prevents exposing the URL containing the authentication key on the command line
+# (see CVE-2014-2914 or https://github.com/fish-shell/fish-shell/issues/1438)
+if 'XDG_CACHE_HOME' in os.environ:
+    dirname = os.path.expanduser(os.path.expandvars('$XDG_CACHE_HOME/fish/'))
+else:
+    dirname = os.path.expanduser('~/.cache/fish/')
+
+os.umask(0o0077)
+try:
+    os.makedirs(dirname, 0o0700)
+except OSError as e:
+    if e.errno == 17:
+       pass
+    else:
+       raise e
+
+randtoken = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+filename = dirname + 'web_config-%s.html' % randtoken
+
+f = open(filename, 'w')
+f.write(redirect_template_html % (url, url))
+f.close()
+
+# Open temporary file as URL
+fileurl = 'file://' + filename
+print("Web config started at '%s'. Hit enter to stop." % fileurl)
+webbrowser.open(fileurl)
 
 # Select on stdin and httpd
 stdin_no = sys.stdin.fileno()
@@ -656,3 +731,5 @@ try:
 except KeyboardInterrupt:
     print("\nShutting down.")
 
+# Clean up temporary file
+os.remove(filename)

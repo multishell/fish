@@ -813,5 +813,7 @@ extern "C" {
     __attribute__((noinline)) void debug_thread_error(void);
 }
 
+/** Return the path of an appropriate runtime data directory */
+std::string common_get_runtime_path();
 
 #endif
