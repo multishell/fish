@@ -75,16 +75,11 @@ enum
     */
     COMPLETE_NO_SPACE = 1 << 0,
 
-    /** This completion is case insensitive. */
-    COMPLETE_CASE_INSENSITIVE = 1 << 1,
-
     /** This is not the suffix of a token, but replaces it entirely */
     COMPLETE_REPLACES_TOKEN = 1 << 2,
 
-    /**
-       This completion may or may not want a space at the end - guess by
-       checking the last character of the completion.
-    */
+    /** This completion may or may not want a space at the end - guess by
+       checking the last character of the completion. */
     COMPLETE_AUTO_SPACE = 1 << 3,
 
     /** This completion should be inserted as-is, without escaping. */
@@ -107,15 +102,14 @@ public:
     /* Destructor. Not inlining it saves code size. */
     ~completion_t();
 
-    /**
-       The completion string
-    */
+    /** The completion string */
     wcstring completion;
 
-    /**
-       The description for this completion
-    */
+    /** The description for this completion */
     wcstring description;
+
+    /** The type of fuzzy match */
+    string_fuzzy_match_t match;
 
     /**
        Flags determining the completion behaviour.
@@ -129,20 +123,14 @@ public:
     */
     int flags;
 
-    bool is_case_insensitive() const
-    {
-        return !!(flags & COMPLETE_CASE_INSENSITIVE);
-    }
-
     /* Construction. Note: defining these so that they are not inlined reduces the executable size. */
-    completion_t(const wcstring &comp, const wcstring &desc = L"", int flags_val = 0);
+    completion_t(const wcstring &comp, const wcstring &desc = L"", string_fuzzy_match_t match = string_fuzzy_match_t(fuzzy_match_exact), int flags_val = 0);
     completion_t(const completion_t &);
     completion_t &operator=(const completion_t &);
-
-    /* The following are needed for sorting and uniquing completions */
-    bool operator < (const completion_t& rhs) const;
-    bool operator == (const completion_t& rhs) const;
-    bool operator != (const completion_t& rhs) const;
+    
+    /* Compare two completions. No operating overlaoding to make this always explicit (there's potentially multiple ways to compare completions). */
+    static bool is_alphabetically_less_than(const completion_t &a, const completion_t &b);
+    static bool is_alphabetically_equal_to(const completion_t &a, const completion_t &b);
 };
 
 enum
@@ -156,9 +144,6 @@ typedef uint32_t completion_request_flags_t;
 
 /** Given a list of completions, returns a list of their completion fields */
 wcstring_list_t completions_to_wcstring_list(const std::vector<completion_t> &completions);
-
-/** Sorts a list of completions */
-void sort_completions(std::vector<completion_t> &completions);
 
 /**
 
@@ -286,7 +271,7 @@ void complete_load(const wcstring &cmd, bool reload);
    \param flags completion flags
 
 */
-void append_completion(std::vector<completion_t> &completions, const wcstring &comp, const wcstring &desc = L"", int flags = 0);
+void append_completion(std::vector<completion_t> &completions, const wcstring &comp, const wcstring &desc = L"", int flags = 0, string_fuzzy_match_t match = string_fuzzy_match_t(fuzzy_match_exact));
 
 /* Function used for testing */
 void complete_set_variable_names(const wcstring_list_t *names);

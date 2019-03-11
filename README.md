@@ -1,21 +1,23 @@
-[fish](http://ridiculousfish.com/shell/) - the friendly interactive shell
+[fish](http://fishshell.com/) - the friendly interactive shell
 ================================================
 
 fish is a smart and user-friendly command line shell for OS X, Linux, and the rest of the family. fish includes features like syntax highlighting, autosuggest-as-you-type, and fancy tab completions that just work, with no configuration required.
 
-For more on fish's design philosophy, see the [design document](http://ridiculousfish.com/shell/user_doc/html/design.html).
+For more on fish's design philosophy, see the [design document](http://fishshell.com/docs/2.0/design.html).
 
 ## Quick Start
 
-fish generally works like other shells, like bash or zsh. A few important differences are documented at <http://ridiculousfish.com/shell/faq.html>
+fish generally works like other shells, like bash or zsh. A few important differences can be found at <http://fishshell.com/tutorial.html> by searching for magic phrase 'unlike other shells'.
 
-Detailed user documentation is available by running `help` within fish, and also at <http://ridiculousfish.com/shell/user_doc/html/>
+Detailed user documentation is available by running `help` within fish, and also at <http://fishshell.com/docs/2.0/index.html>
 
 ## Building
 
 fish is written in a sane subset of C++98, with a few components from C++TR1. It builds successfully with g++ 4.2 or later, and with clang. It also will build as C++11.
 
-fish can be built using autotools or Xcode.
+fish can be built using autotools or Xcode. autoconf 2.60 or later is required.
+
+fish requires gettext for translation support.
 
 ### Autotools Build
 
@@ -40,7 +42,7 @@ If fish reports that it could not find curses, try installing a curses developme
 
 On Debian or Ubuntu you want:
 
-	sudo apt-get install libncurses5-dev libncursesw5-dev
+    sudo apt-get install libncurses5-dev
 
 on RedHat, CentOS, or Amazon EC2:
 
@@ -66,6 +68,6 @@ Substitute /bin/bash with /bin/tcsh or /bin/zsh as appropriate.
 
 ## Contact Us
 
-Questions, comments, rants and raves can be posted to the official fish mailing list at <https://lists.sourceforge.net/lists/listinfo/fish-users> or join us on our IRC channel #fish at irc.oftc.net
+Questions, comments, rants and raves can be posted to the official fish mailing list at <https://lists.sourceforge.net/lists/listinfo/fish-users> or join us on our IRC channel [#fish at irc.oftc.net](https://webchat.oftc.net/?channels=fish).
 
 Found a bug? Have an awesome idea? Please open an issue on this github page.

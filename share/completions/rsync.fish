@@ -104,3 +104,31 @@ complete -c rsync -s 6 -l ipv6 --description "Prefer IPv6"
 complete -c rsync -l version --description "Display version and exit"
 complete -c rsync -l help --description "Display help and exit"
 
+#
+# Hostname completion
+#
+complete -c rsync -d Hostname -a "
+
+(__fish_print_hostnames):
+
+(
+	#Prepend any username specified in the completion to the hostname
+	commandline -ct |sed -ne 's/\(.*@\).*/\1/p'
+)(__fish_print_hostnames):
+
+(__fish_print_users)@\tUsername
+
+"
+
+#
+# Remote path
+#
+complete -c rsync -d "Remote path" -n "commandline -ct|sgrep -q :" -a "
+(
+	#Prepend any user@host:/path information supplied before the remote completion
+	commandline -ct|sgrep -Eo '.*:+(.*/)?'
+)(
+	#Get the list of remote files from the specified rsync server
+	rsync --list-only (commandline -ct|sgrep -Eo '.*:+(.*/)?') ^/dev/null | awk '{if (\$1 ~ \"^d\" ) {print \$NF \"/\";} else {print \$NF;} };' 
+)
+"

@@ -56,7 +56,10 @@ enum
     EXPAND_SKIP_JOBS = 1 << 8,
 
     /** Don't expand home directories */
-    EXPAND_SKIP_HOME_DIRECTORIES = 1 << 9
+    EXPAND_SKIP_HOME_DIRECTORIES = 1 << 9,
+
+    /** Allow fuzzy matching */
+    EXPAND_FUZZY_MATCH = 1 << 10
 };
 typedef int expand_flags_t;
 
@@ -202,6 +205,10 @@ void expand_variable_error(parser_t &parser, const wchar_t *token, size_t token_
    Testing function for getting all process names.
 */
 std::vector<wcstring> expand_get_all_process_names(void);
+
+/** Abbreviation support. Expand src as an abbreviation, returning true if one was found, false if not. If result is not-null, returns the abbreviation by reference. */
+#define USER_ABBREVIATIONS_VARIABLE_NAME L"fish_user_abbreviations"
+bool expand_abbreviation(const wcstring &src, wcstring *output);
 
 /* Terrible hacks */
 bool fish_xdm_login_hack_hack_hack_hack(std::vector<std::string> *cmds, int argc, const char * const *argv);
