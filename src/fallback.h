@@ -15,9 +15,18 @@
 // in <wchar.h>. At least on OS X if we don't do this we get compilation errors do to the macro
 // substitution if wchar.h is included after this header.
 #include <wchar.h>  // IWYU pragma: keep
-#if HAVE_NCURSES_H
-#include <ncurses.h>  // IWYU pragma: keep
-#endif
+
+/// The column width of ambiguous East Asian characters.
+extern int g_fish_ambiguous_width;
+
+/// The column width of emoji characters. This must be configurable because the value changed
+/// between Unicode 8 and Unicode 9, wcwidth() is emoji-ignorant, and terminal emulators do
+/// different things. See issues like #4539 and https://github.com/neovim/neovim/issues/4976 for how
+/// painful this is. A value of 0 means to use the guessed value.
+extern int g_fish_emoji_width;
+
+/// The guessed value of the emoji width based on TERM.
+extern int g_guessed_fish_emoji_width;
 
 /// fish's internal versions of wcwidth and wcswidth, which can use an internal implementation if
 /// the system one is busted.
@@ -55,9 +64,10 @@ struct winsize {
 #endif
 
 #ifdef TPARM_SOLARIS_KLUDGE
-/// Solaris tparm has a set fixed of paramters in it's curses implementation, work around this here.
+/// Solaris tparm has a set fixed of paramters in its curses implementation, work around this here.
 #define tparm tparm_solaris_kludge
-char *tparm_solaris_kludge(char *str, ...);
+char *tparm_solaris_kludge(char *str, long p1 = 0, long p2 = 0, long p3 = 0, long p4 = 0,
+                           long p5 = 0, long p6 = 0, long p7 = 0, long p8 = 0, long p9 = 0);
 #endif
 
 /// On OS X, use weak linking for wcsdup and wcscasecmp. Weak linking allows you to call the

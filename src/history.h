@@ -12,8 +12,9 @@
 
 #include <deque>
 #include <memory>
-#include <set>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -48,7 +49,11 @@ enum history_search_type_t {
     // Search for commands containing the given string.
     HISTORY_SEARCH_TYPE_CONTAINS,
     // Search for commands starting with the given string.
-    HISTORY_SEARCH_TYPE_PREFIX
+    HISTORY_SEARCH_TYPE_PREFIX,
+    // Search for commands containing the given glob pattern.
+    HISTORY_SEARCH_TYPE_CONTAINS_GLOB,
+    // Search for commands starting with the given glob pattern.
+    HISTORY_SEARCH_TYPE_PREFIX_GLOB
 };
 
 typedef uint32_t history_identifier_t;
@@ -99,23 +104,25 @@ class history_item_t {
 
 typedef std::deque<history_item_t> history_item_list_t;
 
-// The type of file that we mmap'd.
-enum history_file_type_t { history_type_unknown, history_type_fish_2_0, history_type_fish_1_x };
+class history_file_contents_t;
 
 class history_t {
     friend class history_tests_t;
 
    private:
-    // No copying.
-    history_t(const history_t &);
-    history_t &operator=(const history_t &);
+    // No copying or moving.
+    history_t() = delete;
+    history_t(const history_t &) = delete;
+    history_t(history_t &&) = delete;
+    history_t &operator=(const history_t &) = delete;
+    history_t &operator=(history_t &&) = delete;
 
     // Privately add an item. If pending, the item will not be returned by history searches until a
     // call to resolve_pending.
     void add(const history_item_t &item, bool pending = false);
 
     // Lock for thread safety.
-    pthread_mutex_t lock;
+    fish_mutex_t lock;
 
     // Internal function.
     void clear_file_state();
@@ -129,29 +136,23 @@ class history_t {
     history_item_list_t new_items;
 
     // The index of the first new item that we have not yet written.
-    size_t first_unwritten_new_item_index;
+    size_t first_unwritten_new_item_index{0};
 
     // Whether we have a pending item. If so, the most recently added item is ignored by
     // item_at_index.
-    bool has_pending_item;
+    bool has_pending_item{false};
 
     // Whether we should disable saving to the file for a time.
-    uint32_t disable_automatic_save_counter;
+    uint32_t disable_automatic_save_counter{0};
 
     // Deleted item contents.
-    std::set<wcstring> deleted_items;
+    std::unordered_set<wcstring> deleted_items;
 
-    // The mmaped region for the history file.
-    const char *mmap_start;
+    // The buffer containing the history file contents.
+    std::unique_ptr<history_file_contents_t> file_contents;
 
-    // The size of the mmap'd region.
-    size_t mmap_length;
-
-    // The type of file we mmap'd.
-    history_file_type_t mmap_type;
-
-    // The file ID of the file we mmap'd.
-    file_id_t mmap_file_id;
+    // The file ID of the history file.
+    file_id_t history_file_id;
 
     // The boundary timestamp distinguishes old items from new items. Items whose timestamps are <=
     // the boundary are considered "old". Items whose timestemps are > the boundary are new, and are
@@ -160,22 +161,22 @@ class history_t {
     time_t boundary_timestamp;
 
     // How many items we add until the next vacuum. Initially a random value.
-    int countdown_to_vacuum;
+    int countdown_to_vacuum{-1};
 
-    // Figure out the offsets of our mmap data.
-    void populate_from_mmap(void);
+    // Whether we've loaded old items.
+    bool loaded_old{false};
 
     // List of old items, as offsets into out mmap data.
     std::deque<size_t> old_item_offsets;
 
-    // Whether we've loaded old items.
-    bool loaded_old;
+    // Figure out the offsets of our file contents.
+    void populate_from_file_contents();
 
-    // Loads old if necessary.
-    bool load_old_if_needed(void);
+    // Loads old items if necessary.
+    void load_old_if_needed();
 
-    // Memory maps the history file if necessary.
-    bool mmap_if_needed(void);
+    // Reads the history file if necessary.
+    bool mmap_if_needed();
 
     // Deletes duplicates in new_items.
     void compact_new_items();
@@ -196,27 +197,26 @@ class history_t {
     // Saves history unless doing so is disabled.
     void save_internal_unless_disabled();
 
-    // Do a private, read-only map of the entirety of a history file with the given name. Returns
-    // true if successful. Returns the mapped memory region by reference.
-    bool map_file(const wcstring &name, const char **out_map_start, size_t *out_map_len,
-                  file_id_t *file_id) const;
-
-    // Like map_file but takes a file descriptor
-    bool map_fd(int fd, const char **out_map_start, size_t *out_map_len) const;
-
-    // Whether we're in maximum chaos mode, useful for testing.
-    bool chaos_mode;
+    // Implementation of item_at_index and items_at_indexes
+    history_item_t item_at_index_assume_locked(size_t idx);
 
    public:
-    explicit history_t(const wcstring &);  // constructor
-    ~history_t();                          // destructor
+    explicit history_t(wcstring name);
+    ~history_t();
+
+    // Whether we're in maximum chaos mode, useful for testing.
+    // This causes things like locks to fail.
+    static bool chaos_mode;
+
+    // Whether to force the read path instead of mmap. This is useful for testing.
+    static bool never_mmap;
 
     // Returns history with the given name, creating it if necessary.
     static history_t &history_with_name(const wcstring &name);
 
     // Determines whether the history is empty. Unfortunately this cannot be const, since it may
     // require populating the history.
-    bool is_empty(void);
+    bool is_empty();
 
     // Add a new history item to the end. If pending is set, the item will not be returned by
     // item_at_index until a call to resolve_pending(). Pending items are tracked with an offset
@@ -239,8 +239,12 @@ class history_t {
 
     // Searches history.
     bool search(history_search_type_t search_type, wcstring_list_t search_args,
-                const wchar_t *show_time_format, long max_items, bool case_sensitive,
-                bool null_terminate, io_streams_t &streams);
+                const wchar_t *show_time_format, size_t max_items, bool case_sensitive,
+                bool null_terminate, bool reverse, io_streams_t &streams);
+
+    bool search_with_args(history_search_type_t search_type, wcstring_list_t search_args,
+                          const wchar_t *show_time_format, size_t max_items, bool case_sensitive,
+                          bool null_terminate, bool reverse, io_streams_t &streams);
 
     // Enable / disable automatic saving. Main thread only!
     void disable_automatic_saving();
@@ -258,9 +262,14 @@ class history_t {
     // Incorporates the history of other shells into this history.
     void incorporate_external_changes();
 
-    // Gets all the history into a string. This is intended for the $history environment variable.
+    // Gets all the history into a list. This is intended for the $history environment variable.
     // This may be long!
-    void get_string_representation(wcstring *result, const wcstring &separator);
+    void get_history(wcstring_list_t &result);
+
+    // Let indexes be a list of one-based indexes into the history, matching the interpretation of
+    // $history. That is, $history[1] is the most recently executed command. Values less than one
+    // are skipped. Return a mapping from index to history item text.
+    std::unordered_map<long, wcstring> items_at_indexes(const std::vector<long> &idxs);
 
     // Sets the valid file paths for the history item with the given identifier.
     void set_valid_file_paths(const wcstring_list_t &valid_file_paths, history_identifier_t ident);
@@ -268,87 +277,84 @@ class history_t {
     // Return the specified history at the specified index. 0 is the index of the current
     // commandline. (So the most recent item is at index 1.)
     history_item_t item_at_index(size_t idx);
+
+    // Return the number of history entries.
+    size_t size();
 };
 
+/// Flags for history searching.
+enum {
+    // If set, ignore case.
+    history_search_ignore_case = 1 << 0,
+
+    // If set, do not deduplicate, which can help performance.
+    history_search_no_dedup = 1 << 1
+};
+using history_search_flags_t = uint32_t;
+
+/// Support for searching a history backwards.
+/// Note this does NOT de-duplicate; it is the caller's responsibility to do so.
 class history_search_t {
    private:
     // The history in which we are searching.
-    history_t *history;
+    history_t *history_;
 
-    // The search term.
-    wcstring term;
+    // The original search term.
+    wcstring orig_term_;
+
+    // The (possibly lowercased) search term.
+    wcstring canon_term_;
 
     // Our search type.
-    enum history_search_type_t search_type;
-    bool case_sensitive;
+    enum history_search_type_t search_type_ { HISTORY_SEARCH_TYPE_CONTAINS };
 
-    // Our list of previous matches as index, value. The end is the current match.
-    typedef std::pair<size_t, history_item_t> prev_match_t;
-    std::vector<prev_match_t> prev_matches;
+    // Our flags.
+    history_search_flags_t flags_{0};
 
-    // Returns yes if a given term is in prev_matches.
-    bool match_already_made(const wcstring &match) const;
+    // The current history item.
+    maybe_t<history_item_t> current_item_;
 
-    // Additional strings to skip (sorted).
-    wcstring_list_t external_skips;
+    // Index of the current history item.
+    size_t current_index_{0};
 
-    bool should_skip_match(const wcstring &str) const;
+    // If deduping, the items we've seen.
+    std::unordered_set<wcstring> deduper_;
+
+    // return whether we are case insensitive.
+    bool ignores_case() const { return flags_ & history_search_ignore_case; }
+
+    // return whether we deduplicate items.
+    bool dedup() const { return !(flags_ & history_search_no_dedup); }
 
    public:
-    // Gets the search term.
-    const wcstring &get_term() const { return term; }
-
-    // Sets additional string matches to skip.
-    void skip_matches(const wcstring_list_t &skips);
-
-    // Finds the next search term (forwards in time). Returns true if one was found.
-    bool go_forwards(void);
+    // Gets the original search term.
+    const wcstring &original_term() const { return orig_term_; }
 
     // Finds the previous search result (backwards in time). Returns true if one was found.
-    bool go_backwards(void);
-
-    // Goes to the end (forwards).
-    void go_to_end(void);
-
-    // Returns if we are at the end. We start out at the end.
-    bool is_at_end(void) const;
-
-    // Goes to the beginning (backwards).
-    void go_to_beginning(void);
+    bool go_backwards();
 
     // Returns the current search result item. asserts if there is no current item.
-    history_item_t current_item(void) const;
+    history_item_t current_item() const;
 
     // Returns the current search result item contents. asserts if there is no current item.
-    wcstring current_string(void) const;
+    wcstring current_string() const;
 
     // Constructor.
     history_search_t(history_t &hist, const wcstring &str,
                      enum history_search_type_t type = HISTORY_SEARCH_TYPE_CONTAINS,
-                     bool case_sensitive = true)
-        : history(&hist), term(str), search_type(type), case_sensitive(case_sensitive) {
-        if (!case_sensitive) {
-            term = wcstring();
-            for (wcstring::const_iterator it = str.begin(); it != str.end(); ++it) {
-                term.push_back(towlower(*it));
-            }
+                     history_search_flags_t flags = 0)
+        : history_(&hist), orig_term_(str), canon_term_(str), search_type_(type), flags_(flags) {
+        if (ignores_case()) {
+            std::transform(canon_term_.begin(), canon_term_.end(), canon_term_.begin(), towlower);
         }
     }
 
     // Default constructor.
-    history_search_t()
-        : history(), term(), search_type(HISTORY_SEARCH_TYPE_CONTAINS), case_sensitive(true) {}
+    history_search_t() = default;
 };
 
-/// Init history library. The history file won't actually be loaded until the first time a history
-/// search is performed.
-void history_init();
-
 /// Saves the new history to disk.
-void history_destroy();
-
-/// Perform sanity checks.
-void history_sanity_check();
+void history_save_all();
 
 /// Return the prefix for the files to be used for command and read history.
 wcstring history_session_id();
@@ -361,4 +367,9 @@ path_list_t valid_paths(const path_list_t &paths, const wcstring &working_direct
 /// return true if all paths in the list are valid
 /// Returns true for if paths is empty
 bool all_paths_are_valid(const path_list_t &paths, const wcstring &working_directory);
+
+/// Sets private mode on. Once in private mode, it cannot be turned off.
+void start_private_mode();
+/// Queries private mode status.
+bool in_private_mode();
 #endif

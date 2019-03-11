@@ -27,6 +27,12 @@ function cd --description "Change directory"
         return $status
     end
 
+    # allow explicit "cd ." if the mount-point became stale in the meantime
+    if test "$argv" = "."
+        cd "$PWD"
+        return $status
+    end
+
     builtin cd $argv
     set -l cd_status $status
 
@@ -35,7 +41,7 @@ function cd --description "Change directory"
         or set -l dirprev
         set -q dirprev[$MAX_DIR_HIST]
         and set -e dirprev[1]
-        set -g dirprev $dirprev $previous
+        set -g -a dirprev $previous
         set -e dirnext
         set -g __fish_cd_direction prev
     end

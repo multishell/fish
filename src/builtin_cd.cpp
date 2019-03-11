@@ -33,25 +33,21 @@ int builtin_cd(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         return STATUS_CMD_OK;
     }
 
-    env_var_t dir_in;
+    wcstring dir_in;
     wcstring dir;
 
     if (argv[optind]) {
-        dir_in = env_var_t(argv[optind]);
+        dir_in = argv[optind];
     } else {
-        dir_in = env_get_string(L"HOME");
-        if (dir_in.missing_or_empty()) {
+        auto maybe_dir_in = env_get(L"HOME");
+        if (maybe_dir_in.missing_or_empty()) {
             streams.err.append_format(_(L"%ls: Could not find home directory\n"), cmd);
             return STATUS_CMD_ERROR;
         }
+        dir_in = maybe_dir_in->as_string();
     }
 
-    bool got_cd_path = false;
-    if (!dir_in.missing()) {
-        got_cd_path = path_get_cdpath(dir_in, &dir);
-    }
-
-    if (!got_cd_path) {
+    if (!path_get_cdpath(dir_in, &dir, env_get_pwd_slash())) {
         if (errno == ENOTDIR) {
             streams.err.append_format(_(L"%ls: '%ls' is not a directory\n"), cmd, dir_in.c_str());
         } else if (errno == ENOENT) {
@@ -69,16 +65,18 @@ int builtin_cd(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         return STATUS_CMD_ERROR;
     }
 
-    if (wchdir(dir) != 0) {
+    wcstring norm_dir = normalize_path(dir);
+
+    if (wchdir(norm_dir) != 0) {
         struct stat buffer;
         int status;
 
         status = wstat(dir, &buffer);
         if (!status && S_ISDIR(buffer.st_mode)) {
-            streams.err.append_format(_(L"%ls: Permission denied: '%ls'\n"), cmd, dir.c_str());
+            streams.err.append_format(_(L"%ls: Permission denied: '%ls'\n"), cmd, dir_in.c_str());
 
         } else {
-            streams.err.append_format(_(L"%ls: '%ls' is not a directory\n"), cmd, dir.c_str());
+            streams.err.append_format(_(L"%ls: '%ls' is not a directory\n"), cmd, dir_in.c_str());
         }
 
         if (!shell_is_interactive()) {
@@ -88,10 +86,6 @@ int builtin_cd(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         return STATUS_CMD_ERROR;
     }
 
-    if (!env_set_pwd()) {
-        streams.err.append_format(_(L"%ls: Could not set PWD variable\n"), cmd);
-        return STATUS_CMD_ERROR;
-    }
-
+    env_set_one(L"PWD", ENV_EXPORT | ENV_GLOBAL, std::move(norm_dir));
     return STATUS_CMD_OK;
 }

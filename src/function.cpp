@@ -10,10 +10,12 @@
 #include <stddef.h>
 #include <wchar.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
-#include <set>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include "autoload.h"
@@ -27,15 +29,36 @@
 #include "reader.h"
 #include "wutil.h"  // IWYU pragma: keep
 
+class function_info_t {
+   public:
+    /// Immutable properties of the function.
+    std::shared_ptr<const function_properties_t> props;
+    /// Function description. This may be changed after the function is created.
+    wcstring description;
+    /// File where this function was defined (intern'd string).
+    const wchar_t *const definition_file;
+    /// Mapping of all variables that were inherited from the function definition scope to their
+    /// values.
+    const std::map<wcstring, env_var_t> inherit_vars;
+    /// Flag for specifying that this function was automatically loaded.
+    const bool is_autoload;
+
+    /// Constructs relevant information from the function_data.
+    function_info_t(function_data_t data, const wchar_t *filename, bool autoload);
+
+    /// Used by function_copy.
+    function_info_t(const function_info_t &data, const wchar_t *filename, bool autoload);
+};
+
 /// Table containing all functions.
-typedef std::map<wcstring, function_info_t> function_map_t;
+typedef std::unordered_map<wcstring, function_info_t> function_map_t;
 static function_map_t loaded_functions;
 
 /// Functions that shouldn't be autoloaded (anymore).
-static std::set<wcstring> function_tombstones;
+static std::unordered_set<wcstring> function_tombstones;
 
 /// Lock for functions.
-static pthread_mutex_t functions_lock;
+static std::recursive_mutex functions_lock;
 
 static bool function_remove_ignore_autoload(const wcstring &name, bool tombstone = true);
 
@@ -55,7 +78,7 @@ static bool is_autoload = false;
 /// loaded.
 static int load(const wcstring &name) {
     ASSERT_IS_MAIN_THREAD();
-    scoped_lock locker(functions_lock);
+    scoped_rlock locker(functions_lock);
     bool was_autoload = is_autoload;
     int res;
 
@@ -75,24 +98,22 @@ static int load(const wcstring &name) {
 }
 
 /// Insert a list of all dynamically loaded functions into the specified list.
-static void autoload_names(std::set<wcstring> &names, int get_hidden) {
+static void autoload_names(std::unordered_set<wcstring> &names, int get_hidden) {
     size_t i;
 
-    const env_var_t path_var_wstr = env_get_string(L"fish_function_path");
-    if (path_var_wstr.missing()) return;
-    const wchar_t *path_var = path_var_wstr.c_str();
+    const auto path_var = env_get(L"fish_function_path");
+    if (path_var.missing_or_empty()) return;
 
     wcstring_list_t path_list;
+    path_var->to_list(path_list);
 
-    tokenize_variable_array(path_var, path_list);
     for (i = 0; i < path_list.size(); i++) {
         const wcstring &ndir_str = path_list.at(i);
-        const wchar_t *ndir = (wchar_t *)ndir_str.c_str();
-        DIR *dir = wopendir(ndir);
-        if (!dir) continue;
+        dir_t dir(ndir_str);
+        if (!dir.valid()) continue;
 
         wcstring name;
-        while (wreaddir(dir, name)) {
+        while (dir.read(name)) {
             const wchar_t *fn = name.c_str();
             const wchar_t *suffix;
             if (!get_hidden && fn[0] == L'_') continue;
@@ -103,58 +124,39 @@ static void autoload_names(std::set<wcstring> &names, int get_hidden) {
                 names.insert(name);
             }
         }
-        closedir(dir);
     }
-}
-
-void function_init() {
-    // PCA: This recursive lock was introduced early in my work. I would like to make this a
-    // non-recursive lock but I haven't fully investigated all the call paths (for autoloading
-    // functions, etc.).
-    pthread_mutexattr_t a;
-    DIE_ON_FAILURE(pthread_mutexattr_init(&a));
-    DIE_ON_FAILURE(pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE));
-    DIE_ON_FAILURE(pthread_mutex_init(&functions_lock, &a));
-    DIE_ON_FAILURE(pthread_mutexattr_destroy(&a));
 }
 
 static std::map<wcstring, env_var_t> snapshot_vars(const wcstring_list_t &vars) {
     std::map<wcstring, env_var_t> result;
-    for (wcstring_list_t::const_iterator it = vars.begin(), end = vars.end(); it != end; ++it) {
-        result.insert(std::make_pair(*it, env_get_string(*it)));
+    for (const wcstring &name : vars) {
+        auto var = env_get(name);
+        if (var) result[name] = std::move(*var);
     }
     return result;
 }
 
-function_info_t::function_info_t(const function_data_t &data, const wchar_t *filename,
-                                 int def_offset, bool autoload)
-    : definition(data.definition),
-      description(data.description),
+function_info_t::function_info_t(function_data_t data, const wchar_t *filename, bool autoload)
+    : props(std::make_shared<const function_properties_t>(std::move(data.props))),
+      description(std::move(data.description)),
       definition_file(intern(filename)),
-      definition_offset(def_offset),
-      named_arguments(data.named_arguments),
       inherit_vars(snapshot_vars(data.inherit_vars)),
-      is_autoload(autoload),
-      shadow_scope(data.shadow_scope) {}
+      is_autoload(autoload) {}
 
 function_info_t::function_info_t(const function_info_t &data, const wchar_t *filename,
-                                 int def_offset, bool autoload)
-    : definition(data.definition),
+                                 bool autoload)
+    : props(data.props),
       description(data.description),
       definition_file(intern(filename)),
-      definition_offset(def_offset),
-      named_arguments(data.named_arguments),
       inherit_vars(data.inherit_vars),
-      is_autoload(autoload),
-      shadow_scope(data.shadow_scope) {}
+      is_autoload(autoload) {}
 
-void function_add(const function_data_t &data, const parser_t &parser, int definition_line_offset) {
+void function_add(const function_data_t &data, const parser_t &parser) {
     UNUSED(parser);
     ASSERT_IS_MAIN_THREAD();
 
     CHECK(!data.name.empty(), );  //!OCLINT(multiple unary operator)
-    CHECK(data.definition, );
-    scoped_lock locker(functions_lock);
+    scoped_rlock locker(functions_lock);
 
     // Remove the old function.
     function_remove(data.name);
@@ -162,41 +164,50 @@ void function_add(const function_data_t &data, const parser_t &parser, int defin
     // Create and store a new function.
     const wchar_t *filename = reader_current_filename();
 
-    const function_map_t::value_type new_pair(
-        data.name, function_info_t(data, filename, definition_line_offset, is_autoload));
+    const function_map_t::value_type new_pair(data.name,
+                                              function_info_t(data, filename, is_autoload));
     loaded_functions.insert(new_pair);
 
     // Add event handlers.
-    for (std::vector<event_t>::const_iterator iter = data.events.begin(); iter != data.events.end();
-         ++iter) {
-        event_add_handler(*iter);
+    for (const event_t &event : data.events) {
+        event_add_handler(event);
     }
+}
+
+std::shared_ptr<const function_properties_t> function_get_properties(const wcstring &name) {
+    if (parser_keywords_is_reserved(name)) return nullptr;
+    scoped_rlock locker(functions_lock);
+    auto where = loaded_functions.find(name);
+    if (where != loaded_functions.end()) {
+        return where->second.props;
+    }
+    return nullptr;
 }
 
 int function_exists(const wcstring &cmd) {
     if (parser_keywords_is_reserved(cmd)) return 0;
-    scoped_lock locker(functions_lock);
+    scoped_rlock locker(functions_lock);
     load(cmd);
     return loaded_functions.find(cmd) != loaded_functions.end();
 }
 
 void function_load(const wcstring &cmd) {
     if (!parser_keywords_is_reserved(cmd)) {
-        scoped_lock locker(functions_lock);
+        scoped_rlock locker(functions_lock);
         load(cmd);
     }
 }
 
 int function_exists_no_autoload(const wcstring &cmd, const env_vars_snapshot_t &vars) {
     if (parser_keywords_is_reserved(cmd)) return 0;
-    scoped_lock locker(functions_lock);
+    scoped_rlock locker(functions_lock);
     return loaded_functions.find(cmd) != loaded_functions.end() ||
            function_autoloader.can_load(cmd, vars);
 }
 
 static bool function_remove_ignore_autoload(const wcstring &name, bool tombstone) {
     // Note: the lock may be held at this point, but is recursive.
-    scoped_lock locker(functions_lock);
+    scoped_rlock locker(functions_lock);
 
     function_map_t::iterator iter = loaded_functions.find(name);
 
@@ -217,6 +228,7 @@ void function_remove(const wcstring &name) {
     if (function_remove_ignore_autoload(name)) function_autoloader.unload(name);
 }
 
+/// Returns a function by name if it has been loaded, returns false otherwise. Does not autoload.
 static const function_info_t *function_get(const wcstring &name) {
     // The caller must lock the functions_lock before calling this; however our mutex is currently
     // recursive, so trylock will never fail. We need a way to correctly check if a lock is locked
@@ -229,39 +241,27 @@ static const function_info_t *function_get(const wcstring &name) {
     return &iter->second;
 }
 
-bool function_get_definition(const wcstring &name, wcstring *out_definition) {
-    scoped_lock locker(functions_lock);
+bool function_get_definition(const wcstring &name, wcstring &out_definition) {
+    scoped_rlock locker(functions_lock);
     const function_info_t *func = function_get(name);
-    if (func && out_definition) {
-        out_definition->assign(func->definition);
+    if (func) {
+        out_definition = func->props->body_node.get_source(func->props->parsed_source->src);
     }
     return func != NULL;
 }
 
-wcstring_list_t function_get_named_arguments(const wcstring &name) {
-    scoped_lock locker(functions_lock);
-    const function_info_t *func = function_get(name);
-    return func ? func->named_arguments : wcstring_list_t();
-}
-
 std::map<wcstring, env_var_t> function_get_inherit_vars(const wcstring &name) {
-    scoped_lock locker(functions_lock);
+    scoped_rlock locker(functions_lock);
     const function_info_t *func = function_get(name);
     return func ? func->inherit_vars : std::map<wcstring, env_var_t>();
 }
 
-bool function_get_shadow_scope(const wcstring &name) {
-    scoped_lock locker(functions_lock);
-    const function_info_t *func = function_get(name);
-    return func ? func->shadow_scope : false;
-}
-
-bool function_get_desc(const wcstring &name, wcstring *out_desc) {
+bool function_get_desc(const wcstring &name, wcstring &out_desc) {
     // Empty length string goes to NULL.
-    scoped_lock locker(functions_lock);
+    scoped_rlock locker(functions_lock);
     const function_info_t *func = function_get(name);
-    if (out_desc && func && !func->description.empty()) {
-        out_desc->assign(_(func->description.c_str()));
+    if (func && !func->description.empty()) {
+        out_desc = _(func->description.c_str());
         return true;
     }
 
@@ -270,7 +270,7 @@ bool function_get_desc(const wcstring &name, wcstring *out_desc) {
 
 void function_set_desc(const wcstring &name, const wcstring &desc) {
     load(name);
-    scoped_lock locker(functions_lock);
+    scoped_rlock locker(functions_lock);
     function_map_t::iterator iter = loaded_functions.find(name);
     if (iter != loaded_functions.end()) {
         iter->second.description = desc;
@@ -279,13 +279,13 @@ void function_set_desc(const wcstring &name, const wcstring &desc) {
 
 bool function_copy(const wcstring &name, const wcstring &new_name) {
     bool result = false;
-    scoped_lock locker(functions_lock);
+    scoped_rlock locker(functions_lock);
     function_map_t::const_iterator iter = loaded_functions.find(name);
     if (iter != loaded_functions.end()) {
         // This new instance of the function shouldn't be tied to the definition file of the
         // original, so pass NULL filename, etc.
         const function_map_t::value_type new_pair(new_name,
-                                                  function_info_t(iter->second, NULL, 0, false));
+                                                  function_info_t(iter->second, NULL, false));
         loaded_functions.insert(new_pair);
         result = true;
     }
@@ -293,13 +293,12 @@ bool function_copy(const wcstring &name, const wcstring &new_name) {
 }
 
 wcstring_list_t function_get_names(int get_hidden) {
-    std::set<wcstring> names;
-    scoped_lock locker(functions_lock);
+    std::unordered_set<wcstring> names;
+    scoped_rlock locker(functions_lock);
     autoload_names(names, get_hidden);
 
-    function_map_t::const_iterator iter;
-    for (iter = loaded_functions.begin(); iter != loaded_functions.end(); ++iter) {
-        const wcstring &name = iter->first;
+    for (const auto &func : loaded_functions) {
+        const wcstring &name = func.first;
 
         // Maybe skip hidden.
         if (!get_hidden && (name.empty() || name.at(0) == L'_')) {
@@ -311,45 +310,57 @@ wcstring_list_t function_get_names(int get_hidden) {
 }
 
 const wchar_t *function_get_definition_file(const wcstring &name) {
-    scoped_lock locker(functions_lock);
+    scoped_rlock locker(functions_lock);
     const function_info_t *func = function_get(name);
     return func ? func->definition_file : NULL;
 }
 
 bool function_is_autoloaded(const wcstring &name) {
-    scoped_lock locker(functions_lock);
+    scoped_rlock locker(functions_lock);
     const function_info_t *func = function_get(name);
     return func->is_autoload;
 }
 
-int function_get_definition_offset(const wcstring &name) {
-    scoped_lock locker(functions_lock);
+int function_get_definition_lineno(const wcstring &name) {
+    scoped_rlock locker(functions_lock);
     const function_info_t *func = function_get(name);
-    return func ? func->definition_offset : -1;
+    if (!func) return -1;
+    // return one plus the number of newlines at offsets less than the start of our function's
+    // statement (which includes the header).
+    // TODO: merge with line_offset_of_character_at_offset?
+    auto block_stat = func->props->body_node.try_get_parent<grammar::block_statement>();
+    assert(block_stat && "Function body is not part of block statement");
+    auto source_range = block_stat.source_range();
+    assert(source_range && "Function has no source range");
+    uint32_t func_start = source_range->start;
+    const wcstring &source = func->props->parsed_source->src;
+    assert(func_start <= source.size() && "function start out of bounds");
+    return 1 + std::count(source.begin(), source.begin() + func_start, L'\n');
 }
 
+void function_invalidate_path() { function_autoloader.invalidate(); }
+
+// Setup the environment for the function. There are three components of the environment:
+// 1. argv
+// 2. named arguments
+// 3. inherited variables
 void function_prepare_environment(const wcstring &name, const wchar_t *const *argv,
                                   const std::map<wcstring, env_var_t> &inherited_vars) {
-    // Three components of the environment:
-    // 1. argv
-    // 2. named arguments
-    // 3. inherited variables
     env_set_argv(argv);
-
-    const wcstring_list_t named_arguments = function_get_named_arguments(name);
-    if (!named_arguments.empty()) {
-        const wchar_t *const *arg;
-        size_t i;
-        for (i = 0, arg = argv; i < named_arguments.size(); i++) {
-            env_set(named_arguments.at(i).c_str(), *arg, ENV_LOCAL | ENV_USER);
-
-            if (*arg) arg++;
+    auto props = function_get_properties(name);
+    if (props && !props->named_arguments.empty()) {
+        const wchar_t *const *arg = argv;
+        for (const wcstring &named_arg : props->named_arguments) {
+            if (*arg) {
+                env_set_one(named_arg, ENV_LOCAL | ENV_USER, *arg);
+                arg++;
+            } else {
+                env_set_empty(named_arg, ENV_LOCAL | ENV_USER);
+            }
         }
     }
 
-    for (std::map<wcstring, env_var_t>::const_iterator it = inherited_vars.begin(),
-                                                       end = inherited_vars.end();
-         it != end; ++it) {
-        env_set(it->first, it->second.missing() ? NULL : it->second.c_str(), ENV_LOCAL | ENV_USER);
+    for (const auto &kv : inherited_vars) {
+        env_set(kv.first, ENV_LOCAL | ENV_USER, kv.second.as_list());
     }
 }

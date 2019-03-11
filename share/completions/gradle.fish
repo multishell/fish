@@ -13,7 +13,6 @@ complete -c gradle -l debug -s d -d 'Log in debug mode'
 complete -c gradle -l daemon -d 'Uses Gradle Daemon to run build'
 complete -c gradle -l foreground -d 'Uses Gradle Daemon in foreground'
 complete -c gradle -l gradle-user-home -s g -r -d 'Specify gradle user home directory'
-complete -c gradle -l gui -d 'Launch Gradle GUI'
 complete -c gradle -l initscript -s I -r -d 'Specify an initialization script'
 complete -c gradle -l info -s i -d 'Set log level to info'
 complete -c gradle -l include-build -r -d 'Include specified build in composite'
@@ -49,7 +48,7 @@ function __cache_or_get_gradle_completion
   set -l hashed_pwd (fish_md5 -s $PWD)
   set -l gradle_cache_file $XDG_CACHE_HOME/gradle-completions/$hashed_pwd
   if not test -f $gradle_cache_file; or command test build.gradle -nt $gradle_cache_file
-    command gradle -q tasks ^/dev/null | string match -r '^[[:alnum:]]+ - .*' | string replace ' - ' \t > $gradle_cache_file
+    command gradle -q tasks 2>/dev/null | string match -r '^[[:alnum:]]+ - .*' | string replace ' - ' \t > $gradle_cache_file
   end
   cat $gradle_cache_file
 end

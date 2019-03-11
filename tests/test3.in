@@ -244,6 +244,27 @@ function __fish_test_shadow
   env | string match -q '__fish_test_env17=*' ; or echo SHADOWED
 end
 __fish_test_shadow
+# Test that the variable is still exported (#2611)
+env | string match '__fish_test_env17=*'
+
+# Test that local exported variables are copied to functions (#1091)
+function __fish_test_local_export
+         echo $var
+         set var boo
+         echo $var
+end
+set -lx var wuwuwu
+__fish_test_local_export
+echo $var
+
+# Test that we don't copy local-exports to blocks.
+set -lx var foo
+begin
+    echo $var
+    set var bar
+    echo $var
+end
+echo $var # should be "bar"
 
 # clear for other shells
 set -eU __fish_test_universal_variables_variable_foo
@@ -279,9 +300,30 @@ env SHLVL="  3" ../test/root/bin/fish -c 'echo SHLVL: $SHLVL'
 env DISPLAY="localhost:0.0" ../test/root/bin/fish -c 'echo Elements in DISPLAY: (count $DISPLAY)'
 # We can't use PATH for this because the global configuration will modify PATH
 # based on /etc/paths and /etc/paths.d.
-# Exported arrays should use record separator, with a few exceptions. So we can use an arbitrary variable for this.
-env FOO=one\x1etwo\x1ethree\x1efour ../test/root/bin/fish -c 'echo Elements in FOO: (count $FOO)'
+# Exported arrays are colon delimited; they are automatically split on colons if they end in PATH.
+set -gx FOO one two three four
+set -gx FOOPATH one two three four
+../test/root/bin/fish -c 'echo Elements in FOO and FOOPATH: (count $FOO) (count $FOOPATH)'
 # some must use colon separators!
 set -lx MANPATH man1 man2 man3 ; env | grep '^MANPATH='
+# ensure we don't escape space and colon values
+set -x DONT_ESCAPE_COLONS 1: 2: :3: ; env | grep '^DONT_ESCAPE_COLONS='
+set -x DONT_ESCAPE_SPACES '1 ' '2 ' ' 3 ' 4 ; env | grep '^DONT_ESCAPE_SPACES='
+set -x DONT_ESCAPE_COLONS_PATH 1: 2: :3: ; env | grep '^DONT_ESCAPE_COLONS_PATH='
+
+logmsg Path universal variables
+set -U __fish_test_path_not a b c
+set -U __fish_test_PATH 1 2 3
+echo "$__fish_test_path_not $__fish_test_PATH" $__fish_test_path_not $__fish_test_PATH
+set --unpath __fish_test_PATH $__fish_test_PATH
+echo "$__fish_test_path_not $__fish_test_PATH" $__fish_test_path_not $__fish_test_PATH
+set --path __fish_test_path_not $__fish_test_path_not
+echo "$__fish_test_path_not $__fish_test_PATH" $__fish_test_path_not $__fish_test_PATH
+set --path __fish_test_PATH $__fish_test_PATH
+echo "$__fish_test_path_not $__fish_test_PATH" $__fish_test_path_not $__fish_test_PATH
+set -U __fish_test_PATH 1:2:3
+echo "$__fish_test_PATH" $__fish_test_PATH
+set -U --path __fish_test_path2 a:b
+echo "$__fish_test_path2" $__fish_test_path2
 
 true

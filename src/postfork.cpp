@@ -59,76 +59,120 @@ static void debug_safe_int(int level, const char *format, int val) {
     debug_safe(level, format, buff);
 }
 
-/// This function should be called by both the parent process and the child right after fork() has
-/// been called. If job control is enabled, the child is put in the jobs group, and if the child is
-/// also in the foreground, it is also given control of the terminal. When called in the parent
-/// process, this function may fail, since the child might have already finished and called exit.
-/// The parent process may safely ignore the exit status of this call.
-///
+/// Called only by the child to set its own process group (possibly creating a new group in the
+/// process if it is the first in a JOB_CONTROL job.
 /// Returns true on sucess, false on failiure.
-bool set_child_group(job_t *j, process_t *p, int print_errors) {
-    bool retval = true;
-
-    if (j->get_flag(JOB_CONTROL)) {
-        // New jobs have the pgid set to -2
-        if (j->pgid == -2) {
+bool child_set_group(job_t *j, process_t *p) {
+    if (j->get_flag(job_flag_t::JOB_CONTROL)) {
+        if (j->pgid == INVALID_PID) {
             j->pgid = p->pid;
         }
 
-        if (setpgid(p->pid, j->pgid)) {  //!OCLINT(collapsible if statements)
-            // TODO: Figure out why we're testing whether the pgid is correct after attempting to
-            // set it failed. This was added in commit 4e912ef8 from 2012-02-27.
-            if (getpgid(p->pid) != j->pgid && print_errors) {
-                char pid_buff[128];
-                char job_id_buff[128];
-                char getpgid_buff[128];
-                char job_pgid_buff[128];
-                char argv0[64];
-                char command[64];
+        for (int i = 0; setpgid(p->pid, j->pgid) != 0; ++i) {
+            // Put a cap on how many times we retry so we are never stuck here
+            if (i < 100) {
+                if (errno == EPERM) {
+                    // The setpgid(2) man page says that EPERM is returned only if attempts are made to
+                    // move processes into groups across session boundaries (which can never be the case
+                    // in fish, anywhere) or to change the process group ID of a session leader (again,
+                    // can never be the case). I'm pretty sure this is a WSL bug, as we see the same
+                    // with tcsetpgrp(2) in other places and it disappears on retry.
+                    debug_safe(2, "setpgid(2) returned EPERM. Retrying");
+                    continue;
+                } else if (errno == EINTR) {
+                    // I don't think signals are blocked here. The parent (fish) redirected the signal
+                    // handlers and `setup_child_process()` calls `signal_reset_handlers()` after we're
+                    // done here (and not `signal_unblock()`). We're already in a loop, so let's just
+                    // handle EINTR just in case.
+                    continue;
+                }
+            }
 
-                format_long_safe(pid_buff, p->pid);
-                format_long_safe(job_id_buff, j->job_id);
-                format_long_safe(getpgid_buff, getpgid(p->pid));
-                format_long_safe(job_pgid_buff, j->pgid);
-                narrow_string_safe(argv0, p->argv0());
-                narrow_string_safe(command, j->command_wcstr());
+            char pid_buff[128];
+            char job_id_buff[128];
+            char getpgid_buff[128];
+            char job_pgid_buff[128];
+            char argv0[64];
+            char command[64];
 
-                debug_safe(
-                    1, "Could not send process %s, '%s' in job %s, '%s' from group %s to group %s",
-                    pid_buff, argv0, job_id_buff, command, getpgid_buff, job_pgid_buff);
+            format_long_safe(pid_buff, p->pid);
+            format_long_safe(job_id_buff, j->job_id);
+            format_long_safe(getpgid_buff, getpgid(p->pid));
+            format_long_safe(job_pgid_buff, j->pgid);
+            narrow_string_safe(argv0, p->argv0());
+            narrow_string_safe(command, j->command_wcstr());
 
+            debug_safe(
+                1, "Could not send own process %s, '%s' in job %s, '%s' from group %s to group %s",
+                pid_buff, argv0, job_id_buff, command, getpgid_buff, job_pgid_buff);
+
+            if (is_windows_subsystem_for_linux() && errno == EPERM) {
+                debug_safe(1, "Please update to Windows 10 1809/17763 or higher to address known issues "
+                        "with process groups and zombie processes.");
+            }
+
+            safe_perror("setpgid");
+
+            return false;
+        }
+    } else {
+        // The child does not actually use this field.
+        j->pgid = getpgrp();
+    }
+
+    return true;
+}
+
+/// Called only by the parent only after a child forks and successfully calls child_set_group,
+/// guaranteeing the job control process group has been created and that the child belongs to the
+/// correct process group. Here we can update our job_t structure to reflect the correct process
+/// group in the case of JOB_CONTROL, and we can give the new process group control of the terminal
+/// if it's to run in the foreground.
+bool set_child_group(job_t *j, pid_t child_pid) {
+    if (j->get_flag(job_flag_t::JOB_CONTROL)) {
+        assert (j->pgid != INVALID_PID
+                && "set_child_group called with JOB_CONTROL before job pgid determined!");
+
+        // The parent sets the child's group. This incurs the well-known unavoidable race with the
+        // child exiting, so ignore ESRCH and EPERM (in case the pid was recycled).
+        // Additionally ignoring EACCES. See #4715 and #4884.
+        if (setpgid(child_pid, j->pgid) < 0) {
+            if (errno != ESRCH && errno != EPERM && errno != EACCES) {
                 safe_perror("setpgid");
-                retval = false;
+                return false;
+            }
+            else {
+                // Just in case it's ever not right to ignore the setpgid call, (i.e. if this
+                // ever leads to a terminal hang due if both this setpgid call AND posix_spawn's
+                // internal setpgid calls failed), write to the debug log so a future developer
+                // doesn't go crazy trying to track this down.
+                debug(2, "Error %d while calling setpgid for child %d (probably harmless)",
+                        errno, child_pid);
             }
         }
     } else {
         j->pgid = getpgrp();
     }
 
-    if (j->get_flag(JOB_TERMINAL) && j->get_flag(JOB_FOREGROUND)) {  //!OCLINT(early exit)
-        int result = -1;
-        errno = EINTR;
-        while (result == -1 && errno == EINTR) {
-            signal_block(true);
-            result = tcsetpgrp(STDIN_FILENO, j->pgid);
-            signal_unblock(true);
-        }
-        if (result == -1) {
-            if (errno == ENOTTY) redirect_tty_output();
-            if (print_errors) {
-                char job_id_buff[64];
-                char command_buff[64];
-                format_long_safe(job_id_buff, j->job_id);
-                narrow_string_safe(command_buff, j->command_wcstr());
-                debug_safe(1, "Could not send job %s ('%s') to foreground", job_id_buff,
-                           command_buff);
-                safe_perror("tcsetpgrp");
-                retval = false;
-            }
+    return true;
+}
+
+bool maybe_assign_terminal(const job_t *j) {
+    if (j->get_flag(job_flag_t::TERMINAL) && j->is_foreground()) {  //!OCLINT(early exit)
+        if (tcgetpgrp(STDIN_FILENO) == j->pgid) {
+            // We've already assigned the process group control of the terminal when the first
+            // process in the job was started. There's no need to do so again, and on some platforms
+            // this can cause an EPERM error. In addition, if we've given control of the terminal to
+            // a process group, attempting to call tcsetpgrp from the background will cause SIGTTOU
+            // to be sent to everything in our process group (unless we handle it).
+            debug(4, L"Process group %d already has control of terminal\n", j->pgid);
+        } else {
+            // No need to duplicate the code here, a function already exists that does just this.
+            return terminal_give_to_job(j, false /*new job, so not continuing*/);
         }
     }
 
-    return retval;
+    return true;
 }
 
 /// Set up a childs io redirections. Should only be called by setup_child_process(). Does the
@@ -232,16 +276,14 @@ static int handle_child_io(const io_chain_t &io_chain) {
     return 0;
 }
 
-int setup_child_process(job_t *j, process_t *p, const io_chain_t &io_chain) {
+int setup_child_process(process_t *p, const io_chain_t &io_chain) {
     bool ok = true;
 
-    if (p) {
-        ok = set_child_group(j, p, 1);
-    }
-
     if (ok) {
+        // In the case of IO_FILE, this can hang until data is available to read/write!
         ok = (0 == handle_child_io(io_chain));
         if (p != 0 && !ok) {
+            debug_safe(4, "handle_child_io failed in setup_child_process");
             exit_without_destructors(1);
         }
     }
@@ -250,8 +292,6 @@ int setup_child_process(job_t *j, process_t *p, const io_chain_t &io_chain) {
         // Set the handling for job control signals back to the default.
         signal_reset_handlers();
     }
-
-    signal_unblock();  // remove all signal blocks
 
     return ok ? 0 : -1;
 }
@@ -268,6 +308,7 @@ pid_t execute_fork(bool wait_for_threads_to_die) {
         // Make sure we have no outstanding threads before we fork. This is a pretty sketchy thing
         // to do here, both because exec.cpp shouldn't have to know about iothreads, and because the
         // completion handlers may do unexpected things.
+        debug_safe(4, "waiting for threads to drain.");
         iothread_drain_all();
     }
 
@@ -320,13 +361,13 @@ bool fork_actions_make_spawn_properties(posix_spawnattr_t *attr,
 
     bool should_set_process_group_id = false;
     int desired_process_group_id = 0;
-    if (j->get_flag(JOB_CONTROL)) {
+    if (j->get_flag(job_flag_t::JOB_CONTROL)) {
         should_set_process_group_id = true;
 
         // set_child_group puts each job into its own process group
         // do the same here if there is no PGID yet (i.e. PGID == -2)
         desired_process_group_id = j->pgid;
-        if (desired_process_group_id == -2) {
+        if (desired_process_group_id == INVALID_PID) {
             desired_process_group_id = 0;
         }
     }
@@ -527,4 +568,16 @@ bool do_builtin_io(const char *out, size_t outlen, const char *err, size_t errle
 
     errno = saved_errno;
     return success;
+}
+
+void run_as_keepalive(pid_t parent_pid) {
+    // Run this process as a keepalive. In typical usage the parent process will kill us. However
+    // this may not happen if the parent process exits abruptly, either via kill or exec. What we do
+    // is poll our ppid() and exit when it differs from parent_pid. We can afford to do this with
+    // low frequency because in the great majority of cases, fish will kill(9) us.
+    for (;;) {
+        // Note sleep is async-safe.
+        if (sleep(1)) break;
+        if (getppid() != parent_pid) break;
+    }
 }

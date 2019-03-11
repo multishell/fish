@@ -1,7 +1,6 @@
 #
 # Wrap the builtin history command to provide additional functionality.
 #
-
 function __fish_unexpected_hist_args --no-scope-shadowing
     if test -n "$search_mode"
         or set -q show_time[1]
@@ -17,16 +16,12 @@ end
 
 function history --description "display or manipulate interactive command history"
     set -l cmd history
-
-    set -l options --exclusive 'c,e,p' --exclusive 'S,D,M,V,C' --exclusive 't,T'
-    set options $options 'h/help' 'c/contains' 'e/exact' 'p/prefix'
-    set options $options 'C/case-sensitive' 'z/null' 't/show-time=?' 'n#max'
-    # This long option is deprecated and here solely for legacy compatibility. People should use
-    # -t or --show-time now.
-    set options $options 'T-with-time=?'
+    set -l options --exclusive 'c,e,p' --exclusive 'S,D,M,V,C'
+    set -a options 'h/help' 'c/contains' 'e/exact' 'p/prefix'
+    set -a options 'C/case-sensitive' 'R/reverse' 'z/null' 't/show-time=?' 'n#max'
     # The following options are deprecated and will be removed in the next major release.
     # Note that they do not have usable short flags.
-    set options $options 'S-search' 'D-delete' 'M-merge' 'V-save' 'R-clear'
+    set -a options 'S-search' 'D-delete' 'M-merge' 'V-save' 'X-clear'
     argparse -n $cmd $options -- $argv
     or return
 
@@ -37,13 +32,19 @@ function history --description "display or manipulate interactive command histor
 
     set -l hist_cmd
     set -l show_time
-
-    set -l max_count $_flag_max
+    set -l skip_indent
+    set -l max_count
+    set -q _flag_max
+    set max_count -n$_flag_max
 
     set -q _flag_with_time
     and set -l _flag_show_time $_flag_with_time
     if set -q _flag_show_time[1]
         set show_time --show-time=$_flag_show_time
+        # `history -t` by default shows timestamps on seperate lines beginning with # characters.
+        # When colorized the timetamps would highlighted as comments by fish_indent. With a custom
+        # format there is no guarantee fish_indent can do anything useful.
+        set skip_indent true
     else if set -q _flag_show_time
         set show_time --show-time
     end
@@ -90,9 +91,22 @@ function history --description "display or manipulate interactive command histor
                 set -l pager less
                 set -q PAGER
                 and set pager $PAGER
-                builtin history search $search_mode $show_time $max_count $_flag_case_sensitive $_flag_null -- $argv | eval $pager
+
+                # If the user hasn't preconfigured less with the $LESS environment variable,
+                # we do so to prevent the stripping of control characters (for color) and have
+                # it behave like cat if output fits on one screen. Prevent the screen from clearing
+                # on quit, so there is something to see if it exits.
+                # These are the same three options `git` sets through $LESS before starting the pager.
+                not set -qx LESS
+                and set -x LESS --RAW-CONTROL-CHARS --quit-if-one-screen --no-init
+                not set -qx LV # ask the pager lv not to strip colors
+                and set -x LV -c
+
+                set -q skip_indent[1] # --show-time=FORMAT set, arbitrary output may not be valid fish script
+                and builtin history search $search_mode $show_time $max_count $_flag_case_sensitive $_flag_reverse $_flag_null -- $argv | $pager
+                or builtin history search $search_mode $show_time $max_count $_flag_case_sensitive $_flag_reverse $_flag_null -- $argv | fish_indent --ansi | $pager
             else
-                builtin history search $search_mode $show_time $max_count $_flag_case_sensitive $_flag_null -- $argv
+                builtin history search $search_mode $show_time $max_count $_flag_case_sensitive $_flag_reverse $_flag_null -- $argv
             end
 
         case delete # interactively delete history

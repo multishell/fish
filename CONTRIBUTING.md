@@ -1,6 +1,6 @@
 # Guidelines For Developers
 
-This document provides guidelines for making changes to the fish-shell project. This includes rules for how to format the code, naming conventions, etcetera. Generally known as the style of the code. It also includes recommended best practices such as creating a Travis-CI account so you can verify your changes pass all the tests before making a pull-request.
+This document provides guidelines for making changes to the fish-shell project. This includes rules for how to format the code, naming conventions, et cetera. Generally known as the style of the code. It also includes recommended best practices such as creating a Travis CI account so you can verify that your changes pass all the tests before making a pull request.
 
 See the bottom of this document for help on installing the linting and style reformatting tools discussed in the following sections.
 
@@ -17,7 +17,7 @@ The fish version is constructed by the *build_tools/git_version_gen.sh* script. 
 
 You should not depend on symbols being visible to a `*.cpp` module from `#include` statements inside another header file. In other words if your module does `#include "common.h"` and that header does `#include "signal.h"` your module should not assume the sub-include is present. It should instead directly `#include "signal.h"` if it needs any symbol from that header. That makes the actual dependencies much clearer. It also makes it easy to modify the headers included by a specific header file without having to worry that will break any module (or header) that includes a particular header.
 
-To help enforce this rule the `make lint` (and `make lint-all`) command will run the [include-what-you-use](http://include-what-you-use.org/) tool. You can find the IWYU project on [github](https://github.com/include-what-you-use/include-what-you-use).
+To help enforce this rule the `make lint` (and `make lint-all`) command will run the [include-what-you-use](https://include-what-you-use.org/) tool. You can find the IWYU project on [github](https://github.com/include-what-you-use/include-what-you-use).
 
 To install the tool on OS X you'll need to add a [formula](https://github.com/jasonmp85/homebrew-iwyu) then install it:
 
@@ -26,7 +26,11 @@ brew tap jasonmp85/iwyu
 brew install iwyu
 ```
 
-On Ubuntu you can install it via `sudo apt-get install iwyu`.
+On Ubuntu you can install it via `apt-get`:
+
+```
+sudo apt-get install iwyu
+```
 
 ## Lint Free Code
 
@@ -34,7 +38,7 @@ Automated analysis tools like cppcheck and oclint can point out potential bugs o
 
 Ultimately we want lint free code. However, at the moment a lot of cleanup is required to reach that goal. For now simply try to avoid introducing new lint.
 
-To make linting the code easy there are two make targets: `lint` and `lint-all`. The latter does just what the name implies. The former will lint any modified but not committed `*.cpp` files. If there is no uncommitted work it will lint the files in the most recent commit.
+To make linting the code easy there are two make targets: `lint` and `lint-all`. The latter does exactly what the name implies. The former will lint any modified but not committed `*.cpp` files. If there is no uncommitted work it will lint the files in the most recent commit.
 
 Fish has custom cppcheck rules in the file `.cppcheck.rule`. These help catch mistakes such as using `wcwidth()` rather than `fish_wcwidth()`. Please add a new rule if you find similar mistakes being made.
 
@@ -68,9 +72,9 @@ The following sections discuss the specific rules for the style that should be u
 make style
 ```
 
-before commiting your change. That will run `git-clang-format` to rewrite just the lines you're modifying.
+before committing your change. That will run `git-clang-format` to rewrite only the lines you're modifying.
 
-If you've already committed your changes that's okay since it will then check the files in the most recent commit. This can be useful after you've merged someone elses change and want to check that it's style is acceptable. However, in that case it will run `clang-format` to ensure the entire file, not just the lines modified by the commit, conform to the style.
+If you've already committed your changes that's okay since it will then check the files in the most recent commit. This can be useful after you've merged another person's change and want to check that it's style is acceptable. However, in that case it will run `clang-format` to ensure the entire file, not just the lines modified by the commit, conform to the style.
 
 If you want to check the style of the entire code base run
 
@@ -145,7 +149,7 @@ However, as I write this there are no places in the code where we use this and I
 
 1. All fish scripts, such as those in the *share/functions* and *tests* directories, should be formatted using the `fish_indent` command.
 
-1. Function names should be all lowercase with undescores separating words. Private functions should begin with an underscore. The first word should be `fish` if the function is unique to fish.
+1. Function names should be in all lowercase with words separated by underscores. Private functions should begin with an underscore. The first word should be `fish` if the function is unique to fish.
 
 1. The first word of global variable names should generally be `fish` for public vars or `_fish` for private vars to minimize the possibility of name clashes with user defined vars.
 
@@ -155,7 +159,7 @@ However, as I write this there are no places in the code where we use this and I
 
 1. The `clang-format` command is authoritative with respect to indentation, whitespace around operators, etc.
 
-1. All names in code should be `small_snake_case`. No Hungarian notation is used. Classes and structs names should be followed by `_t`.
+1. All names in code should be `small_snake_case`. No Hungarian notation is used. The names for classes and structs should be followed by `_t`.
 
 1. Always attach braces to the surrounding context.
 
@@ -163,32 +167,34 @@ However, as I write this there are no places in the code where we use this and I
 
 1. Comments should always use the C++ style; i.e., each line of the comment should begin with a `//` and should be limited to 100 characters. Comments that do not begin a line should be separated from the previous text by two spaces.
 
-1. Comments that document the purpose of a function or class should begin with three slashes, `///`, so that OS X Xcode (and possibly other IDE's) will extract the comment and show it in the "Quick Help" window when the cursor is on the symbol.
+1. Comments that document the purpose of a function or class should begin with three slashes, `///`, so that OS X Xcode (and possibly other IDEs) will extract the comment and show it in the "Quick Help" window when the cursor is on the symbol.
 
 ## Testing
 
-The source code for fish includes a large collection of tests. If you are making any changes to fish, running these tests is mandatory to make sure the behaviour remains consistent and regressions are not introduced. Even if you don't run the tests they will be run via the [Travis CI](https://travis-ci.org/fish-shell/fish-shell) service.
+The source code for fish includes a large collection of tests. If you are making any changes to fish, running these tests is mandatory to make sure the behaviour remains consistent and regressions are not introduced. Even if you don't run the tests on your machine, they will still be run via the [Travis CI](https://travis-ci.org/fish-shell/fish-shell) service.
 
-You are strongly encouraged to add tests when changing the functionality of fish. Especially if you are fixing a bug to help ensure there are no regressions in the future (i.e., we don't reintroduce the bug).
+You are strongly encouraged to add tests when changing the functionality of fish, especially if you are fixing a bug to help ensure there are no regressions in the future (i.e., we don't reintroduce the bug).
 
 ### Local testing
 
 The tests can be run on your local computer on all operating systems.
 
-Running the tests is only supported from the autotools build and not xcodebuild. On OS X, you will need to install autoconf &mdash; we suggest using [Homebrew](http://brew.sh/) to install these tools.
+Running the tests is only supported from the autotools build and not xcodebuild. On OS X, you will need to install autoconf &mdash; we suggest using [Homebrew](https://brew.sh/) to install these tools.
 
-    autoconf
-    ./configure
-    make test # or "gmake test" on BSD
+```
+autoconf
+./configure
+make test # or "gmake test" on BSD
+```
 
 ### Travis CI Build and Test
 
-The Travis Continuous Integration services can be used to test your changes using multiple configurations. This is the same service that the fish shell project uses to ensure new changes haven't broken anything. Thus it is a really good idea that you leverage Travis CI before making a pull-request to avoid embarrasment at breaking the build.
+The Travis Continuous Integration services can be used to test your changes using multiple configurations. This is the same service that the fish-shell project uses to ensure new changes haven't broken anything. Thus it is a really good idea that you leverage Travis CI before making a pull request to avoid potential embarrassment at breaking the build.
 
-You will need to [fork the fish-shell repository on GitHub](https://help.github.com/articles/fork-a-repo/). Then setup Travis to test your changes before you make a pull-request:
+You will need to [fork the fish-shell repository on GitHub](https://help.github.com/articles/fork-a-repo/), then setup Travis to test your changes before making a pull request.
 
 1. [Sign in to Travis CI](https://travis-ci.org/auth) with your GitHub account, accepting the GitHub access permissions confirmation.
-1. Once you're signed in, and your repositories are synchronised, go to your [profile page](https://travis-ci.org/profile) and enable the fish-shell repository.
+1. Once you're signed in and your repositories are synchronized, go to your [profile page](https://travis-ci.org/profile) and enable the fish-shell repository.
 1. Push your changes to GitHub.
 
 You'll receive an email when the tests are complete telling you whether or not any tests failed.
@@ -228,9 +234,9 @@ fi
 exit 0
 ```
 
-This will check if the push is to the master branch and, if it is, will run `make test` and only allow the push if that succeeds. In some circumstances it might be advisable to circumvent it with `git push --no-verify`, but usually that should not be necessary.
+This will check if the push is to the master branch and, if it is, only allow the push if running `make test` succeeds. In some circumstances it may be advisable to circumvent this check with `git push --no-verify`, but usually that isn't necessary.
 
-To install the hook, put it in .git/hooks/pre-push and make it executable.
+To install the hook, place the code in a new file `.git/hooks/pre-push` and make it executable.
 
 ### Coverity Scan
 
@@ -240,7 +246,7 @@ We use Coverity's static analysis tool which offers free access to open source p
 
 ### Installing the Linting Tools
 
-To install the lint checkers on Mac OS X using HomeBrew:
+To install the lint checkers on Mac OS X using Homebrew:
 
 ```
 brew tap oclint/formulae
@@ -248,7 +254,7 @@ brew install oclint
 brew install cppcheck
 ```
 
-To install the lint checkers on Linux distros that use Apt:
+To install the lint checkers on Debian-based Linux distributions:
 
 ```
 sudo apt-get install clang
@@ -258,19 +264,19 @@ sudo apt-get install cppcheck
 
 ### Installing the Reformatting Tools
 
-To install the reformatting tool on Mac OS X using HomeBrew:
+Mac OS X:
 
 ```
 brew install clang-format
 ```
 
-To install the reformatting tool on Linux distros that use Apt:
+Debian-based:
 
 ```
-apt-cache install clang-format
+apt-cache search clang-format
 ```
 
-That will list the versions available. Pick the newest one available (3.9 for Ubuntu 16.10 as I write this) and install it:
+Above will list all the versions available. Pick the newest one available (3.9 for Ubuntu 16.10 as I write this) and install it:
 
 ```
 sudo apt-get install clang-format-3.9
@@ -279,24 +285,24 @@ sudo ln -s /usr/bin/clang-format-3.9 /usr/bin/clang-format
 
 ## Message Translations
 
-Fish uses the GNU gettext library to translate messages from english to other languages. To create or update a translation run `make po/[LANGUAGE CODE].po`. Where `LANGUAGE CODE` is the two letter ISO 639-1 language code of the language you are translating to. For example, `de` for German. You'll need to have the `xgettext`, `msgfmt` and `msgmerge` commands installed to do this.
+Fish uses the GNU gettext library to translate messages from English to other languages. To create or update a translation run `make po/[LANGUAGE CODE].po` where `LANGUAGE CODE` is the two letter ISO 639-1 language code of the language you are translating to (e.g. `de` for German). Make sure that you have the `xgettext`, `msgfmt` and `msgmerge` commands installed in order to do this.
 
-All messages in fish script must be enclosed in single or double quote characters. They must also be translated via a subcommand. This means that the following are not valid:
+All messages in fish script must be enclosed in single or double quote characters. They must also be translated via a subcommand. This means that the following are **not** valid:
 
 ```
 echo (_ hello)
 _ "goodbye"
 ```
 
-Those should be written like this:
+Above should be written like this instead:
 
 ```
 echo (_ "hello")
 echo (_ "goodbye")
 ```
 
-Note that you can use either single or double quotes to enclose the message to be translated. You can also optionally include spaces after the opening parentheses and before the closing paren.
+Note that you can use either single or double quotes to enclose the message to be translated. You can also optionally include spaces after the opening parentheses and once again before the closing parentheses.
 
-Be cautious about blindly updating an existing translation file. Trivial changes to an existing message (e.g., changing the punctuation) will cause existing translations to be removed. That is because the tools do literal string matching. Which means that in general you need to carefully review any recommended deletions.
+Be cautious about blindly updating an existing translation file. Trivial changes to an existing message (e.g., changing the punctuation) will cause existing translations to be removed, since the tools do literal string matching. Therefore, in general, you need to carefully review any recommended deletions.
 
-See the [wiki](https://github.com/fish-shell/fish-shell/wiki/Translations) for more details.
+Read the [translations wiki](https://github.com/fish-shell/fish-shell/wiki/Translations) for more information.

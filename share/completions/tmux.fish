@@ -1,20 +1,20 @@
-function __fish_tmux_sessions --description 'available sessions'
-        tmux list-sessions -F "#S	#{session_windows} windows created: #{session_created_string} [#{session_width}x#{session_height}]#{session_attached}" | sed 's/0$//;s/1$/ (attached)/' ^/dev/null
+function __fish_tmux_sessions -d 'available sessions'
+        tmux list-sessions -F "#S	#{session_windows} windows created: #{session_created_string} [#{session_width}x#{session_height}]#{session_attached}" | sed 's/0$//;s/1$/ (attached)/' 2>/dev/null
 end
 
-function __fish_tmux_clients --description 'connected clients'
-        tmux list-clients -F "#{client_tty}	#S: Created: #{client_created_string} [#{client_width}x#{client_height} #{client_termname}]" ^/dev/null
+function __fish_tmux_clients -d 'connected clients'
+        tmux list-clients -F "#{client_tty}	#S: Created: #{client_created_string} [#{client_width}x#{client_height} #{client_termname}]" 2>/dev/null
 end
 
-function __fish_tmux_panes --description 'window panes'
+function __fish_tmux_panes -d 'window panes'
         #fully qualified pane names
-        tmux list-panes -F '#S:#W.#P	session:window.pane' ^/dev/null
+        tmux list-panes -F '#S:#W.#P	session:window.pane' 2>/dev/null
 
         #panes by themselves
-        tmux list-panes -F '#P	pane' ^/dev/null
+        tmux list-panes -F '#P	pane' 2>/dev/null
 
         #windows by themselves
-        tmux list-panes -F '#W	window' ^/dev/null
+        tmux list-panes -F '#W	window' 2>/dev/null
 end
 
 #don't allow dirs in the completion list...
@@ -34,7 +34,7 @@ complete -c tmux -n '__fish_use_subcommand' -s V    -d 'Report the tmux version'
 complete -c tmux -n '__fish_use_subcommand' -xs c   -d 'Execute command using the default shell'
 complete -c tmux -n '__fish_use_subcommand' -rs f   -d 'Alternate config file'
 complete -c tmux -n '__fish_use_subcommand' -rs L   -d 'Specify the name of the server socket to use'
-complete -c tmux -n '__fish_use_subcommand' -rs S   -d 'Full path to sever socket. If set, -L is ignored.'
+complete -c tmux -n '__fish_use_subcommand' -rs S   -d 'Full path to server socket. If set, -L is ignored.'
 ###############  End:   Front  Flags ###############
 
 ###############  Begin: Clients and Sessions ###############

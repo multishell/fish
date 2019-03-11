@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <functional>
 #include <vector>
 
 #include "common.h"
@@ -41,9 +42,19 @@ enum {
     /// This completion should be inserted as-is, without escaping.
     COMPLETE_DONT_ESCAPE = 1 << 4,
     /// If you do escape, don't escape tildes.
-    COMPLETE_DONT_ESCAPE_TILDES = 1 << 5
+    COMPLETE_DONT_ESCAPE_TILDES = 1 << 5,
+    /// Do not sort supplied completions
+    COMPLETE_DONT_SORT = 1 << 6,
+    /// This completion looks to have the same string as an existing argument.
+    COMPLETE_DUPLICATES_ARGUMENT = 1 << 7
 };
 typedef int complete_flags_t;
+
+/// std::function which accepts a completion string and returns its description.
+using description_func_t = std::function<wcstring(const wcstring &)>;
+
+/// Helper to return a description_func_t for a constant string.
+description_func_t const_desc(const wcstring &s);
 
 class completion_t {
    private:
@@ -67,12 +78,16 @@ class completion_t {
     /// signal that this completion is case insensitive.
     complete_flags_t flags;
 
-    // Construction. Note: defining these so that they are not inlined reduces the executable size.
-    explicit completion_t(const wcstring &comp, const wcstring &desc = wcstring(),
+    // Construction.
+    explicit completion_t(wcstring comp, wcstring desc = wcstring(),
                           string_fuzzy_match_t match = string_fuzzy_match_t(fuzzy_match_exact),
                           complete_flags_t flags_val = 0);
     completion_t(const completion_t &);
     completion_t &operator=(const completion_t &);
+
+    // noexcepts are required for push_back to use the move ctor.
+    completion_t(completion_t &&) noexcept;
+    completion_t &operator=(completion_t &&) noexcept;
 
     // Compare two completions. No operating overlaoding to make this always explicit (there's
     // potentially multiple ways to compare completions).
@@ -80,15 +95,14 @@ class completion_t {
     // "Naturally less than" means in a natural ordering, where digits are treated as numbers. For
     // example, foo10 is naturally greater than foo2 (but alphabetically less than it).
     static bool is_naturally_less_than(const completion_t &a, const completion_t &b);
-    static bool is_alphabetically_equal_to(const completion_t &a, const completion_t &b);
+
+    // Deduplicate a potentially-unsorted vector, preserving the order
+    template <class Iterator, class HashFunction>
+    static Iterator unique_unsorted(Iterator begin, Iterator end, HashFunction hash);
 
     // If this completion replaces the entire token, prepend a prefix. Otherwise do nothing.
     void prepend_token_prefix(const wcstring &prefix);
 };
-
-/// Sorts and remove any duplicate completions in the completion list, then puts them in priority
-/// order.
-void completions_sort_and_prioritize(std::vector<completion_t> *comps);
 
 enum {
     COMPLETION_REQUEST_DEFAULT = 0,
@@ -105,6 +119,11 @@ enum complete_option_type_t {
     option_type_single_long,  // -foo
     option_type_double_long   // --foo
 };
+
+/// Sorts and remove any duplicate completions in the completion list, then puts them in priority
+/// order.
+void completions_sort_and_prioritize(std::vector<completion_t> *comps,
+                                     completion_request_flags_t flags = COMPLETION_REQUEST_DEFAULT);
 
 /// Add a completion.
 ///
@@ -152,9 +171,8 @@ void complete_remove(const wcstring &cmd, bool cmd_is_path, const wcstring &opti
 void complete_remove_all(const wcstring &cmd, bool cmd_is_path);
 
 /// Find all completions of the command cmd, insert them into out.
-class env_vars_snapshot_t;
 void complete(const wcstring &cmd, std::vector<completion_t> *out_comps,
-              completion_request_flags_t flags, const env_vars_snapshot_t &vars);
+              completion_request_flags_t flags);
 
 /// Return a list of all current completions.
 wcstring complete_print();
@@ -172,21 +190,23 @@ bool complete_is_valid_argument(const wcstring &str, const wcstring &opt, const 
 /// \param comp The completion string
 /// \param desc The description of the completion
 /// \param flags completion flags
-void append_completion(std::vector<completion_t> *completions, const wcstring &comp,
-                       const wcstring &desc = wcstring(), int flags = 0,
+void append_completion(std::vector<completion_t> *completions, wcstring comp,
+                       wcstring desc = wcstring(), int flags = 0,
                        string_fuzzy_match_t match = string_fuzzy_match_t(fuzzy_match_exact));
 
 /// Function used for testing.
 void complete_set_variable_names(const wcstring_list_t *names);
 
-/// Support for "wrap targets." A wrap target is a command that completes liek another command. The
-/// target chain is the sequence of wraps (A wraps B wraps C...). Any loops in the chain are
-/// silently ignored.
+/// Support for "wrap targets." A wrap target is a command that completes like another command.
 bool complete_add_wrapper(const wcstring &command, const wcstring &wrap_target);
 bool complete_remove_wrapper(const wcstring &command, const wcstring &wrap_target);
-wcstring_list_t complete_get_wrap_chain(const wcstring &command);
 
-// Wonky interface: returns all wraps. Even-values are the commands, odd values are the targets.
-wcstring_list_t complete_get_wrap_pairs();
+/// Returns a list of wrap targets for a given command.
+wcstring_list_t complete_get_wrap_targets(const wcstring &command);
+
+tuple_list<wcstring, wcstring> complete_get_wrap_pairs();
+
+// Observes that fish_complete_path has changed.
+void complete_invalidate_path();
 
 #endif

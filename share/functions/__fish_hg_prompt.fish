@@ -27,32 +27,20 @@ function __fish_hg_prompt --description 'Write out the hg prompt'
         return 1
     end
 
-    # Find an hg directory above $PWD
-    # without calling `hg root` because that's too slow
-    set -l root
-    set -l dir $PWD
-    while test $dir != "/"
-        if test -f $dir'/.hg/dirstate'
-            set root $dir"/.hg"
-            break
-        end
-        # Go up one directory
-        set -l dir (string replace -r '[^/]*/?$' '' $dir)
-    end
-
-    if test -z "$root"
-        return 0
-    end
+    set -l root (fish_print_hg_root)
+    or return 0
 
     # Read branch and bookmark
-    set -l branch (cat $root/branch ^/dev/null; or echo default)
-    if set -l bookmark (cat $root/bookmarks.current ^/dev/null)
+    set -l branch (cat $root/branch 2>/dev/null; or echo default)
+    if set -l bookmark (cat $root/bookmarks.current 2>/dev/null)
         set branch "$branch|$bookmark"
     end
 
     echo -n '|'
 
-    set -l repo_status (hg status | string sub -l 2 | sort -u)
+    # For some reason, "-q" still prints the same output, but ~20% faster.
+    # Disabling color and pager is always a good idea.
+    set -l repo_status (hg status -q --color never --pager never | string sub -l 2 | sort -u)
 
     # Show nice color for a clean repo
     if test -z "$repo_status"
@@ -68,19 +56,21 @@ function __fish_hg_prompt --description 'Write out the hg prompt'
         for line in $repo_status
 
             # Add a character for each file status if we have one
+            # HACK: To allow this to work both with and without '?' globs
+            set -l q '?'
             switch $line
                 case 'A '
-                    set hg_statuses $hg_statuses added
+                    set -a hg_statuses added
                 case 'M ' ' M'
-                    set hg_statuses $hg_statuses modified
+                    set -a hg_statuses modified
                 case 'C '
-                    set hg_statuses $hg_statuses copied
+                    set -a hg_statuses copied
                 case 'D ' ' D'
-                    set hg_statuses $hg_statuses deleted
-                case '\? '
-                    set hg_statuses $hg_statuses untracked
+                    set -a hg_statuses deleted
+                case "$dq "
+                    set -a hg_statuses untracked
                 case 'U*' '*U' 'DD' 'AA'
-                    set hg_statuses $hg_statuses unmerged
+                    set -a hg_statuses unmerged
             end
         end
 

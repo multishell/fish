@@ -12,12 +12,10 @@
 #include "common.h"
 #include "event.h"
 #include "fallback.h"  // IWYU pragma: keep
+#include "parser.h"
 #include "proc.h"
 #include "reader.h"
 #include "wutil.h"  // IWYU pragma: keep
-
-// This is a temporary var while we explore whether signal_block() and friends is needed.
-bool ignore_signal_block = true;
 
 /// Struct describing an entry for the lookup table used to convert between signal names and signal
 /// ids, etc.
@@ -236,6 +234,12 @@ static void handle_int(int sig, siginfo_t *info, void *context) {
     default_handler(sig, info, context);
 }
 
+/// Non-interactive ^C handler.
+static void handle_int_notinteractive(int sig, siginfo_t *info, void *context) {
+    parser_t::skip_all_blocks();
+    default_handler(sig, info, context);
+}
+
 /// sigchld handler. Does notification and calls the handler in proc.c.
 static void handle_chld(int sig, siginfo_t *info, void *context) {
     job_handle_signal(sig, info, context);
@@ -320,11 +324,12 @@ static void set_non_interactive_handlers() {
     act.sa_flags = 0;
     sigemptyset(&act.sa_mask);
 
-    // Non-interactive. Ignore interrupt, check exit status of processes to determine result
-    // instead.
     act.sa_handler = SIG_IGN;
-    sigaction(SIGINT, &act, 0);
     sigaction(SIGQUIT, &act, 0);
+
+    act.sa_sigaction = &handle_int_notinteractive;
+    act.sa_flags = SA_SIGINFO;
+    sigaction(SIGINT, &act, NULL);
 }
 
 /// Sets up appropriate signal handlers.
@@ -388,9 +393,7 @@ void get_signals_with_handlers(sigset_t *set) {
     }
 }
 
-void signal_block(bool force) {
-    if (!force && ignore_signal_block) return;
-
+void signal_block() {
     ASSERT_IS_MAIN_THREAD();
     sigset_t chldset;
 
@@ -410,14 +413,10 @@ void signal_unblock_all() {
     sigprocmask(SIG_SETMASK, &iset, NULL);
 }
 
-void signal_unblock(bool force) {
-    if (!force && ignore_signal_block) return;
-
+void signal_unblock() {
     ASSERT_IS_MAIN_THREAD();
-    sigset_t chldset;
 
     block_count--;
-
     if (block_count < 0) {
         debug(0, _(L"Signal block mismatch"));
         bugreport();
@@ -425,13 +424,10 @@ void signal_unblock(bool force) {
     }
 
     if (!block_count) {
+        sigset_t chldset;
         sigfillset(&chldset);
         DIE_ON_FAILURE(pthread_sigmask(SIG_UNBLOCK, &chldset, 0));
     }
-    // debug( 0, L"signal block level decreased to %d", block_count );
 }
 
-bool signal_is_blocked() {
-    if (ignore_signal_block) return false;
-    return static_cast<bool>(block_count);
-}
+bool signal_is_blocked() { return static_cast<bool>(block_count); }

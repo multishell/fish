@@ -33,19 +33,22 @@ for line in $rust_docs
     set docs (string split -m 1 ' ' $line)
     set flag (string replace -r '^([a-z\-]+\=|[a-z\-]+)(.*)' '$1' \
                                 $docs[1])
-    complete -c rustc -x -s C -l codegen -a "$flag" -d "$docs[2]"
+    complete -c rustc -x -s C -l codegen -a (string escape -- "$flag") -d "$docs[2]"
 end
 
-set -l rust_docs (rustc -Z help \
-    | string replace -r -i '(\s+)-Z(.+)--(\s+)([^\n]+)' '$2 $4' \
-    | string trim \
-    | string match -r '^.*[^:]$')
+# rustc -Z is only available with the nightly toolchain, which may not be installed
+if rustc +nightly >/dev/null 2>&1
+    set -l rust_docs (rustc +nightly -Z help \
+        | string replace -r -i '(\s+)-Z(.+)--(\s+)([^\n]+)' '$2 $4' \
+        | string trim \
+        | string match -r '^.*[^:]$')
 
-for line in $rust_docs
-    set docs (string split -m 1 ' ' $line)
-    set flag (string replace -r '^([a-z\-]+\=|[a-z\-]+)(.*)' '$1' \
-                                   $docs[1])
-    complete -c rustc -x -s Z -a "$flag" -d "$docs[2]"
+    for line in $rust_docs
+        set docs (string split -m 1 ' ' $line)
+        set flag (string replace -r '^([a-z\-]+\=|[a-z\-]+)(.*)' '$1' \
+                                       $docs[1])
+        complete -c rustc -x -s Z -a (string escape -- "$flag") -d "$docs[2]"
+    end
 end
 
 set -l rust_docs (rustc -W help  \
@@ -59,10 +62,10 @@ set -l rust_docs (rustc -W help  \
 
 for line in $rust_docs
     set docs (string split -m 1 ' ' $line)
-    complete -c rustc -x -s W -l warn -a "$docs[1]" -d "$docs[2]"
-    complete -c rustc -x -s A -l allow -a "$docs[1]" -d "$docs[2]"
-    complete -c rustc -x -s D -l deny -a "$docs[1]" -d "$docs[2]"
-    complete -c rustc -x -s F -l forbid -a "$docs[1]" -d "$docs[2]"
+    complete -c rustc -x -s W -l warn -a (string escape -- "$docs[1]") -d "$docs[2]"
+    complete -c rustc -x -s A -l allow -a (string escape -- "$docs[1]") -d "$docs[2]"
+    complete -c rustc -x -s D -l deny -a (string escape -- "$docs[1]") -d "$docs[2]"
+    complete -c rustc -x -s F -l forbid -a (string escape -- "$docs[1]") -d "$docs[2]"
 end
 
 set -e rust_codegen

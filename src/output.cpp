@@ -4,12 +4,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#if HAVE_NCURSES_H
+#if HAVE_CURSES_H
+#include <curses.h>
+#elif HAVE_NCURSES_H
 #include <ncurses.h>
 #elif HAVE_NCURSES_CURSES_H
 #include <ncurses/curses.h>
-#else
-#include <curses.h>
 #endif
 #if HAVE_TERM_H
 #include <term.h>
@@ -52,7 +52,7 @@ int (*output_get_writer())(char) { return out; }
 /// Returns true if we think tparm can handle outputting a color index
 static bool term_supports_color_natively(unsigned int c) { return (unsigned)max_colors >= c + 1; }
 
-color_support_t output_get_color_support(void) { return color_support; }
+color_support_t output_get_color_support() { return color_support; }
 
 void output_set_color_support(color_support_t val) { color_support = val; }
 
@@ -80,9 +80,9 @@ static bool write_color_escape(char *todo, unsigned char idx, bool is_fg) {
         // with what we do here, will make the brights actually work for virtual consoles/ancient
         // emulators.
         if (max_colors == 8 && idx > 8) idx -= 8;
-        snprintf(buff, sizeof buff, "\e[%dm", ((idx > 7) ? 82 : 30) + idx + !is_fg * 10);
+        snprintf(buff, sizeof buff, "\x1B[%dm", ((idx > 7) ? 82 : 30) + idx + !is_fg * 10);
     } else {
-        snprintf(buff, sizeof buff, "\e[%d;5;%dm", is_fg ? 38 : 48, idx);
+        snprintf(buff, sizeof buff, "\x1B[%d;5;%dm", is_fg ? 38 : 48, idx);
     }
 
     int (*writer)(char) = output_get_writer();
@@ -131,7 +131,7 @@ bool write_color(rgb_color_t color, bool is_fg) {
     // Background: ^[48;2;<r>;<g>;<b>m
     color24_t rgb = color.to_color24();
     char buff[128];
-    snprintf(buff, sizeof buff, "\e[%d;2;%u;%u;%um", is_fg ? 38 : 48, rgb.rgb[0], rgb.rgb[1],
+    snprintf(buff, sizeof buff, "\x1B[%d;2;%u;%u;%um", is_fg ? 38 : 48, rgb.rgb[0], rgb.rgb[1],
              rgb.rgb[2]);
     int (*writer)(char) = output_get_writer();
     if (writer) {
@@ -274,7 +274,7 @@ void set_color(rgb_color_t c, rgb_color_t c2) {
         if (bg_set && !last_bg_set) {
             // Background color changed and is set, so we enter bold mode to make reading easier.
             // This means bold mode is _always_ on when the background color is set.
-            writembs(enter_bold_mode);
+            writembs_nofail(enter_bold_mode);
         }
         if (!bg_set && last_bg_set) {
             // Background color changed and is no longer set, so we exit bold mode.
@@ -332,41 +332,41 @@ void set_color(rgb_color_t c, rgb_color_t c2) {
 
     // Lastly, we set bold, underline, italics, dim, and reverse modes correctly.
     if (is_bold && !was_bold && enter_bold_mode && strlen(enter_bold_mode) > 0 && !bg_set) {
-        writembs(tparm(enter_bold_mode));
+        writembs_nofail(tparm(enter_bold_mode));
         was_bold = is_bold;
     }
 
     if (was_underline && !is_underline) {
-        writembs(exit_underline_mode);
+        writembs_nofail(exit_underline_mode);
     }
 
     if (!was_underline && is_underline) {
-        writembs(enter_underline_mode);
+        writembs_nofail(enter_underline_mode);
     }
     was_underline = is_underline;
 
     if (was_italics && !is_italics && enter_italics_mode && strlen(enter_italics_mode) > 0) {
-        writembs(exit_italics_mode);
+        writembs_nofail(exit_italics_mode);
         was_italics = is_italics;
     }
 
     if (!was_italics && is_italics && enter_italics_mode && strlen(enter_italics_mode) > 0) {
-        writembs(enter_italics_mode);
+        writembs_nofail(enter_italics_mode);
         was_italics = is_italics;
     }
 
     if (is_dim && !was_dim && enter_dim_mode && strlen(enter_dim_mode) > 0) {
-        writembs(enter_dim_mode);
+        writembs_nofail(enter_dim_mode);
         was_dim = is_dim;
     }
 
     if (is_reverse && !was_reverse) {
         // Some terms do not have a reverse mode set, so standout mode is a fallback.
         if (enter_reverse_mode && strlen(enter_reverse_mode) > 0) {
-            writembs(enter_reverse_mode);
+            writembs_nofail(enter_reverse_mode);
             was_reverse = is_reverse;
         } else if (enter_standout_mode && strlen(enter_standout_mode) > 0) {
-            writembs(enter_standout_mode);
+            writembs_nofail(enter_standout_mode);
             was_reverse = is_reverse;
         }
     }
@@ -486,8 +486,8 @@ rgb_color_t best_color(const std::vector<rgb_color_t> &candidates, color_support
 }
 
 /// Return the internal color code representing the specified color.
-/// XXX This code should be refactored to enable sharing with builtin_set_color.
-rgb_color_t parse_color(const wcstring &val, bool is_background) {
+/// TODO: This code should be refactored to enable sharing with builtin_set_color.
+rgb_color_t parse_color(const env_var_t &var, bool is_background) {
     int is_bold = 0;
     int is_underline = 0;
     int is_italics = 0;
@@ -497,7 +497,7 @@ rgb_color_t parse_color(const wcstring &val, bool is_background) {
     std::vector<rgb_color_t> candidates;
 
     wcstring_list_t el;
-    tokenize_variable_array(val, el);
+    var.to_list(el);
 
     for (size_t j = 0; j < el.size(); j++) {
         const wcstring &next = el.at(j);
@@ -550,14 +550,15 @@ rgb_color_t parse_color(const wcstring &val, bool is_background) {
 }
 
 /// Write specified multibyte string.
-void writembs_check(char *mbs, const char *mbs_name, const char *file, long line) {
+void writembs_check(char *mbs, const char *mbs_name, bool critical, const char *file, long line) {
     if (mbs != NULL) {
         tputs(mbs, 1, &writeb);
-    } else {
-        env_var_t term = env_get_string(L"TERM");
+    } else if (critical) {
+        auto term = env_get(L"TERM");
         const wchar_t *fmt =
             _(L"Tried to use terminfo string %s on line %ld of %s, which is "
               L"undefined in terminal of type \"%ls\". Please report this error to %s");
-        debug(0, fmt, mbs_name, line, file, term.c_str(), PACKAGE_BUGREPORT);
+        debug(0, fmt, mbs_name, line, file, term ? term->as_string().c_str() : L"",
+              PACKAGE_BUGREPORT);
     }
 }

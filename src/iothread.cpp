@@ -7,7 +7,9 @@
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <atomic>
 
+#include <condition_variable>
 #include <queue>
 
 #include "common.h"
@@ -28,7 +30,7 @@
 #define IO_SERVICE_MAIN_THREAD_REQUEST_QUEUE 99
 #define IO_SERVICE_RESULT_QUEUE 100
 
-static void iothread_service_main_thread_requests(void);
+static void iothread_service_main_thread_requests();
 static void iothread_service_result_queue();
 
 typedef std::function<void(void)> void_function_t;
@@ -49,7 +51,7 @@ struct spawn_request_t {
 };
 
 struct main_thread_request_t {
-    volatile bool done = false;
+    std::atomic<bool> done{false};
     void_function_t func;
 
     main_thread_request_t(void_function_t &&f) : func(f) {}
@@ -70,23 +72,18 @@ static owning_lock<thread_data_t> s_spawn_requests;
 static owning_lock<std::queue<spawn_request_t>> s_result_queue;
 
 // "Do on main thread" support.
-static pthread_mutex_t s_main_thread_performer_lock =
-    PTHREAD_MUTEX_INITIALIZER;                       // protects the main thread requests
-static pthread_cond_t s_main_thread_performer_cond;  // protects the main thread requests
-static pthread_mutex_t s_main_thread_request_q_lock =
-    PTHREAD_MUTEX_INITIALIZER;  // protects the queue
+static fish_mutex_t s_main_thread_performer_lock;             // protects the main thread requests
+static std::condition_variable s_main_thread_performer_cond;  // protects the main thread requests
+static fish_mutex_t s_main_thread_request_q_lock;             // protects the queue
 static std::queue<main_thread_request_t *> s_main_thread_request_queue;
 
 // Notifying pipes.
 static int s_read_pipe, s_write_pipe;
 
-static void iothread_init(void) {
+static void iothread_init() {
     static bool inited = false;
     if (!inited) {
         inited = true;
-
-        // Initialize some locks.
-        DIE_ON_FAILURE(pthread_cond_init(&s_main_thread_performer_cond, NULL));
 
         // Initialize the completion pipes.
         int pipes[2] = {0, 0};
@@ -100,18 +97,17 @@ static void iothread_init(void) {
 }
 
 static bool dequeue_spawn_request(spawn_request_t *result) {
-    auto locker = s_spawn_requests.acquire();
-    thread_data_t &td = locker.value;
-    if (!td.request_queue.empty()) {
-        *result = std::move(td.request_queue.front());
-        td.request_queue.pop();
+    auto requests = s_spawn_requests.acquire();
+    if (!requests->request_queue.empty()) {
+        *result = std::move(requests->request_queue.front());
+        requests->request_queue.pop();
         return true;
     }
     return false;
 }
 
 static void enqueue_thread_result(spawn_request_t req) {
-    s_result_queue.acquire().value.push(std::move(req));
+    s_result_queue.acquire()->push(std::move(req));
 }
 
 static void *this_thread() { return (void *)(intptr_t)pthread_self(); }
@@ -143,7 +139,7 @@ static void *iothread_worker(void *unused) {
     // committed to not handling anything else. Therefore, we have to decrement
     // the thread count under the lock, which we still hold. Likewise, the main thread must
     // check the value under the lock.
-    int new_thread_count = --s_spawn_requests.acquire().value.thread_count;
+    int new_thread_count = --s_spawn_requests.acquire()->thread_count;
     assert(new_thread_count >= 0);
 
     debug(5, "pthread %p exiting", this_thread());
@@ -183,14 +179,13 @@ int iothread_perform_impl(void_function_t &&func, void_function_t &&completion) 
     bool spawn_new_thread = false;
     {
         // Lock around a local region.
-        auto locker = s_spawn_requests.acquire();
-        thread_data_t &td = locker.value;
-        td.request_queue.push(std::move(req));
-        if (td.thread_count < IO_MAX_THREADS) {
-            td.thread_count++;
+        auto spawn_reqs = s_spawn_requests.acquire();
+        spawn_reqs->request_queue.push(std::move(req));
+        if (spawn_reqs->thread_count < IO_MAX_THREADS) {
+            spawn_reqs->thread_count++;
             spawn_new_thread = true;
         }
-        local_thread_count = td.thread_count;
+        local_thread_count = spawn_reqs->thread_count;
     }
 
     // Kick off the thread if we decided to do so.
@@ -200,12 +195,12 @@ int iothread_perform_impl(void_function_t &&func, void_function_t &&completion) 
     return local_thread_count;
 }
 
-int iothread_port(void) {
+int iothread_port() {
     iothread_init();
     return s_read_pipe;
 }
 
-void iothread_service_completion(void) {
+void iothread_service_completion() {
     ASSERT_IS_MAIN_THREAD();
     char wakeup_byte;
 
@@ -241,7 +236,7 @@ static bool iothread_wait_for_pending_completions(long timeout_usec) {
 /// At the moment, this function is only used in the test suite and in a
 /// drain-all-threads-before-fork compatibility mode that no architecture requires, so it's OK that
 /// it's terrible.
-void iothread_drain_all(void) {
+void iothread_drain_all() {
     ASSERT_IS_MAIN_THREAD();
     ASSERT_IS_NOT_FORKED_CHILD();
 
@@ -252,7 +247,7 @@ void iothread_drain_all(void) {
 #endif
 
     // Nasty polling via select().
-    while (s_spawn_requests.acquire().value.thread_count > 0) {
+    while (s_spawn_requests.acquire()->thread_count > 0) {
         if (iothread_wait_for_pending_completions(1000)) {
             iothread_service_completion();
         }
@@ -265,7 +260,7 @@ void iothread_drain_all(void) {
 }
 
 /// "Do on main thread" support.
-static void iothread_service_main_thread_requests(void) {
+static void iothread_service_main_thread_requests() {
     ASSERT_IS_MAIN_THREAD();
 
     // Move the queue to a local variable.
@@ -295,7 +290,7 @@ static void iothread_service_main_thread_requests(void) {
         // Because the waiting thread performs step 1 under the lock, if we take the lock, we avoid
         // posting before the waiting thread is waiting.
         scoped_lock broadcast_lock(s_main_thread_performer_lock);
-        DIE_ON_FAILURE(pthread_cond_broadcast(&s_main_thread_performer_cond));
+        s_main_thread_performer_cond.notify_all();
     }
 }
 
@@ -303,7 +298,7 @@ static void iothread_service_main_thread_requests(void) {
 static void iothread_service_result_queue() {
     // Move the queue to a local variable.
     std::queue<spawn_request_t> result_queue;
-    s_result_queue.acquire().value.swap(result_queue);
+    (*s_result_queue.acquire()).swap(result_queue);
 
     // Perform each completion in order
     while (!result_queue.empty()) {
@@ -337,12 +332,11 @@ void iothread_perform_on_main(void_function_t &&func) {
     assert_with_errno(write_loop(s_write_pipe, &wakeup_byte, sizeof wakeup_byte) != -1);
 
     // Wait on the condition, until we're done.
-    scoped_lock perform_lock(s_main_thread_performer_lock);
+    std::unique_lock<std::mutex> perform_lock(s_main_thread_performer_lock.get_mutex());
     while (!req.done) {
         // It would be nice to support checking for cancellation here, but the clients need a
         // deterministic way to clean up to avoid leaks
-        DIE_ON_FAILURE(
-            pthread_cond_wait(&s_main_thread_performer_cond, &s_main_thread_performer_lock));
+        s_main_thread_performer_cond.wait(perform_lock);
     }
 
     // Ok, the request must now be done.

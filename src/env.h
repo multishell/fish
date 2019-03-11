@@ -1,4 +1,4 @@
-// Prototypes for functions for setting and getting environment variables.
+// Prototypes for functions for manipulating fish script variables.
 #ifndef FISH_ENV_H
 #define FISH_ENV_H
 
@@ -8,58 +8,51 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "common.h"
+#include "maybe.h"
 
 extern size_t read_byte_limit;
 extern bool curses_initialized;
 
-/// Character for separating two array elements. We use 30, i.e. the ascii record separator since
-/// that seems logical.
-#define ARRAY_SEP (wchar_t)0x1e
-
-/// String containing the character for separating two array elements.
-#define ARRAY_SEP_STR L"\x1e"
-
-/// Value denoting a null string.
-#define ENV_NULL L"\x1d"
-
-// Flags that may be passed as the 'mode' in env_set / env_get_string.
+// Flags that may be passed as the 'mode' in env_set / env_get.
 enum {
-    /// Default mode.
+    /// Default mode. Used with `env_get()` to indicate the caller doesn't care what scope the var
+    /// is in or whether it is exported or unexported.
     ENV_DEFAULT = 0,
-
     /// Flag for local (to the current block) variable.
-    ENV_LOCAL = 1,
-
-    /// Flag for exported (to commands) variable.
-    ENV_EXPORT = 2,
-
-    /// Flag for unexported variable.
-    ENV_UNEXPORT = 16,
-
+    ENV_LOCAL = 1 << 0,
     /// Flag for global variable.
-    ENV_GLOBAL = 4,
-
-    /// Flag for variable update request from the user. All variable changes that are made directly
-    /// by the user, such as those from the 'set' builtin must have this flag set.
-    ENV_USER = 8,
-
+    ENV_GLOBAL = 1 << 1,
     /// Flag for universal variable.
-    ENV_UNIVERSAL = 32
+    ENV_UNIVERSAL = 1 << 2,
+    /// Flag for exported (to commands) variable.
+    ENV_EXPORT = 1 << 3,
+    /// Flag for unexported variable.
+    ENV_UNEXPORT = 1 << 4,
+    /// Flag to mark a variable as a path variable.
+    ENV_PATHVAR = 1 << 5,
+    /// Flag to unmark a variable as a path variable.
+    ENV_UNPATHVAR = 1 << 6,
+    /// Flag for variable update request from the user. All variable changes that are made directly
+    /// by the user, such as those from the `read` and `set` builtin must have this flag set. It
+    /// serves one purpose: to indicate that an error should be returned if the user is attempting
+    /// to modify a var that should not be modified by direct user action; e.g., a read-only var.
+    ENV_USER = 1 << 7,
 };
 typedef uint32_t env_mode_flags_t;
 
 /// Return values for `env_set()`.
-enum { ENV_OK, ENV_PERM, ENV_SCOPE, ENV_INVALID };
+enum { ENV_OK, ENV_PERM, ENV_SCOPE, ENV_INVALID, ENV_NOT_FOUND };
 
 /// A struct of configuration directories, determined in main() that fish will optionally pass to
 /// env_init.
 struct config_paths_t {
-    wcstring data;     // e.g. /usr/local/share
-    wcstring sysconf;  // e.g. /usr/local/etc
-    wcstring doc;      // e.g. /usr/local/share/doc/fish
-    wcstring bin;      // e.g. /usr/local/bin
+    wcstring data;     // e.g., /usr/local/share
+    wcstring sysconf;  // e.g., /usr/local/etc
+    wcstring doc;      // e.g., /usr/local/share/doc/fish
+    wcstring bin;      // e.g., /usr/local/bin
 };
 
 /// Initialize environment variable data.
@@ -69,69 +62,86 @@ void env_init(const struct config_paths_t *paths = NULL);
 /// routines.
 void misc_init();
 
-int env_set(const wcstring &key, const wchar_t *val, env_mode_flags_t mode);
+class env_var_t {
+   public:
+    using env_var_flags_t = uint8_t;
 
-class env_var_t : public wcstring {
    private:
-    bool is_missing;
+    wcstring_list_t vals;  // list of values assigned to the var
+    env_var_flags_t flags;
 
    public:
-    static env_var_t missing_var() {
-        env_var_t result((wcstring()));
-        result.is_missing = true;
-        return result;
+    enum {
+        flag_export = 1 << 0,     // whether the variable is exported
+        flag_read_only = 1 << 1,  // whether the variable is read only
+        flag_pathvar = 1 << 2,    // whether the variable is a path variable
+    };
+
+    // Constructors.
+    env_var_t(const env_var_t &) = default;
+    env_var_t(env_var_t &&) = default;
+    env_var_t(wcstring_list_t vals, env_var_flags_t flags) : vals(std::move(vals)), flags(flags) {}
+    env_var_t(wcstring val, env_var_flags_t flags)
+        : env_var_t(wcstring_list_t{std::move(val)}, flags) {}
+
+    // Constructors that infer the flags from a name.
+    env_var_t(const wchar_t *name, wcstring_list_t vals)
+        : env_var_t(std::move(vals), flags_for(name)) {}
+    env_var_t(const wchar_t *name, wcstring val) : env_var_t(std::move(val), flags_for(name)) {}
+
+    env_var_t() = default;
+
+    bool empty() const { return vals.empty() || (vals.size() == 1 && vals[0].empty()); };
+    bool read_only() const { return flags & flag_read_only; }
+    bool exports() const { return flags & flag_export; }
+    bool is_pathvar() const { return flags & flag_pathvar; }
+    env_var_flags_t get_flags() const { return flags; }
+
+    wcstring as_string() const;
+    void to_list(wcstring_list_t &out) const;
+    const wcstring_list_t &as_list() const;
+
+    /// \return the character used when delimiting quoted expansion.
+    wchar_t get_delimiter() const;
+
+    void set_vals(wcstring_list_t v) { vals = std::move(v); }
+
+    void set_exports(bool exportv) {
+        if (exportv) {
+            flags |= flag_export;
+        } else {
+            flags &= ~flag_export;
+        }
     }
 
-    env_var_t(const env_var_t &x) : wcstring(x), is_missing(x.is_missing) {}
-    env_var_t(const wcstring &x) : wcstring(x), is_missing(false) {}
-    env_var_t(const wchar_t *x) : wcstring(x), is_missing(false) {}
-    env_var_t() : wcstring(L""), is_missing(false) {}
-
-    bool missing(void) const { return is_missing; }
-
-    bool missing_or_empty(void) const { return missing() || empty(); }
-
-    const wchar_t *c_str(void) const;
-
-    env_var_t &operator=(const env_var_t &s) {
-        is_missing = s.is_missing;
-        wcstring::operator=(s);
-        return *this;
+    void set_pathvar(bool pathvar) {
+        if (pathvar) {
+            flags |= flag_pathvar;
+        } else {
+            flags &= ~flag_pathvar;
+        }
     }
 
-    bool operator==(const env_var_t &s) const {
-        return is_missing == s.is_missing &&
-               static_cast<const wcstring &>(*this) == static_cast<const wcstring &>(s);
-    }
+    static env_var_flags_t flags_for(const wchar_t *name);
 
-    bool operator==(const wcstring &s) const {
-        return !is_missing && static_cast<const wcstring &>(*this) == s;
-    }
+    env_var_t &operator=(const env_var_t &var) = default;
+    env_var_t &operator=(env_var_t &&) = default;
 
-    bool operator!=(const env_var_t &s) const { return !(*this == s); }
-
-    bool operator!=(const wcstring &s) const { return !(*this == s); }
-
-    bool operator==(const wchar_t *s) const {
-        return !is_missing && static_cast<const wcstring &>(*this) == s;
-    }
-
-    bool operator!=(const wchar_t *s) const { return !(*this == s); }
+    bool operator==(const env_var_t &rhs) const { return vals == rhs.vals && flags == rhs.flags; }
+    bool operator!=(const env_var_t &rhs) const { return ! (*this == rhs); }
 };
 
-/// Gets the variable with the specified name, or env_var_t::missing_var if it does not exist or is
-/// an empty array.
-///
-/// \param key The name of the variable to get
-/// \param mode An optional scope to search in. All scopes are searched if unset
-env_var_t env_get_string(const wcstring &key, env_mode_flags_t mode = ENV_DEFAULT);
+/// Gets the variable with the specified name, or none() if it does not exist.
+maybe_t<env_var_t> env_get(const wcstring &key, env_mode_flags_t mode = ENV_DEFAULT);
 
-/// Returns true if the specified key exists. This can't be reliably done using env_get, since
-/// env_get returns null for 0-element arrays.
-///
-/// \param key The name of the variable to remove
-/// \param mode the scope to search in. All scopes are searched if set to default
-bool env_exist(const wchar_t *key, env_mode_flags_t mode);
+/// Sets the variable with the specified name to the given values.
+int env_set(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals);
+
+/// Sets the variable with the specified name to a single value.
+int env_set_one(const wcstring &key, env_mode_flags_t mode, wcstring val);
+
+/// Sets the variable with the specified name to no values.
+int env_set_empty(const wcstring &key, env_mode_flags_t mode);
 
 /// Remove environment variable.
 ///
@@ -161,8 +171,8 @@ void env_set_argv(const wchar_t *const *argv);
 /// Returns all variable names.
 wcstring_list_t env_get_names(int flags);
 
-/// Update the PWD variable directory.
-bool env_set_pwd();
+/// Update the PWD variable based on the result of getcwd.
+void env_set_pwd_from_getcwd();
 
 /// Returns the PWD with a terminating slash.
 wcstring env_get_pwd_slash();
@@ -171,7 +181,7 @@ wcstring env_get_pwd_slash();
 void env_set_read_limit();
 
 class env_vars_snapshot_t {
-    std::map<wcstring, wcstring> vars;
+    std::map<wcstring, env_var_t> vars;
     bool is_current() const;
 
    public:
@@ -181,7 +191,7 @@ class env_vars_snapshot_t {
     env_vars_snapshot_t(const wchar_t *const *keys);
     env_vars_snapshot_t();
 
-    env_var_t get(const wcstring &key) const;
+    maybe_t<env_var_t> get(const wcstring &key) const;
 
     // Returns the fake snapshot representing the live variables array.
     static const env_vars_snapshot_t &current();
@@ -196,28 +206,13 @@ class env_vars_snapshot_t {
 extern int g_fork_count;
 extern bool g_use_posix_spawn;
 
-/// A variable entry. Stores the value of a variable and whether it should be exported.
-struct var_entry_t {
-    wcstring val;  // the value of the variable
-    bool exportv;  // whether the variable should be exported
-
-    var_entry_t() : exportv(false) {}
-};
-
-typedef std::map<wcstring, var_entry_t> var_table_t;
+typedef std::map<wcstring, env_var_t> var_table_t;
 
 extern bool term_has_xn;  // does the terminal have the "eat_newline_glitch"
 
 /// Returns true if we think the terminal supports setting its title.
 bool term_supports_setting_title();
 
-/// Returns the fish internal representation for an array of strings.
-std::unique_ptr<wcstring> list_to_array_val(const wcstring_list_t &list);
-std::unique_ptr<wcstring> list_to_array_val(const wchar_t **list);
-
-/// Tokenize the specified string into the specified wcstring_list_t.
-///
-/// \param val the input string. The contents of this string is not changed.
-/// \param out the list in which to place the elements.
-void tokenize_variable_array(const wcstring &val, wcstring_list_t &out);
+/// Gets a path appropriate for runtime storage
+wcstring env_get_runtime_path();
 #endif

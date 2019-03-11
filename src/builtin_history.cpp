@@ -2,8 +2,8 @@
 #include "config.h"  // IWYU pragma: keep
 
 #include <errno.h>
-#include <limits.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <wchar.h>
 
 #include <string>
@@ -22,32 +22,31 @@
 enum hist_cmd_t { HIST_SEARCH = 1, HIST_DELETE, HIST_CLEAR, HIST_MERGE, HIST_SAVE, HIST_UNDEF };
 
 // Must be sorted by string, not enum or random.
-const enum_map<hist_cmd_t> hist_enum_map[] = {{HIST_CLEAR, L"clear"},   {HIST_DELETE, L"delete"},
-                                              {HIST_MERGE, L"merge"},   {HIST_SAVE, L"save"},
-                                              {HIST_SEARCH, L"search"}, {HIST_UNDEF, NULL}};
-#define hist_enum_map_len (sizeof hist_enum_map / sizeof *hist_enum_map)
+static const enum_map<hist_cmd_t> hist_enum_map[] = {
+    {HIST_CLEAR, L"clear"}, {HIST_DELETE, L"delete"}, {HIST_MERGE, L"merge"},
+    {HIST_SAVE, L"save"},   {HIST_SEARCH, L"search"}, {HIST_UNDEF, NULL}};
 
 struct history_cmd_opts_t {
     bool print_help = false;
     hist_cmd_t hist_cmd = HIST_UNDEF;
     history_search_type_t search_type = (history_search_type_t)-1;
-    long max_items = LONG_MAX;
+    size_t max_items = SIZE_MAX;
     bool history_search_type_defined = false;
     const wchar_t *show_time_format = NULL;
     bool case_sensitive = false;
     bool null_terminate = false;
+    bool reverse = false;
 };
 
 /// Note: Do not add new flags that represent subcommands. We're encouraging people to switch to
 /// the non-flag subcommand form. While many of these flags are deprecated they must be
 /// supported at least until fish 3.0 and possibly longer to avoid breaking everyones
 /// config.fish and other scripts.
-static const wchar_t *short_options = L":Cmn:epcht::z";
+static const wchar_t *const short_options = L":CRcehmn:pt::z";
 static const struct woption long_options[] = {{L"prefix", no_argument, NULL, 'p'},
                                               {L"contains", no_argument, NULL, 'c'},
                                               {L"help", no_argument, NULL, 'h'},
                                               {L"show-time", optional_argument, NULL, 't'},
-                                              {L"with-time", optional_argument, NULL, 't'},
                                               {L"exact", no_argument, NULL, 'e'},
                                               {L"max", required_argument, NULL, 'n'},
                                               {L"null", no_argument, NULL, 'z'},
@@ -57,6 +56,7 @@ static const struct woption long_options[] = {{L"prefix", no_argument, NULL, 'p'
                                               {L"save", no_argument, NULL, 3},
                                               {L"clear", no_argument, NULL, 4},
                                               {L"merge", no_argument, NULL, 5},
+                                              {L"reverse", no_argument, NULL, 'R'},
                                               {NULL, 0, NULL, 0}};
 
 /// Remember the history subcommand and disallow selecting more than one history subcommand.
@@ -77,20 +77,21 @@ static bool set_hist_cmd(wchar_t *const cmd, hist_cmd_t *hist_cmd, hist_cmd_t su
     return true;
 }
 
-#define CHECK_FOR_UNEXPECTED_HIST_ARGS(hist_cmd)                                                \
-    if (opts.history_search_type_defined || opts.show_time_format || opts.null_terminate) {     \
-        const wchar_t *subcmd_str = enum_to_str(hist_cmd, hist_enum_map);                       \
-        streams.err.append_format(_(L"%ls: you cannot use any options with the %ls command\n"), \
-                                  cmd, subcmd_str);                                             \
-        status = STATUS_INVALID_ARGS;                                                           \
-        break;                                                                                  \
-    }                                                                                           \
-    if (args.size() != 0) {                                                                     \
-        const wchar_t *subcmd_str = enum_to_str(hist_cmd, hist_enum_map);                       \
-        streams.err.append_format(BUILTIN_ERR_ARG_COUNT2, cmd, subcmd_str, 0, args.size());     \
-        status = STATUS_INVALID_ARGS;                                                           \
-        break;                                                                                  \
+static bool check_for_unexpected_hist_args(const history_cmd_opts_t &opts, const wchar_t *cmd,
+                                           const wcstring_list_t &args, io_streams_t &streams) {
+    if (opts.history_search_type_defined || opts.show_time_format || opts.null_terminate) {
+        const wchar_t *subcmd_str = enum_to_str(opts.hist_cmd, hist_enum_map);
+        streams.err.append_format(_(L"%ls: you cannot use any options with the %ls command\n"), cmd,
+                                  subcmd_str);
+        return true;
     }
+    if (args.size() != 0) {
+        const wchar_t *subcmd_str = enum_to_str(opts.hist_cmd, hist_enum_map);
+        streams.err.append_format(BUILTIN_ERR_ARG_COUNT2, cmd, subcmd_str, 0, args.size());
+        return true;
+    }
+    return false;
+}
 
 static int parse_cmd_opts(history_cmd_opts_t &opts, int *optind,  //!OCLINT(high ncss method)
                           int argc, wchar_t **argv, parser_t &parser, io_streams_t &streams) {
@@ -133,13 +134,17 @@ static int parse_cmd_opts(history_cmd_opts_t &opts, int *optind,  //!OCLINT(high
                 opts.case_sensitive = true;
                 break;
             }
+            case 'R': {
+                opts.reverse = true;
+                break;
+            }
             case 'p': {
-                opts.search_type = HISTORY_SEARCH_TYPE_PREFIX;
+                opts.search_type = HISTORY_SEARCH_TYPE_PREFIX_GLOB;
                 opts.history_search_type_defined = true;
                 break;
             }
             case 'c': {
-                opts.search_type = HISTORY_SEARCH_TYPE_CONTAINS;
+                opts.search_type = HISTORY_SEARCH_TYPE_CONTAINS_GLOB;
                 opts.history_search_type_defined = true;
                 break;
             }
@@ -153,12 +158,13 @@ static int parse_cmd_opts(history_cmd_opts_t &opts, int *optind,  //!OCLINT(high
                 break;
             }
             case 'n': {
-                opts.max_items = fish_wcstol(w.woptarg);
+                long x = fish_wcstol(w.woptarg);
                 if (errno) {
                     streams.err.append_format(_(L"%ls: max value '%ls' is not a valid number\n"),
                                               cmd, w.woptarg);
                     return STATUS_INVALID_ARGS;
                 }
+                opts.max_items = static_cast<size_t>(x);
                 break;
             }
             case 'z': {
@@ -218,6 +224,7 @@ int builtin_history(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     // Note that this can be simplified after we eliminate allowing subcommands as flags.
     // See the TODO above regarding the `long_options` array.
     if (optind < argc) {
+        constexpr size_t hist_enum_map_len = sizeof hist_enum_map / sizeof *hist_enum_map;
         hist_cmd_t subcmd = str_to_enum(argv[optind], hist_enum_map, hist_enum_map_len);
         if (subcmd != HIST_UNDEF) {
             if (!set_hist_cmd(cmd, &opts.hist_cmd, subcmd, streams)) {
@@ -234,7 +241,7 @@ int builtin_history(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     // Establish appropriate defaults.
     if (opts.hist_cmd == HIST_UNDEF) opts.hist_cmd = HIST_SEARCH;
     if (!opts.history_search_type_defined) {
-        if (opts.hist_cmd == HIST_SEARCH) opts.search_type = HISTORY_SEARCH_TYPE_CONTAINS;
+        if (opts.hist_cmd == HIST_SEARCH) opts.search_type = HISTORY_SEARCH_TYPE_CONTAINS_GLOB;
         if (opts.hist_cmd == HIST_DELETE) opts.search_type = HISTORY_SEARCH_TYPE_EXACT;
     }
 
@@ -242,7 +249,7 @@ int builtin_history(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     switch (opts.hist_cmd) {
         case HIST_SEARCH: {
             if (!history->search(opts.search_type, args, opts.show_time_format, opts.max_items,
-                                 opts.case_sensitive, opts.null_terminate, streams)) {
+                                 opts.case_sensitive, opts.null_terminate, opts.reverse, streams)) {
                 status = STATUS_CMD_ERROR;
             }
             break;
@@ -258,12 +265,11 @@ int builtin_history(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
             }
             if (!opts.case_sensitive) {
                 streams.err.append_format(
-                    _(L"builtin history delete only supports --case-sensitive\n"));
+                    _(L"builtin history delete --exact requires --case-sensitive\n"));
                 status = STATUS_INVALID_ARGS;
                 break;
             }
-            for (wcstring_list_t::const_iterator iter = args.begin(); iter != args.end(); ++iter) {
-                wcstring delete_string = *iter;
+            for (wcstring delete_string : args) {
                 if (delete_string[0] == '"' && delete_string[delete_string.length() - 1] == '"') {
                     delete_string = delete_string.substr(1, delete_string.length() - 2);
                 }
@@ -272,18 +278,28 @@ int builtin_history(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
             break;
         }
         case HIST_CLEAR: {
-            CHECK_FOR_UNEXPECTED_HIST_ARGS(opts.hist_cmd)
+            if (check_for_unexpected_hist_args(opts, cmd, args, streams)) {
+                status = STATUS_INVALID_ARGS;
+                break;
+            }
             history->clear();
             history->save();
             break;
         }
         case HIST_MERGE: {
-            CHECK_FOR_UNEXPECTED_HIST_ARGS(opts.hist_cmd)
+            if (check_for_unexpected_hist_args(opts, cmd, args, streams)) {
+                status = STATUS_INVALID_ARGS;
+                break;
+            }
+
             history->incorporate_external_changes();
             break;
         }
         case HIST_SAVE: {
-            CHECK_FOR_UNEXPECTED_HIST_ARGS(opts.hist_cmd)
+            if (check_for_unexpected_hist_args(opts, cmd, args, streams)) {
+                status = STATUS_INVALID_ARGS;
+                break;
+            }
             history->save();
             break;
         }

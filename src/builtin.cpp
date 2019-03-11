@@ -46,6 +46,7 @@
 #include "builtin_functions.h"
 #include "builtin_history.h"
 #include "builtin_jobs.h"
+#include "builtin_math.h"
 #include "builtin_printf.h"
 #include "builtin_pwd.h"
 #include "builtin_random.h"
@@ -59,6 +60,7 @@
 #include "builtin_string.h"
 #include "builtin_test.h"
 #include "builtin_ulimit.h"
+#include "builtin_wait.h"
 #include "common.h"
 #include "complete.h"
 #include "exec.h"
@@ -107,7 +109,7 @@ void builtin_wperror(const wchar_t *s, io_streams_t &streams) {
     }
 }
 
-static const wchar_t *short_options = L"+:h";
+static const wchar_t *const short_options = L"+:h";
 static const struct woption long_options[] = {{L"help", no_argument, NULL, 'h'},
                                               {NULL, 0, NULL, 0}};
 
@@ -167,12 +169,6 @@ wcstring builtin_help_get(parser_t &parser, io_streams_t &streams, const wchar_t
     wcstring out;
     const wcstring name_esc = escape_string(name, 1);
     wcstring cmd = format_string(L"__fish_print_help %ls", name_esc.c_str());
-    if (!streams.out_is_redirected && isatty(STDOUT_FILENO)) {
-        // since we're using a subshell, __fish_print_help can't tell we're in
-        // a terminal. Tell it ourselves.
-        int cols = common_get_width();
-        cmd = format_string(L"__fish_print_help --tty-width %d %ls", cols, name_esc.c_str());
-    }
     if (exec_subshell(cmd, lst, false /* don't apply exit status */) >= 0) {
         for (size_t i = 0; i < lst.size(); i++) {
             out.append(lst.at(i));
@@ -440,6 +436,7 @@ static const builtin_data_t builtin_datas[] = {
     {L"history", &builtin_history, N_(L"History of commands executed by user")},
     {L"if", &builtin_generic, N_(L"Evaluate block if condition is true")},
     {L"jobs", &builtin_jobs, N_(L"Print currently running jobs")},
+    {L"math", &builtin_math, N_(L"Evaluate math expressions")},
     {L"not", &builtin_generic, N_(L"Negate exit status of job")},
     {L"or", &builtin_generic, N_(L"Execute command if previous command failed")},
     {L"printf", &builtin_printf, N_(L"Prints formatted text")},
@@ -457,6 +454,7 @@ static const builtin_data_t builtin_datas[] = {
     {L"test", &builtin_test, N_(L"Test a condition")},
     {L"true", &builtin_true, N_(L"Return a successful result")},
     {L"ulimit", &builtin_ulimit, N_(L"Set or get the shells resource usage limits")},
+    {L"wait", &builtin_wait, N_(L"Wait for background processes completed")},
     {L"while", &builtin_generic, N_(L"Perform a command multiple times")}};
 
 #define BUILTIN_COUNT (sizeof builtin_datas / sizeof *builtin_datas)
@@ -481,23 +479,23 @@ static const builtin_data_t *builtin_lookup(const wcstring &name) {
 /// Initialize builtin data.
 void builtin_init() {
     for (size_t i = 0; i < BUILTIN_COUNT; i++) {
-        intern_static(builtin_datas[i].name);
+        const wchar_t *name = builtin_datas[i].name;
+        intern_static(name);
+        assert((i == 0 || wcscmp(builtin_datas[i - 1].name, name) < 0) &&
+               "builtins are not sorted alphabetically");
     }
 }
-
-/// Destroy builtin data.
-void builtin_destroy() {}
 
 /// Is there a builtin command with the given name?
 bool builtin_exists(const wcstring &cmd) { return static_cast<bool>(builtin_lookup(cmd)); }
 
 /// Is the command a keyword we need to special-case the handling of `-h` and `--help`.
-static const wcstring_list_t help_builtins({L"for", L"while", L"function", L"if", L"end", L"switch",
-                                            L"case"});
+static const wchar_t *const help_builtins[] = {L"for", L"while",  L"function", L"if",
+                                               L"end", L"switch", L"case"};
 static bool cmd_needs_help(const wchar_t *cmd) { return contains(help_builtins, cmd); }
 
 /// Execute a builtin command
-int builtin_run(parser_t &parser, const wchar_t *const *argv, io_streams_t &streams) {
+int builtin_run(parser_t &parser, int job_pgid, wchar_t **argv, io_streams_t &streams) {
     UNUSED(parser);
     UNUSED(streams);
     if (argv == NULL || argv[0] == NULL) return STATUS_INVALID_ARGS;
@@ -510,15 +508,16 @@ int builtin_run(parser_t &parser, const wchar_t *const *argv, io_streams_t &stre
         return STATUS_CMD_OK;
     }
 
-    const builtin_data_t *data = builtin_lookup(argv[0]);
-    if (data) {
-        // Warning: layering violation and naughty cast. The code originally had a much more
-        // complicated solution to achieve exactly the same result: lie about the constness of argv.
-        // Some of the builtins we call do mutate the array via their calls to wgetopt() which could
-        // result in the pointers being reordered. This is harmless because we only get called once
-        // with a given argv array and nothing else will look at the contents of the array after we
-        // return.
-        return data->func(parser, streams, (wchar_t **)argv);
+    if (const builtin_data_t *data = builtin_lookup(argv[0])) {
+        // If we are interactive, save the foreground pgroup and restore it after in case the
+        // builtin needs to read from the terminal. See #4540.
+        bool grab_tty = is_interactive_session && isatty(streams.stdin_fd);
+        pid_t pgroup_to_restore = grab_tty ? terminal_acquire_before_builtin(job_pgid) : -1;
+        int ret = data->func(parser, streams, argv);
+        if (pgroup_to_restore >= 0) {
+            tcsetpgrp(STDIN_FILENO, pgroup_to_restore);
+        }
+        return ret;
     }
 
     debug(0, UNKNOWN_BUILTIN_ERR_MSG, argv[0]);
@@ -526,7 +525,7 @@ int builtin_run(parser_t &parser, const wchar_t *const *argv, io_streams_t &stre
 }
 
 /// Returns a list of all builtin names.
-wcstring_list_t builtin_get_names(void) {
+wcstring_list_t builtin_get_names() {
     wcstring_list_t result;
     result.reserve(BUILTIN_COUNT);
     for (size_t i = 0; i < BUILTIN_COUNT; i++) {

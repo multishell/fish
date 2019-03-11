@@ -1,3 +1,170 @@
+# fish 3.0b1 (released December 11, 2018)
+
+fish 3 is a major release, which introduces some breaking changes alongside improved functionality. Although most existing scripts will continue to work, they should be reviewed against the list below.
+
+## Notable non-backward compatible changes
+-  Process and job expansion has largely been removed. `%` will no longer perform these expansions, except for `%self` for the PID of the current shell. Additionally, job management commands (`disown`, `wait`, `bg`, `fg` and `kill`) will expand job specifiers starting with `%` (#4230, #1202).
+- `set x[1] x[2] a b`, to set multiple elements of an array at once, is no longer valid syntax (#4236).
+- A literal `{}` now expands to itself, rather than nothing. This makes working with `find -exec` easier (#1109, #4632).
+- Literally accessing a zero-index is now illegal syntax and is caught by the parser (#4862). (fish indices start at 1)
+- Successive commas in brace expansions are handled in less surprising manner. For example, `{,,,}` expands to four empty strings rather than an empty string, a comma and an empty string again (#3002, #4632).
+- `for` loop control variables are no longer local to the `for` block (#1935).
+- Variables set in `if` and `while` conditions are available outside the block (#4820).
+- Local exported (`set -lx`) vars are now visible to functions (#1091).
+- The new `math` builtin (see below) does not support logical expressions; `test` should be used instead (#4777).
+- Range expansion will now behave sensibly when given a single positive and negative index (`$foo[5..-1]` or `$foo[-1..5]`), clamping to the last valid index without changing direction if the list has fewer elements than expected.
+- `read` now uses `-s` as short for `--silent` (à la `bash`); `--shell`'s abbreviation (formerly `-s`) is now `-S` instead (#4490).
+- `cd` no longer resolves symlinks. fish now maintains a virtual path, matching other shells (#3350).
+- `source` now requires an explicit `-` as the filename to read from the terminal (#2633).
+- Arguments to `end` are now errors, instead of being silently ignored.
+- The names `argparse`, `read`, `set`, `status`, `test` and `[` are now reserved and not allowed as function names. This prevents users unintentionally breaking stuff (#3000).
+- The `fish_user_abbreviations` variable is no longer used; abbreviations will be migrated to the new storage format automatically.
+- The `FISH_READ_BYTE_LIMIT` variable is now called `fish_byte_limit` (#4414).
+- Environment variables are no longer split into arrays based on the record separator character on startup. Instead, variables are not split, unless their name ends in PATH, in which case they are split on colons (#436).
+- The `history` builtin's `--with-time` option has been removed; this has been deprecated in favor of `--show-time` since 2.7.0 (#4403).
+- The internal variables `__fish_datadir` and `__fish_sysconfdir` are now known as `__fish_data_dir` and `__fish_sysconf_dir` respectively.
+
+## Deprecations
+
+With the release of fish 3, a number of features have been marked for removal in the future. All users are encouraged to explore alternatives. A small number of these features are currently behind feature flags, which are turned on at present but may be turned off by default in the future.
+
+A new feature flags mechanism is added for staging deprecations and breaking changes. Feature flags may be specified at launch with `fish --features ...` or by setting the universal `fish_features` variable. (#4940)
+
+- The use of the `IFS` variable for `read` is deprecated; `IFS` will be ignored in the future (#4156). Use the `read --delimiter` option instead.
+- The `function --on-process-exit` switch will be removed in future (#4700). Use the `fish_exit` event instead: `function --on-event fish_exit`.
+- `$_` is deprecated and will removed in the future (#813). Use `status current-command` in a command substitution instead.
+- `^` as a redirection deprecated and will be removed in the future. (#4394). Use `2>` to redirect stderr. This is controlled by the `stderr-nocaret` feature flag.
+- `?` as a glob (wildcard) is deprecated and will be removed in the future (#4520). This is controlled by the `qmark-noglob` feature flag.
+
+## Notable fixes and improvements
+### Syntax changes and new commands
+- fish now supports `&&` (like `and`), `||` (like `or`), and `!` (like `not`), for better migration from POSIX-compliant shells (#4620).
+- Variables may be used as commands (#154).
+- fish may be started in private mode via `fish --private`. Private mode fish sessions do not have access to the history file and any commands evaluated in private mode are not persisted for future sessions. A session variable `$fish_private_mode` can be queried to detect private mode and adjust the behavior of scripts accordingly to respect the user's wish for privacy.
+- A new `wait` command for waiting on backgrounded processes (#4498).
+- `math` is now a builtin rather than a wrapper around `bc` (#3157). Floating point computations is now used by default, and can be controlled with the new `--scale` option (#4478).
+- Setting `$PATH` no longer warns on non-existent directories, allowing for a single $PATH to be shared across machines (eg via dotfiles) (#2969).
+- `while` sets `$status` to a non-zero value if the loop is not executed (#4982).
+- Command substitution output is now limited to 10 MB by default, controlled by the `fish_read_limit` variable (#3822). Notably, this is larger than most operating systems' argument size limit, so trying to pass argument lists this size to external commands has never worked.
+- The machine hostname, where available, is now exposed as the `$hostname` reserved variable. This removes the dependency on the `hostname` executable (#4422).
+- Bare `bind` invocations in config.fish now work. The `fish_user_key_bindings` function is no longer necessary, but will still be executed if it exists (#5191).
+- `$fish_pid` and `$last_pid` are available as replacements for `%self` and `%last`.
+
+### New features in commands
+- `alias` has a new `--save` option to save the generated function immediately (#4878).
+- `bind` has a new `--silent` option to ignore bind requests for named keys not available under the current terminal (#4188, #4431).
+- `complete` has a new `--keep-order` option to show the provided or dynamically-generated argument list in the same order as specified, rather than alphabetically (#361).
+- `exec` prompts for confirmation if background jobs are running.
+- `funced` has a new `--save` option to automatically save the edited function after successfully editing (#4668).
+- `functions` has a new ` --handlers` option to show functions registered as event handlers (#4694).
+- `history search` supports globs for wildcard searching (#3136) and has a new `--reverse` option to show entries from oldest to newest (#4375)..
+- `jobs` has a new `--quiet` option to silence the output.
+- `read` has a new `--delimiter` option for splitting input into arrays (#4256).
+- `read` writes directly to stdout if called without arguments (#4407).
+- `read` can now read individual lines into separate variables without consuming the input in its entirety via the new `/--line` option.
+- `set` has new `--append` and `--prepend` options (#1326).
+- `set` has a new `--show` option to show lots of information about variables (#4265).
+- `string match` with an empty pattern and `--entire` in glob mode now matches everything instead of nothing (#4971).
+- `string split` supports a new `--no-empty` option to exclude empty strings from the result (#4779).
+- `string` has new subcommands `split0` and `join0` for working with NUL-delimited output.
+- `string` no longer stops processing text after NUL characters (#4605)
+- `string escape` has a new `--style regex` option for escaping strings to be matched literally in `string` regex operations.
+- `test` now supports floating point values in numeric comparisons.
+
+### Interactive improvements
+- A pipe at the end of a line now allows the job to continue on the next line (#1285).
+- Italics and dim support out of the box on macOS for Terminal.app and iTerm (#4436).
+- `cd` tab completions no longer descend into the deepest unambiguous path (#4649).
+- Pager navigation has been improved. Most notably, moving down now wraps around, moving up from the commandline now jumps to the last element and moving right and left now reverse each other even when wrapping around (#4680).
+- Typing normal characters while the completion pager is active no longer shows the search field. Instead it enters them into the command line, and ends paging (#2249).
+- A new input binding `pager-toggle-search` toggles the search field in the completions pager on and off. By default, this is bound to Ctrl-S.
+- Searching in the pager now does a full fuzzy search (#5213).
+- The pager will now show the full command instead of just its last line if the number of completions is large (#4702).
+- Abbreviations can be tab-completed (#3233).
+- Tildes in file names are now properly escaped in completions (#2274).
+- Wrapping completions (from `complete --wraps` or `function --wraps`) can now inject arguments. For example, `complete gco --wraps 'git checkout'` now works properly (#1976). The `alias` function has been updated to respect this behavior.
+- Path completions now support expansions, meaning expressions like `python ~/<TAB>` now provides file suggestions just like any other relative or absolute path. (This includes support for other expansions, too.)
+- Autosuggestions try to avoid arguments that are already present in the command line.
+- Notifications about crashed processes are now always shown, even in command substitutions (#4962).
+- The screen is no longer reset after a BEL, fixing graphical glitches (#3693).
+- vi-mode now supports ';' and ',' motions. This introduces new {forward,backward}-jump-till and repeat-jump{,-reverse} bind functions (#5140).
+- The `*y` vi-mode binding now works (#5100).
+- True color is now enabled in neovim by default (#2792).
+- Terminal size variables (`$COLUMNS`/`$LINES`) are now updated before `fish_prompt` is called, allowing the prompt to react (#904).
+- Multi-line prompts no longer repeat when the terminal is resized (#2320).
+- `xclip` support has been added to the clipboard integration (#5020).
+- The Alt-P keybinding paginates the last command if the command line is empty.
+- `$cmd_duration` is no longer reset when no command is executed (#5011).
+- Deleting a one-character word no longer erases the next word as well (#4747).
+- Token history search (Alt-Up) omits duplicate entries (#4795).
+- The `fish_escape_delay_ms` timeout, allowing the use of the escape key both on its own and as part of a control sequence, was applied to all control characters; this has been reduced to just the escape key.
+- Completing a function shows the description properly (#5206).
+- Added completions for
+  - `ansible`, including `ansible-galaxy`, `ansible-playbook` and `ansible-vault` (#4697)
+  - `bb-power` (#4800)
+  - `bd` (#4472)
+  - `bower`
+  - `clang` and `clang++` (#4174)
+  - `conda` (#4837)
+  - `configure` (for autoconf-generated files only)
+  - `curl`
+  - `doas` (#5196)
+  - `ebuild` (#4911)
+  - `emaint` (#4758)
+  - `eopkg` (#4600)
+  - `exercism` (#4495)
+  - `hjson`
+  - `hugo` (#4529)
+  - `j` (from autojump #4344)
+  - `jbake` (#4814)
+  - `jhipster` (#4472)
+  - `kitty`
+  - `kldload`
+  - `kldunload`
+  - `makensis` (#5242)
+  - `meson`
+  - `mkdocs` (#4906)
+  - `ngrok` (#4642)
+  - OpenBSD's `pkg_add`, `pkg_delete`, `pkg_info`, `pfctl`, `rcctl`, `signify`, and `vmctl` (#4584)
+  - `openocd`
+  - `optipng`
+  - `opkg` (#5168)
+  - `pandoc` (#2937)
+  - `port` (#4737)
+  - `powerpill` (#4800)
+  - `pstack` (#5135)
+  - `serve` (#5026)
+  - `ttx`
+  - `unzip`
+  - `virsh` (#5113)
+  - `xclip` (#5126)
+  - `xsv`
+  - `zfs` and `zpool` (#4608)
+- Lots of improvements to completions (especially `darcs` (#5112), `git`, `hg` and `sudo`).
+- Completions for `yarn` and `npm` now require the `all-the-package-names` NPM package for full functionality.
+- Completions for `bower` and `yarn` now require the `jq` utility for full functionality.
+- Improved French translations.
+
+### Other fixes and improvements
+- Significant performance improvements to `abbr` (#4048), setting variables (#4200, #4341), executing functions, globs (#4579), `string` reading from standard input (#4610), and slicing history (in particular, `$history[1]` for the last executed command).
+- Fish's internal wcwidth function has been updated to deal with newer Unicode, and the width of some characters can be configured via the `fish_ambiguous_width` (#5149) and `fish_emoji_width` (#2652) variables. Alternatively, a new build-time option INTERNAL_WCWIDTH can be used to use the system's wcwidth instead (#4816).
+- `functions` correctly supports `-d` as the short form of `--description`. (#5105)
+- `/etc/paths` is now parsed like macOS' bash `path_helper`, fixing $PATH order (#4336, #4852) on macOS.
+- Using a read-only variable in a `for` loop produces an error, rather than silently producing incorrect results (#4342).
+- The universal variables filename no longer contains the hostname or MAC address. It is now at the fixed location `.config/fish/fish_variables` (#1912).
+- Exported variables in the global or universal scope no longer have their exported status affected by local variables (#2611).
+- Major rework of terminal and job handling to eliminate bugs (#3805, #3952, #4178, #4235, #4238, #4540, #4929, #5210).
+- Improvements to the manual page completion generator (#2937, #4313).
+- `suspend --force` now works correctly (#4672).
+- Pressing Ctrl-C while running a script now reliably terminates fish (#5253).
+
+### For distributors and developers
+- fish ships with a new build system based on CMake. CMake 3.2 is the minimum required version. Although the autotools-based Makefile and the Xcode project are still shipped with this release, they will be removed in the near future. All distributors and developers are encouraged to migrate to the CMake build.
+- Build scripts for most platforms no longer require bash, using the standard sh instead.
+- The `hostname` command is no longer required for fish to operate.
+
+--
+
 # fish 2.7.1 (released December 23, 2017)
 
 This release of fish fixes an issue where iTerm 2 on macOS would display a warning about paste bracketing being left on when starting a new fish session (#4521).
@@ -21,8 +188,7 @@ Xcode builds and macOS packages could not be produced with 2.7b1, but this is fi
 - A new `argparse` command is available to allow fish script to parse arguments with the same behavior as builtin commands. This also includes the `fish_opt` helper command. (#4190).
 - Invalid array indexes are now silently ignored (#826, #4127).
 - Improvements to the debugging facility, including a prompt specific to the debugger (`fish_breakpoint_prompt`) and a `status is-breakpoint` subcommand (#1310).
-- `string` supports new `lower` and `upper` subcommands, for altering the case of strings (#4080). The case changing is not locale-aware yet.
-- `string escape` has a new `--style=xxx` flag where `xxx` can be `script`, `var`, or `url` (#4150), and can be reversed with `string unescape` (#3543).
+- `string` supports new `lower` and `upper` subcommands, for altering the case of strings (#4080). The case changing is not locale-aware yet.- `string escape` has a new `--style=xxx` flag where `xxx` can be `script`, `var`, or `url` (#4150), and can be reversed with `string unescape` (#3543).
 - History can now be split into sessions with the `fish_history` variable, or not saved to disk at all (#102).
 - Read history is now controlled by the `fish_history` variable rather than the `--mode-name` flag (#1504).
 - `command` now supports an `--all` flag to report all directories with the command. `which` is no longer a runtime dependency (#2778).
@@ -61,6 +227,21 @@ Xcode builds and macOS packages could not be produced with 2.7b1, but this is fi
 - Lots of improvements to completions.
 - Updated Chinese and French translations.
 
+- Improved completions for:
+  - `apt`
+  - `cd` (#4061)
+  - `composer` (#4295)
+  - `eopkg`
+  - `flatpak` (#4456)
+  - `git` (#4117, #4147, #4329, #4368)
+  - `gphoto2`
+  - `killall` (#4052)
+  - `ln`
+  - `npm` (#4241)
+  - `ssh` (#4377)
+  - `tail`
+  - `xdg-mime` (#4333)
+  - `zypper` (#4325)
 ---
 
 # fish 2.6.0 (released June 3, 2017)

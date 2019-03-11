@@ -4,12 +4,12 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-#if HAVE_NCURSES_H
+#if HAVE_CURSES_H
+#include <curses.h>
+#elif HAVE_NCURSES_H
 #include <ncurses.h>
 #elif HAVE_NCURSES_CURSES_H
 #include <ncurses/curses.h>
-#else
-#include <curses.h>
 #endif
 #if HAVE_TERM_H
 #include <term.h>
@@ -49,7 +49,7 @@ static int set_color_builtin_outputter(char c) {
     return 0;
 }
 
-static const wchar_t *short_options = L":b:hvoidrcu";
+static const wchar_t *const short_options = L":b:hvoidrcu";
 static const struct woption long_options[] = {{L"background", required_argument, NULL, 'b'},
                                               {L"help", no_argument, NULL, 'h'},
                                               {L"bold", no_argument, NULL, 'o'},
@@ -61,10 +61,31 @@ static const struct woption long_options[] = {{L"background", required_argument,
                                               {L"print-colors", no_argument, NULL, 'c'},
                                               {NULL, 0, NULL, 0}};
 
+#if __APPLE__
+static char sitm_esc[] = "\x1B[3m";
+static char ritm_esc[] = "\x1B[23m";
+static char dim_esc[] = "\x1B[2m";
+#endif
+
 /// set_color builtin.
 int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     // By the time this is called we should have initialized the curses subsystem.
     assert(curses_initialized);
+
+    // Hack in missing italics and dim capabilities omitted from MacOS xterm-256color terminfo
+    // Helps Terminal.app/iTerm
+    #if __APPLE__
+    const auto term_prog = env_get(L"TERM_PROGRAM");
+    if (!term_prog.missing_or_empty() && (term_prog->as_string() == L"Apple_Terminal"
+        || term_prog->as_string() == L"iTerm.app")) {
+        const auto term = env_get(L"TERM");
+        if (!term.missing_or_empty() && (term->as_string() == L"xterm-256color")) {
+            enter_italics_mode = sitm_esc;
+            exit_italics_mode = ritm_esc;
+            enter_dim_mode = dim_esc;
+        }
+    }
+    #endif
 
     // Variables used for parsing the argument list.
     wchar_t *cmd = argv[0];
@@ -172,36 +193,36 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     output_set_writer(set_color_builtin_outputter);
 
     if (bold && enter_bold_mode) {
-        writembs(tparm(enter_bold_mode));
+        writembs_nofail(tparm(enter_bold_mode));
     }
 
     if (underline && enter_underline_mode) {
-        writembs(enter_underline_mode);
+        writembs_nofail(enter_underline_mode);
     }
 
     if (italics && enter_italics_mode) {
-        writembs(enter_italics_mode);
+        writembs_nofail(enter_italics_mode);
     }
 
     if (dim && enter_dim_mode) {
-        writembs(enter_dim_mode);
+        writembs_nofail(enter_dim_mode);
     }
 
     if (reverse && enter_reverse_mode) {
-        writembs(enter_reverse_mode);
+        writembs_nofail(enter_reverse_mode);
     } else if (reverse && enter_standout_mode) {
-        writembs(enter_standout_mode);
+        writembs_nofail(enter_standout_mode);
     }
 
     if (bgcolor != NULL && bg.is_normal()) {
         write_color(rgb_color_t::black(), false /* not is_fg */);
-        writembs(tparm(exit_attribute_mode));
+        writembs_nofail(tparm(exit_attribute_mode));
     }
 
     if (!fg.is_none()) {
         if (fg.is_normal() || fg.is_reset()) {
             write_color(rgb_color_t::black(), true /* is_fg */);
-            writembs(tparm(exit_attribute_mode));
+            writembs_nofail(tparm(exit_attribute_mode));
         } else {
             if (!write_color(fg, true /* is_fg */)) {
                 // We need to do *something* or the lack of any output messes up

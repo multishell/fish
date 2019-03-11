@@ -20,6 +20,134 @@ using std::tr1::shared_ptr;
 #endif
 
 #include "common.h"
+#include "env.h"
+
+/// separated_buffer_t is composed of a sequence of elements, some of which may be explicitly
+/// separated (e.g. through string spit0) and some of which the separation is inferred. This enum
+/// tracks the type.
+enum class separation_type_t {
+    /// This element's separation should be inferred, e.g. through IFS.
+    inferred,
+    /// This element was explicitly separated and should not be separated further.
+    explicitly
+};
+
+/// A separated_buffer_t contains a list of elements, some of which may be separated explicitly and
+/// others which must be separated further by the user (e.g. via IFS).
+template <typename StringType>
+class separated_buffer_t {
+   public:
+    struct element_t {
+        StringType contents;
+        separation_type_t separation;
+
+        element_t(StringType contents, separation_type_t sep)
+            : contents(std::move(contents)), separation(sep) {}
+
+        bool is_explicitly_separated() const { return separation == separation_type_t::explicitly; }
+    };
+
+   private:
+    /// Limit on how much data we'll buffer. Zero means no limit.
+    size_t buffer_limit_;
+
+    /// Current size of all contents.
+    size_t contents_size_{0};
+
+    /// List of buffer elements.
+    std::vector<element_t> elements_;
+
+    /// True if we're discarding input because our buffer_limit has been exceeded.
+    bool discard = false;
+
+    /// Mark that we are about to add the given size \p delta to the buffer. \return true if we
+    /// succeed, false if we exceed buffer_limit.
+    bool try_add_size(size_t delta) {
+        if (discard) return false;
+        contents_size_ += delta;
+        if (contents_size_ < delta) {
+            // Overflow!
+            set_discard();
+            return false;
+        }
+        if (buffer_limit_ > 0 && contents_size_ > buffer_limit_) {
+            set_discard();
+            return false;
+        }
+        return true;
+    }
+
+    /// separated_buffer_t may not be copied.
+    separated_buffer_t(const separated_buffer_t &) = delete;
+    void operator=(const separated_buffer_t &) = delete;
+
+public:
+ /// Construct a separated_buffer_t with the given buffer limit \p limit, or 0 for no limit.
+ separated_buffer_t(size_t limit) : buffer_limit_(limit) {}
+
+ /// \return the buffer limit size, or 0 for no limit.
+ size_t limit() const { return buffer_limit_; }
+
+ /// \return the contents size.
+ size_t size() const { return contents_size_; }
+
+ /// \return whether the output has been discarded.
+ bool discarded() const { return discard; }
+
+ /// Mark the contents as discarded.
+ void set_discard() {
+     elements_.clear();
+     contents_size_ = 0;
+     discard = true;
+ }
+
+ void reset_discard() {
+     discard = false;
+ }
+
+ /// Serialize the contents to a single string, where explicitly separated elements have a
+ /// newline appended.
+ StringType newline_serialized() const {
+     StringType result;
+     result.reserve(size());
+     for (const auto &elem : elements_) {
+         result.append(elem.contents);
+         if (elem.is_explicitly_separated()) {
+             result.push_back('\n');
+         }
+     }
+     return result;
+    }
+
+    /// \return the list of elements.
+    const std::vector<element_t> &elements() const { return elements_; }
+
+    /// Append an element with range [begin, end) and the given separation type \p sep.
+    template <typename Iterator>
+    void append(Iterator begin, Iterator end, separation_type_t sep = separation_type_t::inferred) {
+        if (!try_add_size(std::distance(begin, end))) return;
+        // Try merging with the last element.
+        if (sep == separation_type_t::inferred && !elements_.empty() && !elements_.back().is_explicitly_separated()) {
+            elements_.back().contents.append(begin, end);
+        } else {
+            elements_.emplace_back(StringType(begin, end), sep);
+        }
+    }
+
+    /// Append a string \p str with the given separation type \p sep.
+    void append(const StringType &str, separation_type_t sep = separation_type_t::inferred) {
+        append(str.begin(), str.end(), sep);
+    }
+
+    // Given that this is a narrow stream, convert a wide stream \p rhs to narrow and then append
+    // it.
+    template <typename RHSStringType>
+    void append_wide_buffer(const separated_buffer_t<RHSStringType> &rhs) {
+        for (const auto &rhs_elem : rhs.elements()) {
+            append(wcs2string(rhs_elem.contents), rhs_elem.separation);
+        }
+    }
+};
 
 /// Describes what type of IO operation an io_data_t represents.
 enum io_mode_t { IO_FILE, IO_PIPE, IO_FD, IO_BUFFER, IO_CLOSE };
@@ -48,7 +176,7 @@ class io_close_t : public io_data_t {
    public:
     explicit io_close_t(int f) : io_data_t(IO_CLOSE, f) {}
 
-    virtual void print() const;
+    void print() const override;
 };
 
 class io_fd_t : public io_data_t {
@@ -61,7 +189,7 @@ class io_fd_t : public io_data_t {
     /// would not.
     const bool user_supplied;
 
-    virtual void print() const;
+    void print() const override;
 
     io_fd_t(int f, int old, bool us) : io_data_t(IO_FD, f), old_fd(old), user_supplied(us) {}
 };
@@ -73,12 +201,12 @@ class io_file_t : public io_data_t {
     /// file creation flags to send to open.
     const int flags;
 
-    virtual void print() const;
+    void print() const override;
 
     io_file_t(int f, const wcstring &fname, int fl = 0)
         : io_data_t(IO_FILE, f), filename_cstr(wcs2str(fname)), flags(fl) {}
 
-    virtual ~io_file_t() { free((void *)filename_cstr); }
+    ~io_file_t() override { free((void *)filename_cstr); }
 };
 
 class io_pipe_t : public io_data_t {
@@ -91,36 +219,34 @@ class io_pipe_t : public io_data_t {
     int pipe_fd[2];
     const bool is_input;
 
-    virtual void print() const;
+    void print() const override;
 
     io_pipe_t(int f, bool i) : io_data_t(IO_PIPE, f), is_input(i) { pipe_fd[0] = pipe_fd[1] = -1; }
 };
 
 class io_chain_t;
+class output_stream_t;
 class io_buffer_t : public io_pipe_t {
    private:
-    /// Buffer to save output in.
-    std::vector<char> out_buffer;
+    separated_buffer_t<std::string> buffer_;
 
-    explicit io_buffer_t(int f) : io_pipe_t(IO_BUFFER, f, false /* not input */), out_buffer() {}
-
-   public:
-    virtual void print() const;
-
-    virtual ~io_buffer_t();
-
-    /// Function to append to the buffer.
-    void out_buffer_append(const char *ptr, size_t count) {
-        out_buffer.insert(out_buffer.end(), ptr, ptr + count);
+    explicit io_buffer_t(int f, size_t limit)
+        : io_pipe_t(IO_BUFFER, f, false /* not input */),
+          buffer_(limit) {
+        // Explicitly reset the discard flag because we share this buffer.
+        buffer_.reset_discard();
     }
 
-    /// Function to get a pointer to the buffer.
-    char *out_buffer_ptr(void) { return out_buffer.empty() ? NULL : &out_buffer.at(0); }
+   public:
+    void print() const override;
 
-    const char *out_buffer_ptr(void) const { return out_buffer.empty() ? NULL : &out_buffer.at(0); }
+    ~io_buffer_t() override;
 
-    /// Function to get the size of the buffer.
-    size_t out_buffer_size(void) const { return out_buffer.size(); }
+    /// Access the underlying buffer.
+    const separated_buffer_t<std::string> &buffer() const { return buffer_; }
+
+    /// Function to append to the buffer.
+    void append(const char *ptr, size_t count) { buffer_.append(ptr, ptr + count); }
 
     /// Ensures that the pipes do not conflict with any fd redirections in the chain.
     bool avoid_conflicts_with_io_chain(const io_chain_t &ios);
@@ -128,13 +254,18 @@ class io_buffer_t : public io_pipe_t {
     /// Close output pipe, and read from input pipe until eof.
     void read();
 
+    /// Appends data from a given output_stream_t.
+    /// Marks the receiver as discarded if the stream was discarded.
+    void append_from_stream(const output_stream_t &stream);
+
     /// Create a IO_BUFFER type io redirection, complete with a pipe and a vector<char> for output.
     /// The default file descriptor used is STDOUT_FILENO for buffering.
     ///
     /// \param fd the fd that will be mapped in the child process, typically STDOUT_FILENO
     /// \param conflicts A set of IO redirections. The function ensures that any pipe it makes does
     /// not conflict with an fd redirection in this list.
-    static shared_ptr<io_buffer_t> create(int fd, const io_chain_t &conflicts);
+    static shared_ptr<io_buffer_t> create(int fd, const io_chain_t &conflicts,
+                                          size_t buffer_limit = 0);
 };
 
 class io_chain_t : public std::vector<shared_ptr<io_data_t> > {
@@ -164,39 +295,42 @@ bool pipe_avoid_conflicts_with_io_chain(int fds[2], const io_chain_t &ios);
 /// Class representing the output that a builtin can generate.
 class output_stream_t {
    private:
-    // No copying.
-    output_stream_t(const output_stream_t &s);
-    void operator=(const output_stream_t &s);
+    /// Storage for our data.
+    separated_buffer_t<wcstring> buffer_;
 
-    wcstring buffer_;
+    // No copying.
+    output_stream_t(const output_stream_t &s) = delete;
+    void operator=(const output_stream_t &s) = delete;
 
    public:
-    output_stream_t() {}
+    output_stream_t(size_t buffer_limit) : buffer_(buffer_limit) {}
 
-    void append(const wcstring &s) { this->buffer_.append(s); }
+    void append(const wcstring &s) { buffer_.append(s.begin(), s.end()); }
 
-    void append(const wchar_t *s) { this->buffer_.append(s); }
+    separated_buffer_t<wcstring> &buffer() { return buffer_; }
 
-    void append(wchar_t s) { this->buffer_.push_back(s); }
+    const separated_buffer_t<wcstring> &buffer() const { return buffer_; }
 
-    void append(const wchar_t *s, size_t amt) { this->buffer_.append(s, amt); }
+    void append(const wchar_t *s) { append(s, wcslen(s)); }
 
-    void push_back(wchar_t c) { this->buffer_.push_back(c); }
+    void append(wchar_t s) { append(&s, 1); }
+
+    void append(const wchar_t *s, size_t amt) { buffer_.append(s, s + amt); }
+
+    void push_back(wchar_t c) { append(c); }
 
     void append_format(const wchar_t *format, ...) {
         va_list va;
         va_start(va, format);
-        ::append_formatv(this->buffer_, format, va);
+        append_formatv(format, va);
         va_end(va);
     }
 
-    void append_formatv(const wchar_t *format, va_list va_orig) {
-        ::append_formatv(this->buffer_, format, va_orig);
-    }
+    void append_formatv(const wchar_t *format, va_list va) { append(vformat_string(format, va)); }
 
-    const wcstring &buffer() const { return this->buffer_; }
+    bool empty() const { return buffer_.size() == 0; }
 
-    bool empty() const { return buffer_.empty(); }
+    wcstring contents() const { return buffer_.newline_serialized(); }
 };
 
 struct io_streams_t {
@@ -218,8 +352,10 @@ struct io_streams_t {
     // Actual IO redirections. This is only used by the source builtin. Unowned.
     const io_chain_t *io_chain;
 
-    io_streams_t()
-        : stdin_fd(-1),
+    io_streams_t(size_t read_limit)
+        : out(read_limit),
+          err(read_limit),
+          stdin_fd(-1),
           stdin_is_directly_redirected(false),
           out_is_redirected(false),
           err_is_redirected(false),

@@ -17,6 +17,7 @@
 #include <list>
 #include <memory>
 #include <type_traits>
+#include <utility>
 
 #include "common.h"
 #include "env.h"
@@ -28,7 +29,7 @@
 #include "wutil.h"
 
 /// Time in milliseconds to wait for another byte to be available for reading
-/// after \e is read before assuming that escape key was pressed, and not an
+/// after \x1B is read before assuming that escape key was pressed, and not an
 /// escape sequence.
 #define WAIT_ON_ESCAPE_DEFAULT 300
 static int wait_on_escape_ms = WAIT_ON_ESCAPE_DEFAULT;
@@ -39,11 +40,11 @@ static std::deque<wchar_t> lookahead_list;
 // Queue of pairs of (function pointer, argument) to be invoked. Expected to be mostly empty.
 typedef std::list<std::function<void(void)>> callback_queue_t;
 static callback_queue_t callback_queue;
-static void input_flush_callbacks(void);
+static void input_flush_callbacks();
 
-static bool has_lookahead(void) { return !lookahead_list.empty(); }
+static bool has_lookahead() { return !lookahead_list.empty(); }
 
-static wint_t lookahead_pop(void) {
+static wint_t lookahead_pop() {
     wint_t result = lookahead_list.front();
     lookahead_list.pop_front();
     return result;
@@ -53,14 +54,12 @@ static void lookahead_push_back(wint_t c) { lookahead_list.push_back(c); }
 
 static void lookahead_push_front(wint_t c) { lookahead_list.push_front(c); }
 
-static wint_t lookahead_front(void) { return lookahead_list.front(); }
+static wint_t lookahead_front() { return lookahead_list.front(); }
 
 /// Callback function for handling interrupts on reading.
 static int (*interrupt_handler)();
 
-void input_common_init(int (*ih)()) {
-    interrupt_handler = ih;
-}
+void input_common_init(int (*ih)()) { interrupt_handler = ih; }
 
 void input_common_destroy() {}
 
@@ -160,18 +159,18 @@ static wint_t readb() {
 // Update the wait_on_escape_ms value in response to the fish_escape_delay_ms user variable being
 // set.
 void update_wait_on_escape_ms() {
-    env_var_t escape_time_ms = env_get_string(L"fish_escape_delay_ms");
+    auto escape_time_ms = env_get(L"fish_escape_delay_ms");
     if (escape_time_ms.missing_or_empty()) {
         wait_on_escape_ms = WAIT_ON_ESCAPE_DEFAULT;
         return;
     }
 
-    long tmp = fish_wcstol(escape_time_ms.c_str());
+    long tmp = fish_wcstol(escape_time_ms->as_string().c_str());
     if (errno || tmp < 10 || tmp >= 5000) {
         fwprintf(stderr,
                  L"ignoring fish_escape_delay_ms: value '%ls' "
                  L"is not an integer or is < 10 or >= 5000 ms\n",
-                 escape_time_ms.c_str());
+                 escape_time_ms->as_string().c_str());
     } else {
         wait_on_escape_ms = (int)tmp;
     }
@@ -196,7 +195,7 @@ wchar_t input_common_readch(int timed) {
         while (1) {
             wint_t b = readb();
 
-            if (b >= R_NULL && b <= R_MAX) return b;
+            if (b >= R_NULL && b < R_END_INPUT_FUNCTIONS) return b;
 
             if (MB_CUR_MAX == 1) {
                 // return (unsigned char)b;  // single-byte locale, all values are legal
@@ -240,7 +239,7 @@ void input_common_add_callback(std::function<void(void)> callback) {
     callback_queue.push_back(std::move(callback));
 }
 
-static void input_flush_callbacks(void) {
+static void input_flush_callbacks() {
     // We move the queue into a local variable, so that events queued up during a callback don't get
     // fired until next round.
     ASSERT_IS_MAIN_THREAD();

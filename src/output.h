@@ -10,8 +10,9 @@
 #include <vector>
 
 #include "color.h"
-#include "common.h"
 #include "fallback.h"  // IWYU pragma: keep
+
+class env_var_t;
 
 /// Constants for various colors as used by the set_color function.
 enum {
@@ -29,14 +30,15 @@ enum {
 
 void set_color(rgb_color_t c, rgb_color_t c2);
 
-void writembs_check(char *mbs, const char *mbs_name, const char *file, long line);
-#define writembs(mbs) writembs_check((mbs), #mbs, __FILE__, __LINE__)
+void writembs_check(char *mbs, const char *mbs_name, bool critical, const char *file, long line);
+#define writembs(mbs) writembs_check((mbs), #mbs, true, __FILE__, __LINE__)
+#define writembs_nofail(mbs) writembs_check((mbs), #mbs, false, __FILE__, __LINE__)
 
 int writech(wint_t ch);
 
 void writestr(const wchar_t *str);
 
-rgb_color_t parse_color(const wcstring &val, bool is_background);
+rgb_color_t parse_color(const env_var_t &val, bool is_background);
 
 int writeb(tputs_arg_t b);
 

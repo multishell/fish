@@ -12,13 +12,18 @@ function __funced_md5
 end
 
 function funced --description 'Edit function definition'
-    set -l options 'h/help' 'e/editor=' 'i/interactive'
-    argparse -n funced --min-args=1 --max-args=1 $options -- $argv
+    set -l options 'h/help' 'e/editor=' 'i/interactive' 's/save'
+    argparse -n funced --max-args=1 $options -- $argv
     or return
 
     if set -q _flag_help
         __fish_print_help funced
         return 0
+    end
+
+    if not set -q argv[1]
+        printf (_ "%ls: Expected at least %d args, got only %d\n") funced 1 0
+        return 1
     end
 
     set funcname $argv[1]
@@ -46,35 +51,32 @@ function funced --description 'Edit function definition'
     end
 
     # Break editor up to get its first command (i.e. discard flags)
-    if test -n "$editor"
-        set -l editor_cmd
-        eval set editor_cmd $editor
-        if not type -q -f "$editor_cmd[1]"
-            echo (_ "funced: The value for \$EDITOR '$editor' could not be used because the command '$editor_cmd[1]' could not be found")
-            set editor fish
-        end
+    set -l editor_cmd
+    eval set editor_cmd $editor
+    if not type -q -f "$editor_cmd[1]"
+        echo (_ "funced: The value for \$EDITOR '$editor' could not be used because the command '$editor_cmd[1]' could not be found")
+        set editor fish
     end
 
     if test "$editor" = fish
-        set -l IFS
         if functions -q -- $funcname
-            # Shadow IFS here to avoid array splitting in command substitution
-            set init (functions -- $funcname | fish_indent --no-indent)
+            functions -- $funcname | fish_indent --no-indent | read -z init
         end
 
         set -l prompt 'printf "%s%s%s> " (set_color green) '$funcname' (set_color normal)'
-        # Unshadow IFS since the fish_title breaks otherwise
-        set -e IFS
-        if read -p $prompt -c "$init" -s cmd
-            # Shadow IFS _again_ to avoid array splitting in command substitution
-            set -l IFS
-            eval (echo -n $cmd | fish_indent)
+        if read -p $prompt -c "$init" --shell cmd
+            echo -n $cmd | fish_indent | read -lz cmd
+            eval "$cmd"
+        end
+        if set -q _flag_save
+            funcsave $funcname
         end
         return 0
     end
 
-    # OSX mktemp is rather restricted - no suffix, no way to automatically use TMPDIR
-    # Create a directory so we can use a ".fish" suffix for the file - makes editors pick up that it's a fish file
+    # OS X (macOS) `mktemp` is rather restricted - no suffix, no way to automatically use TMPDIR.
+    # Create a directory so we can use a ".fish" suffix for the file - makes editors pick up that
+    # it's a fish file.
     set -q TMPDIR
     or set -l TMPDIR /tmp
     set -l tmpdir (mktemp -d $TMPDIR/fish.XXXXXX)
@@ -92,7 +94,7 @@ function funced --description 'Edit function definition'
     while true
         set -l checksum (__funced_md5 "$tmpname")
 
-        if not eval $editor $tmpname
+        if not $editor $tmpname
             echo (_ "Editing failed or was cancelled")
         else
             # Verify the checksum (if present) to detect potential problems
@@ -119,6 +121,8 @@ function funced --description 'Edit function definition'
                     continue
                 end
                 echo (_ "Cancelled function editing")
+            else if set -q _flag_save
+                funcsave $funcname
             end
         end
         break

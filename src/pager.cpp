@@ -6,8 +6,8 @@
 #include <wctype.h>
 
 #include <algorithm>
-#include <map>
 #include <numeric>
+#include <unordered_map>
 #include <vector>
 
 #include "common.h"
@@ -143,21 +143,23 @@ line_t pager_t::completion_print_item(const wcstring &prefix, const comp_t *c, s
         bg_color = highlight_spec_search_match;
     }
 
+    auto bg = highlight_make_background(bg_color);
     // Print the completion part
     size_t comp_remaining = comp_width;
     for (size_t i = 0; i < c->comp.size(); i++) {
         const wcstring &comp = c->comp.at(i);
+        highlight_spec_t packed_color =
+            highlight_spec_pager_prefix | bg;
+
         if (i > 0) {
-            comp_remaining -= print_max(PAGER_SPACER_STRING, highlight_spec_normal, comp_remaining,
+            comp_remaining -= print_max(PAGER_SPACER_STRING, bg, comp_remaining,
                                         true /* has_more */, &line_data);
         }
 
-        highlight_spec_t packed_color =
-            highlight_spec_pager_prefix | highlight_make_background(bg_color);
         comp_remaining -=
             print_max(prefix, packed_color, comp_remaining, !comp.empty(), &line_data);
 
-        packed_color = highlight_spec_pager_completion | highlight_make_background(bg_color);
+        packed_color = highlight_spec_pager_completion | bg;
         comp_remaining -=
             print_max(comp, packed_color, comp_remaining, i + 1 < c->comp.size(), &line_data);
     }
@@ -165,9 +167,9 @@ line_t pager_t::completion_print_item(const wcstring &prefix, const comp_t *c, s
     size_t desc_remaining = width - comp_width + comp_remaining;
     if (c->desc_width > 0 && desc_remaining > 4) {
         highlight_spec_t desc_color =
-            highlight_spec_pager_description | highlight_make_background(bg_color);
+            highlight_spec_pager_description | bg;
         highlight_spec_t punct_color =
-            highlight_spec_pager_completion | highlight_make_background(bg_color);
+            highlight_spec_pager_completion | bg;
 
         // always have at least two spaces to separate completion and description
         desc_remaining -= print_max(L"  ", punct_color, 2, false, &line_data);
@@ -184,7 +186,7 @@ line_t pager_t::completion_print_item(const wcstring &prefix, const comp_t *c, s
         desc_remaining -= print_max(L")", punct_color, 1, false, &line_data);
     } else {
         // No description, or it won't fit. Just add spaces.
-        print_max(wcstring(desc_remaining, L' '), 0, desc_remaining, false, &line_data);
+        print_max(wcstring(desc_remaining, L' '), bg, desc_remaining, false, &line_data);
     }
 
     return line_data;
@@ -267,7 +269,7 @@ static void mangle_1_completion_description(wcstring *str) {
 static void join_completions(comp_info_list_t *comps) {
     // A map from description to index in the completion list of the element with that description.
     // The indexes are stored +1.
-    std::map<wcstring, size_t> desc_table;
+    std::unordered_map<wcstring, size_t> desc_table;
 
     // Note that we mutate the completion list as we go, so the size changes.
     for (size_t i = 0; i < comps->size(); i++) {
@@ -304,7 +306,7 @@ static comp_info_list_t process_completions_into_infos(const completion_list_t &
         comp_t *comp_info = &result.at(i);
 
         // Append the single completion string. We may later merge these into multiple.
-        comp_info->comp.push_back(escape_string(comp.completion, ESCAPE_ALL | ESCAPE_NO_QUOTED));
+        comp_info->comp.push_back(escape_string(comp.completion, ESCAPE_NO_QUOTED));
 
         // Append the mangled description.
         comp_info->desc = comp.description;
@@ -317,7 +319,7 @@ static comp_info_list_t process_completions_into_infos(const completion_list_t &
 }
 
 void pager_t::measure_completion_infos(comp_info_list_t *infos, const wcstring &prefix) const {
-    size_t prefix_len = fish_wcswidth(prefix.c_str());
+    size_t prefix_len = fish_wcswidth(prefix);
     for (size_t i = 0; i < infos->size(); i++) {
         comp_t *comp = &infos->at(i);
         const wcstring_list_t &comp_strings = comp->comp;
@@ -327,12 +329,12 @@ void pager_t::measure_completion_infos(comp_info_list_t *infos, const wcstring &
             if (j >= 1) comp->comp_width += 2;
 
             // fish_wcswidth() can return -1 if it can't calculate the width. So be cautious.
-            int comp_width = fish_wcswidth(comp_strings.at(j).c_str());
+            int comp_width = fish_wcswidth(comp_strings.at(j));
             if (comp_width >= 0) comp->comp_width += prefix_len + comp_width;
         }
 
         // fish_wcswidth() can return -1 if it can't calculate the width. So be cautious.
-        int desc_width = fish_wcswidth(comp->desc.c_str());
+        int desc_width = fish_wcswidth(comp->desc);
         comp->desc_width = desc_width > 0 ? desc_width : 0;
     }
 }
@@ -344,8 +346,8 @@ bool pager_t::completion_info_passes_filter(const comp_t &info) const {
 
     const wcstring &needle = this->search_field_line.text;
 
-    // We do substring matching.
-    const fuzzy_match_type_t limit = fuzzy_match_substring;
+    // We do full fuzzy matching just like the completion code itself.
+    const fuzzy_match_type_t limit = fuzzy_match_none;
 
     // Match against the description.
     if (string_fuzzy_match_string(needle, info.desc, limit).type != fuzzy_match_none) {
@@ -481,16 +483,13 @@ bool pager_t::completion_try_print(size_t cols, const wcstring &prefix, const co
     assert(stop_row - start_row <= term_height);
     completion_print(cols, width_by_column, start_row, stop_row, prefix, lst, rendering);
 
-    // Ellipsis helper string. Either empty or containing the ellipsis char.
-    const wchar_t ellipsis_string[] = {ellipsis_char == L'\x2026' ? L'\x2026' : L'\0', L'\0'};
-
     // Add the progress line. It's a "more to disclose" line if necessary, or a row listing if
     // it's scrollable; otherwise ignore it.
     // We should never have one row remaining to disclose (else we would have just disclosed it)
     wcstring progress_text;
     assert(rendering->remaining_to_disclose != 1);
     if (rendering->remaining_to_disclose > 1) {
-        progress_text = format_string(_(L"%lsand %lu more rows"), ellipsis_string,
+        progress_text = format_string(_(L"%lsand %lu more rows"), ellipsis_str,
                                       (unsigned long)rendering->remaining_to_disclose);
     } else if (start_row > 0 || stop_row < row_count) {
         // We have a scrollable interface. The +1 here is because we are zero indexed, but want
@@ -608,16 +607,17 @@ bool pager_t::select_next_completion_in_direction(selection_direction_t directio
             case direction_south:
             case direction_page_south:
             case direction_next:
+            case direction_north:
             case direction_prev: {
                 // These directions do something sane.
-                if (direction == direction_prev) {
+                if (direction == direction_prev
+                    || direction == direction_north) {
                     selected_completion_idx = completion_infos.size() - 1;
                 } else {
                     selected_completion_idx = 0;
                 }
                 return true;
             }
-            case direction_north:
             case direction_page_north:
             case direction_east:
             case direction_west:
@@ -669,7 +669,11 @@ bool pager_t::select_next_completion_in_direction(selection_direction_t directio
                     current_row--;
                 } else {
                     current_row = rendering.rows - 1;
-                    if (current_col > 0) current_col--;
+                    if (current_col > 0) {
+                        current_col--;
+                    } else {
+                        current_col = rendering.cols - 1;
+                    }
                 }
                 break;
             }
@@ -685,14 +689,14 @@ bool pager_t::select_next_completion_in_direction(selection_direction_t directio
                 break;
             }
             case direction_south: {
-                // Go down, unless we are in the last row. Note that this means that we may set
-                // selected_completion_idx to an out-of-bounds value if the last row is incomplete;
-                // this is a feature (it allows "last column memory").
-                if (current_row + 1 < rendering.rows) {
+                // Go down, unless we are in the last row.
+                // If we go over the last element, wrap to the first.
+                if (current_row + 1 < rendering.rows &&
+                    current_col * rendering.rows + current_row + 1 < completion_infos.size()) {
                     current_row++;
                 } else {
                     current_row = 0;
-                    if (current_col + 1 < rendering.cols) current_col++;
+                    current_col = (current_col + 1) % rendering.cols;
                 }
                 break;
             }
@@ -704,7 +708,7 @@ bool pager_t::select_next_completion_in_direction(selection_direction_t directio
                     current_col++;
                 } else {
                     current_col = 0;
-                    if (current_row + 1 < rendering.rows) current_row++;
+                    current_row = (current_row + 1) % rendering.rows;
                 }
                 break;
             }
@@ -714,7 +718,11 @@ bool pager_t::select_next_completion_in_direction(selection_direction_t directio
                     current_col--;
                 } else {
                     current_col = rendering.cols - 1;
-                    if (current_row > 0) current_row--;
+                    if (current_row > 0) {
+                        current_row--;
+                    } else {
+                        current_row = rendering.rows - 1;
+                    }
                 }
                 break;
             }

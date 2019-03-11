@@ -16,9 +16,10 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <map>
+#include <list>
 #include <memory>
-#include <set>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "common.h"
@@ -180,6 +181,9 @@ void s_write(screen_t *s, const wcstring &left_prompt, const wcstring &right_pro
 /// line of garbage for every repaint, which will quickly fill the screen.
 void s_reset(screen_t *s, bool reset_cursor, bool reset_prompt = true);
 
+/// Stat stdout and stderr and save result as the current timestamp.
+void s_save_status(screen_t *s);
+
 enum screen_reset_mode_t {
     /// Do not make a new line, do not repaint the prompt.
     screen_reset_current_line_contents,
@@ -199,82 +203,68 @@ bool screen_force_clear_to_end();
 /// Returns the length of an escape code. Exposed for testing purposes only.
 size_t escape_code_length(const wchar_t *code);
 
+// Information about the layout of a prompt.
+struct prompt_layout_t {
+    size_t line_count;       // how many lines the prompt consumes
+    size_t max_line_width;   // width of the longest line
+    size_t last_line_width;  // width of the last line
+};
+
 // Maintain a mapping of escape sequences to their length for fast lookup.
-class cached_esc_sequences_t {
+class layout_cache_t {
    private:
-    // Cached escape sequences we've already detected in the prompt and similar strings.
-    std::set<wcstring> cache;
-    // The escape sequence lengths we've cached. My original implementation used min and max
-    // length variables. The cache was then iterated over using a loop like this:
-    // `for (size_t l = min; l <= max; l++)`.
-    //
-    // However that is inefficient when there are big gaps in the lengths. This has been observed
-    // with the BobTheFish theme which has a bunch of 5 and 6 char sequences and 16 to 19 char
-    // sequences and almost nothing in between. So instead we keep track of only those escape
-    // sequence lengths we've actually cached to avoid checking for matches of lengths we know are
-    // not in our cache.
-    std::vector<size_t> lengths;
-    std::map<size_t, size_t> lengths_match_count;
-    size_t cache_hits;
+    // Cached escape sequences we've already detected in the prompt and similar strings, ordered
+    // lexicographically.
+    std::vector<wcstring> esc_cache_;
+
+    // LRU-list of prompts and their layouts.
+    // Use a list so we can promote to the front on a cache hit.
+    using prompt_layout_pair_t = std::pair<wcstring, prompt_layout_t>;
+    std::list<prompt_layout_pair_t> prompt_cache_;
 
    public:
-    explicit cached_esc_sequences_t() : cache(), lengths(), lengths_match_count(), cache_hits(0) {}
+    static constexpr size_t prompt_cache_max_size = 8;
 
-    void add_entry(const wchar_t *entry, size_t len) {
-        auto str = wcstring(entry, len);
+    /// \return the size of the escape code cache.
+    size_t esc_cache_size() const { return esc_cache_.size(); }
 
-#if 0
-        // This is a can't happen scenario. I only wrote this to validate during testing that it
-        // wouldn't be triggered. I'm leaving it in but commented out in case someone feels the need
-        // to re-enable the check.
-        auto match = cache.find(str);
-        if (match != cache.end()) {
-            debug(0, "unexpected add_entry() call of a value already in the cache: '%ls'",
-                  escape(str.c_str(), ESCAPE_ALL).c_str());
-            return;
-        }
-#endif
-
-        cache.emplace(str);
-        if (std::find(lengths.begin(), lengths.end(), len) == lengths.end()) {
-            lengths.push_back(len);
-            lengths_match_count[len] = 0;
+    /// Insert the entry \p str in its sorted position, if it is not already present in the cache.
+    void add_escape_code(wcstring str) {
+        auto where = std::upper_bound(esc_cache_.begin(), esc_cache_.end(), str);
+        if (where == esc_cache_.begin() || where[-1] != str) {
+            esc_cache_.emplace(where, std::move(str));
         }
     }
 
-    size_t find_entry(const wchar_t *entry) {
-        size_t entry_len = wcslen(entry);
-        for (auto len : lengths) {
-            if (len > entry_len) continue;
-            auto match = cache.find(wcstring(entry, len));
-            if (match != cache.end()) {  // we found a matching cached sequence
-                // Periodically sort  the sequence lengths so we check for matches going from the
-                // most frequently matching lengths to least frequent.
-                lengths_match_count[len]++;
-                if (++cache_hits % 1000 == 0) {
-                    // std::sort(lengths.begin(), lengths.end(), custom_cmp(lengths_match_count));
-                    std::sort(lengths.begin(), lengths.end(), [&](size_t l1, size_t l2) {
-                        return lengths_match_count[l1] > lengths_match_count[l2];
-                    });
-                }
-
-                return len;  // return the length of the matching cached sequence
-            }
+    /// \return the length of a string that matches a prefix of \p entry.
+    size_t find_escape_code(const wchar_t *entry) const {
+        // Do a binary search and see if the escape code right before our entry is a prefix of our
+        // entry. Note this assumes that escape codes are prefix-free: no escape code is a prefix of
+        // another one. This seems like a safe assumption.
+        auto where = std::upper_bound(esc_cache_.begin(), esc_cache_.end(), entry);
+        // 'where' is now the first element that is greater than entry. Thus where-1 is the last
+        // element that is less than or equal to entry.
+        if (where != esc_cache_.begin()) {
+            const wcstring &candidate = where[-1];
+            if (string_prefixes_string(candidate.c_str(), entry)) return candidate.size();
         }
-
-        return 0;  // no cached sequence matches the entry
+        return 0;
     }
+
+    // Finds the layout for a prompt, promoting it to the front. Returns none() if not found.
+    maybe_t<prompt_layout_t> find_prompt_layout(const wcstring &input);
+
+    // Adds a prompt layout for a given string.
+    void add_prompt_layout(wcstring input, prompt_layout_t layout);
 
     void clear() {
-        cache.clear();
-        lengths.clear();
-        lengths_match_count.clear();
-        cache_hits = 0;
+        esc_cache_.clear();
+        prompt_cache_.clear();
     }
 };
 
 // Singleton that is exposed so that the cache can be invalidated when terminal related variables
 // change by calling `cached_esc_sequences.clear()`.
-extern cached_esc_sequences_t cached_esc_sequences;
+extern layout_cache_t cached_layouts;
 
 #endif

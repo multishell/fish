@@ -12,8 +12,8 @@ m4_syscmd([build_tools/git_version_gen.sh 2>/dev/null])
 
 AC_PREREQ([2.60])
 AC_INIT(fish,
-        m4_esyscmd([cut -f 3 -d ' ' FISH-BUILD-VERSION-FILE | tr -d '\n']),
-        fish-users@lists.sourceforge.net)
+        m4_esyscmd([cut -f 2 -d '=' FISH-BUILD-VERSION-FILE | tr -d '"\n']),
+        https://github.com/fish-shell/fish-shell/issues)
 ac_clean_files=a.out.dSYM
 
 #
@@ -25,6 +25,7 @@ AC_SUBST(HAVE_DOXYGEN)
 AC_SUBST(LDFLAGS_FISH)
 AC_SUBST(WCHAR_T_BITS)
 AC_SUBST(EXTRA_PCRE2)
+AC_SUBST(HAVE_BROKEN_WCWIDTH)
 
 #
 # If needed, run autoconf to regenerate the configure file
@@ -211,17 +212,14 @@ AS_IF([test "$use_doxygen" != "no"],
 AC_SYS_LARGEFILE
 
 
-# fish does not use exceptions
-# Disabling exceptions saves about 20% (!) of the compiled code size
+# Fish does not use exceptions.
 CXXFLAGS="$CXXFLAGS -fno-exceptions"
-
 
 #
 # Set some warning flags
 # Don't warn about missing field initializers, it has too many
 # false positives for code like `struct termios tmodes = {};`
 #
-
 CXXFLAGS="$CXXFLAGS -Wextra -Wno-missing-field-initializers"
 
 #
@@ -398,6 +396,15 @@ AC_TRY_LINK( [ #include <wchar.h> ],
              [ int foo = std::wcsncasecmp(L"", L"", 0); ],
              [ AC_MSG_RESULT(yes)
                AC_DEFINE(HAVE_STD__WCSNCASECMP, 1, Define to 1 if you have the `std::wcsncasecmp' function.)
+             ],
+             [AC_MSG_RESULT(no)],
+             )
+
+AC_MSG_CHECKING([for std::make_unique])
+AC_TRY_LINK( [ #include <memory> ],
+             [ std::unique_ptr<int> foo = std::make_unique<int>(); ],
+             [ AC_MSG_RESULT(yes)
+               AC_DEFINE(HAVE_STD__MAKE_UNIQUE, 1, Define to 1 if you have the `std::make_unique' function.)
              ],
              [AC_MSG_RESULT(no)],
              )
@@ -579,6 +586,8 @@ else
   AC_MSG_RESULT(no)
 fi
 
+# ========
+# PCRE2 library configuration.
 pcre2_min_version=10.21
 EXTRA_PCRE2=
 AC_ARG_WITH(
@@ -590,6 +599,20 @@ AC_ARG_WITH(
   [included_pcre2=$withval],
   [included_pcre2=auto]
 )
+
+HAVE_BROKEN_WCWIDTH=
+AC_ARG_ENABLE(
+    [wcwidth],
+    AS_HELP_STRING(
+        [--disable-internal-wcwidth],
+        [use system wcwidth instead of the bundled version]
+        ))
+
+if test "x$enable_wcwidth" != "xno"; then
+      AC_DEFINE([HAVE_BROKEN_WCWIDTH], [1], [banana])
+else
+      AC_DEFINE([HAVE_BROKEN_WCWIDTH], [0], [banana])
+fi
 
 if test "x$included_pcre2" != "xyes"; then
 
