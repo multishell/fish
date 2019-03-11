@@ -117,19 +117,16 @@ static int get_socket( int fork_ok )
 	if( connect( s, (struct sockaddr *)&local, len) == -1 ) 
 	{
 		close( s );
-		if( fork_ok )
+		if( fork_ok && start_fishd )
 		{
 			debug( 2, L"Could not connect to socket %d, starting fishd", s );
 			
-			if( start_fishd )
-			{
-				start_fishd();
-			}
-			
+			start_fishd();
+									
 			return get_socket( 0 );
 		}
 		
-		debug( 3, L"Could not connect to socket %d, already tried forking, giving up", s );
+		debug( 2, L"Could not connect to socket %d, already tried manual restart (or no command supplied), giving up", s );
 		return -1;
 	}
 	
@@ -174,7 +171,7 @@ static void check_connection()
 	
 	if( env_universal_server.killme )
 	{
-		debug( 2, L"Lost connection to universal variable server." );
+		debug( 3, L"Lost connection to universal variable server." );
 		close( env_universal_server.fd );
 		env_universal_server.fd = -1;
 		env_universal_server.killme=0;
@@ -193,7 +190,7 @@ static void reconnect()
 	if( get_socket_count >= RECONNECT_COUNT )
 		return;
 	
-	debug( 2, L"Get new fishd connection" );
+	debug( 3, L"Get new fishd connection" );
 	
 	init = 0;
 	env_universal_server.fd = get_socket(1);
@@ -262,6 +259,8 @@ int env_universal_read_all()
 	if( !init)
 		return 0;
 
+	debug( 3, L"env_universal_read_all()" );
+
 	if( env_universal_server.fd == -1 )
 	{
 		reconnect();		
@@ -290,11 +289,13 @@ wchar_t *env_universal_get( const wchar_t *name )
 	if( !name )
 		return 0;
 
+	debug( 3, L"env_universal_get( \"%ls\" )", name );
 	return env_universal_common_get( name );
 }
 
 int env_universal_get_export( const wchar_t *name )
 {
+	debug( 3, L"env_universal_get_export()" );
 	return env_universal_common_get_export( name );
 }
 
@@ -305,7 +306,7 @@ void env_universal_barrier()
 
 	if( !init || ( env_universal_server.fd == -1 ))
 		return;
-	
+
 	barrier_reply = 0;
 
 	/*
@@ -330,6 +331,7 @@ void env_universal_barrier()
 		if( env_universal_server.fd == -1 )
 		{
 			reconnect();
+			debug( 2, L"barrier interrupted, exiting" );
 			return;			
 		}
 		
@@ -347,6 +349,7 @@ void env_universal_barrier()
 		if( env_universal_server.fd == -1 )
 		{
 			reconnect();
+			debug( 2, L"barrier interrupted, exiting (2)" );
 			return;			
 		}		
 		FD_ZERO( &fds );
@@ -365,7 +368,7 @@ void env_universal_set( const wchar_t *name, const wchar_t *value, int export )
 	if( !init )
 		return;
 	
-	debug( 3, L"env_universal_set( %ls, %ls )", name, value );
+	debug( 3, L"env_universal_set( \"%ls\", \"%ls\" )", name, value );
 	
 	msg = create_message( export?SET_EXPORT:SET, 
 						  name, 
@@ -388,8 +391,8 @@ void env_universal_remove( const wchar_t *name )
 	if( !init )
 		return;
 	
-	debug( 2,
-		   L"env_universal_remove( %ls )",
+	debug( 3,
+		   L"env_universal_remove( \"%ls\" )",
 		   name );
 
 	msg= create_message( ERASE, name, 0);

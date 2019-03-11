@@ -45,7 +45,7 @@
 /**
    Command used to start fishd
 */
-#define FISHD_CMD L"if which fishd >/dev/null; fishd ^/tmp/fish.%s.log; end"
+#define FISHD_CMD L"if which fishd >/dev/null; fishd ^/tmp/fishd.%s.log; end"
 
 /**
    Value denoting a null string
@@ -343,43 +343,66 @@ void env_init()
 	if( !path )
 	{
 		env_set( L"PATH", L"/bin" ARRAY_SEP_STR L"/usr/bin", ENV_EXPORT | ENV_GLOBAL );
+		path = env_get( L"PATH" );
 	}
 	else
 	{
-		int i;
+		int i, j;
 		array_list_t l;
-		int has_bin=0, has_usr_bin=0;
 		
 		al_init( &l );
 		expand_variable_array( path, &l );
+
+		debug( 3, L"PATH is %ls", path );
 		
-		for( i=0; i<al_get_count( &l); i++ )
-		{
-			wchar_t * el = (wchar_t *)al_get( &l, i );
-			if( contains_str( el, L"/bin", L"/bin/", (void *)0) )
+		
+		const wchar_t *path_el[] = 
 			{
-				has_bin = 1;
+				L"/bin",
+				L"/usr/bin",
+				PREFIX L"/bin",
+				0
 			}
-			if( contains_str( el, L"/usr/bin", L"/usr/bin/", (void *)0) )
+		;
+		
+		for( j=0; path_el[j]; j++ )
+		{
+			int has_el=0;
+
+			debug( 3, L"Check directory %ls", path_el[j] );
+		
+			
+			for( i=0; i<al_get_count( &l); i++ )
 			{
-				has_bin = 1;
+				wchar_t * el = (wchar_t *)al_get( &l, i );
+				size_t len = wcslen( el );
+				while( (len > 0) && (el[len-1]==L'/') )
+					len--;
+				if( (wcslen( path_el[j] ) == len) && (wcsncmp( el, path_el[j], len)==0) )
+				{
+					has_el = 1;
+				}
+			}
+			
+			if( !has_el )
+			{
+				string_buffer_t b;
+				debug( 3, L"directory %ls was missing", path_el[j] );
+				sb_init( &b );
+				sb_append2( &b, path,
+							ARRAY_SEP_STR,
+							path_el[j],
+							(void *)0 );
+								
+				env_set( L"PATH", (wchar_t *)b.buff, ENV_GLOBAL | ENV_EXPORT );
+				sb_destroy( &b );
+				path = env_get( L"PATH" );
+				
 			}
 		}
 		
-		if( !( has_bin && has_usr_bin ) )
-		{
-			string_buffer_t b;
-			sb_init( &b );
-			sb_append( &b, path );
-			if( !has_bin )
-				sb_append( &b, ARRAY_SEP_STR L"/bin" );
-			if( !has_usr_bin )
-				sb_append( &b, ARRAY_SEP_STR L"/usr/bin" );
-					
-			env_set( L"PATH", (wchar_t *)b.buff, ENV_GLOBAL | ENV_EXPORT );
-			sb_destroy( &b );
-		}		
-		
+		debug( 3, L"After: PATH is %ls", path );
+
 		al_foreach( &l, (void (*)(const void *))&free );
 		al_destroy( &l );
 		
@@ -569,8 +592,11 @@ void env_set( const wchar_t *key,
 			else
 			{
 				if( !proc_had_barrier)
+				{
+					proc_had_barrier=1;
 					env_universal_barrier();
-
+				}
+				
 				if( env_universal_get( key ) )
 				{
 					int export = 0;
@@ -785,7 +811,11 @@ wchar_t *env_get( const wchar_t *key )
 			env = env->next;
 	}	
 	if( !proc_had_barrier)
+	{
+		proc_had_barrier=1;
 		env_universal_barrier();
+	}
+	
 	item = env_universal_get( key );
 	
 	if( !item || (wcscmp( item, ENV_NULL )==0))
@@ -822,7 +852,11 @@ int env_exist( const wchar_t *key )
 			env = env->next;
 	}	
 	if( !proc_had_barrier)
+	{
+		proc_had_barrier=1;
 		env_universal_barrier();
+	}
+	
 	item = env_universal_get( key );
 	
 	return item != 0;
@@ -1056,8 +1090,11 @@ static void export_func2( const void *k, const void *v, void *aux )
 char **env_export_arr( int recalc)
 {
 	if( recalc && !proc_had_barrier)
+	{
+		proc_had_barrier=1;
 		env_universal_barrier();
-
+	}
+	
 	if( has_changed )
 	{
 		array_list_t uni;

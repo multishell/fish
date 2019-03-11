@@ -1,5 +1,5 @@
 # Process this file with autoconf to produce a configure script.
-AC_INIT(fish,1.16.2,axel@liljencrantz.se)
+AC_INIT(fish,1.17.0,axel@liljencrantz.se)
 
 AC_CANONICAL_TARGET
 
@@ -64,7 +64,7 @@ AC_CHECK_FILES([/proc/self/stat])
 AC_CHECK_FILE([/usr/pkg/lib],[AC_SUBST(LIBDIR,[-L/usr/pkg/lib\ -R/usr/pkg/lib])])
 AC_CHECK_FILE([/usr/pkg/include],[AC_SUBST(INCLUDEDIR,[-I/usr/pkg/include])])
 
-AC_CHECK_FUNCS( [wprintf futimes wcwidth wcswidth] ) 
+AC_CHECK_FUNCS( [wprintf futimes wcwidth wcswidth getopt_long] ) 
 AC_CHECK_HEADERS([getopt.h termio.h sys/resource.h])
 
 # Check for RLIMIT_AS in sys/resource.h.
@@ -78,6 +78,43 @@ if test "$have_rlimit_as" = yes; then
 else
     AC_MSG_RESULT(no)
 fi
+
+# Check for RLIMIT_MEMLOCK in sys/resource.h.
+AC_MSG_CHECKING([for RLIMIT_MEMLOCK in sys/resource.h])
+AC_TRY_COMPILE([#include <sys/resource.h>],
+[int tmp; tmp=RLIMIT_MEMLOCK;], have_rlimit_as=yes, have_rlimit_as=no)
+if test "$have_rlimit_as" = yes; then
+    AC_MSG_RESULT(yes)
+	AC_DEFINE([HAVE_RLIMIT_MEMLOCK], [1],
+			  [Define to 1 if HAVE_RLIMIT_MEMLOCK is defined in <sys/resource.h>.])
+else
+    AC_MSG_RESULT(no)
+fi
+
+# Check for RLIMIT_RSS in sys/resource.h.
+AC_MSG_CHECKING([for RLIMIT_RSS in sys/resource.h])
+AC_TRY_COMPILE([#include <sys/resource.h>],
+[int tmp; tmp=RLIMIT_RSS;], have_rlimit_as=yes, have_rlimit_as=no)
+if test "$have_rlimit_as" = yes; then
+    AC_MSG_RESULT(yes)
+	AC_DEFINE([HAVE_RLIMIT_RSS], [1],
+			  [Define to 1 if HAVE_RLIMIT_RSS is defined in <sys/resource.h>.])
+else
+    AC_MSG_RESULT(no)
+fi
+
+# Check for RLIMIT_NPROC in sys/resource.h.
+AC_MSG_CHECKING([for RLIMIT_NPROC in sys/resource.h])
+AC_TRY_COMPILE([#include <sys/resource.h>],
+[int tmp; tmp=RLIMIT_NPROC;], have_rlimit_as=yes, have_rlimit_as=no)
+if test "$have_rlimit_as" = yes; then
+    AC_MSG_RESULT(yes)
+	AC_DEFINE([HAVE_RLIMIT_NPROC], [1],
+			  [Define to 1 if HAVE_RLIMIT_NPROC is defined in <sys/resource.h>.])
+else
+    AC_MSG_RESULT(no)
+fi
+
 
 AC_CHECK_LIB(socket, connect)
 AC_CHECK_LIB(rt, nanosleep)
