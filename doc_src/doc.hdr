@@ -49,12 +49,12 @@ has to be used.
 Here is a list of some useful commands:
 
 - \c cd, change the current directory
-- \c ls, list the contents of a directory
-- \c man, print a manual page
-- \c mv, move files
+- \c ls, list files and directories
+- \c man, display a manual page on the screen
+- \c mv, move (rename) files
 - \c cp, copy files
 - \c open, open files with the default application associated with each filetype
-- \c less, read the contents of files 
+- \c less, list the contents of files 
 
 Commands and parameters are separated by the space character
 (&nbsp;). Every command ends with either a newline (i.e. by pressing
@@ -68,10 +68,10 @@ and directories in the current working directory, but by using the \c
 -l switch, the behaviour of ls is changed to not only display the
 filename, but also the size, permissions, owner and modification time
 of each file. Switches differ between commands and are documented in
-the manual page for each command. Some switches are very common
-though, for example '--help' will usually display a help text, '-i'
-will often turn on interactive prompting before taking action, while
-'-f' will turn it off.
+the manual page for each command. Some switches are common to most
+command though, for example '--help' will usually display a help text,
+'-i' will often turn on interactive prompting before taking action,
+while '-f' will turn it off.
 
 \subsection quotes Quotes
 
@@ -116,6 +116,7 @@ these characters, so called escape sequences are provided. These are:
 - <code>'\\*'</code>, escapes the star character
 - <code>'\\?'</code>, escapes the question mark character
 - <code>'\\~'</code>, escapes the tilde character
+- <code>'\\%'</code>, escapes the percent character
 - <code>'\\#'</code>, escapes the hash character
 - <code>'\\('</code>, escapes the left parenthesis character
 - <code>'\\)'</code>, escapes the right parenthesis character
@@ -540,6 +541,7 @@ a string is expanded into a process id. The following expansions are
 performed:
 
 - If the string is the entire word \c self, the shells pid is the result
+- When inside a command substitution, if the string is the entire word \c caller, the job number (not the pid) of the job the created the command substitution is the result
 - Otherwise, if the string is the id of a job, the result is the process
 group id of the job.
 - Otherwise, if any child processes match the specified string, their 
@@ -752,7 +754,8 @@ certain environment variables.
 
 - \c BROWSER, which is the users preferred web browser. If this variable is set, fish will use the specified browser instead of the system default browser to display the fish documentation.
 - \c CDPATH, which is an array of directories in which to search for the new directory for the \c cd builtin.
-- \c fish_color_normal, \c fish_color_command, \c fish_color_substitution, \c fish_color_redirection, \c fish_color_end, \c fish_color_error, \c fish_color_param, \c fish_color_comment, \c fish_color_match, \c fish_color_search_match, \c fish_color_cwd, \c fish_pager_color_prefix, \c fish_pager_color_completion, \c fish_pager_color_description and \c fish_pager_color_progress are used to change the color of various elements in \c fish. These variables are universal, i.e. when changing them, their new value will be used by all running fish sessions. The new value will also be retained when restarting fish.
+- A large number of variable starting with the prefixes \c fish_color and \c fish_pager_color. See <a href='#variables-color'>Variables for changing highlighting colors</a> for more information.
+- \c LANG, \c LC_ALL, \c LC_COLLATE, \c LC_CTYPE, \c LC_MESSAGES, \c LC_MONETARY, \c LC_NUMERIC and \c LC_TIME set the language option for the shell and subprograms. See the section <a href='#variables-locale'>Locale variables</a> for more information.
 - \c PATH, which is an array of directories in which to search for commands
 - \c umask, which is the current file creation mask. The preferred way to change the umask variable is through the <a href="commands.html#umask">umask shellscript function</a>. An attempt to set umask to an invalid value will always fail.
 
@@ -767,7 +770,6 @@ values of most of these variables.
 - \c PWD, which is the current working directory. 
 - \c status, which is the exit status of the last foreground job to exit. If a job contains pipelines, the status of the last command in the pipeline is the status for the job.
 - \c USER, which is the username. This variable can only be changed by the root user.
-- \c LANG, \c LC_ALL, \c LC_COLLATE, \c LC_CTYPE, \c LC_MESSAGES, \c LC_MONETARY, \c LC_NUMERIC and \c LC_TIME set the language option for the shell and subprograms. See the section <a href='#variables-locale'>Locale variables</a> for more information.
 
 Variables whose name are in uppercase are exported to the commands
 started by fish, those in lowercase are not exported. This rule is not
@@ -775,6 +777,45 @@ enforced by fish, but it is good coding practice to use casing to
 distinguish between exported and unexported variables. \c fish also
 uses several variables internally. Such variables are prefixed with
 the string __FISH or __fish. These should be ignored by the user.
+
+\subsection variables-color Variables for changing highlighting colors
+
+The colors used by fish for syntax highlighting can be configured by
+changing the values of a various variables. The value of these
+variables can be one of the colors accepted by the <a
+href='commands.html#set_color'>\c set_color</a> command. The \c --bold
+or \c -b switches accepted by \c set_color are also accepted.
+
+The following variables are available to change the highligting colors
+in fish:
+
+- \c fish_color_normal, the default color
+- \c fish_color_command, the color for commands
+- \c fish_color_quote, the color for quoted blocks of text
+- \c fish_color_redirection, the color for IO redirections
+- \c fish_color_end, the color for process separators like ';' and '&'
+- \c fish_color_error, the color used to highlight potential errors
+- \c fish_color_param, the color for regular command parameters
+- \c fish_color_comment, the color used for code comments
+- \c fish_color_match, the color used to highlight matching parenthesis
+- \c fish_color_search_match, the color used to highlight history search matches
+- \c fish_color_operator, the color for parameter expansion operators like '*' and '~'
+- \c fish_color_escape, the color used to highlight character escapes like '\\n' and '\\x70'
+- \c fish_color_cwd, the color used for the current working directory in the default prompt
+
+Additionally, the following variables are available to change the
+highlighting in the completion pager:
+
+- \c fish_pager_color_prefix, the color of the prefix string, i.e. the string that is to be completed
+- \c fish_pager_color_completion, the color of the completion itself
+- \c fish_pager_color_description, the color of the completion description
+- \c fish_pager_color_progress, the color of the progress bar at the bottom left corner
+
+Example:
+
+To make errors highlighted and red, use:
+
+<code>set fish_color_error red --bold</code>D
 
 \subsection variables-locale Locale variables
 
@@ -1197,12 +1238,9 @@ compress, wine, xmms, dig, wine, batch, cron,
 g++, javac, java, gcj, lpr, doxygen, whois, find)
 - Undo support
 - Check keybinding commands for output - if nothing has happened, don't repaint to reduce flicker
-- The jobs builtin should be able to give information on a specific job, such as the pids of the processes in the job
 - Syntax highlighting should mark cd to non-existing directories as an error
 - wait shellscript
 - Support for the screen clipboard
-- The -a string sent to complete should be validated
-- Fish should detect improper variable expansion when validating, e.g. strings such as 'foo$' and 'a${}' should be detected as invalid
 
 
 \subsection todo-possible Possible features
@@ -1220,7 +1258,6 @@ g++, javac, java, gcj, lpr, doxygen, whois, find)
 - Inclusion guards for the init files to make them evaluate only once, even if the user has installed fish both in /etc and in $HOME
 - Do not actually load/parse .fish_history, only mmap it and use some clever string handling. Should save ~150 kB of memory permanently, but is very hard to implement.
 - command specific wildcarding (use case * instead of case '*', etc.)
-- show the whole list of commands on using tab on an empty commandline
 - Map variables. (export only the values. When expanding with no key specified, expand to all values.)
 - Descriptions for variables using 'set -d'.
 - Parse errors should when possible honor IO redirections

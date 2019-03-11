@@ -67,21 +67,6 @@ parts of fish.
 */
 #define LOCKPOLLINTERVAL 10
 
-/**
-  Highest legal ascii value
-*/
-#define ASCII_MAX 127u
-
-/**
-  Highest legal 16-bit unicode value
-*/
-#define UCS2_MAX 0xffffu
-
-/**
-  Highest legal byte value
-*/
-#define BYTE_MAX 0xffu
-
 struct termios shell_modes;      
 
 int error_max=1;
@@ -562,9 +547,10 @@ void debug( int level, const wchar_t *msg, ... )
 
 	sb_init( &sb );
 	sb_init( &sb2 );
-	va_start( va, msg );
-	
+
 	sb_printf( &sb, L"%ls: ", program_name );
+
+	va_start( va, msg );	
 	sb_vprintf( &sb, msg, va );
 	va_end( va );	
 
@@ -596,7 +582,7 @@ void write_screen( const wchar_t *msg, string_buffer_t *buff )
 			*/
 			while( *pos && ( !wcschr( L" \n\r\t", *pos ) ) )
 			{
-
+				
 				/*
 				  Check is token is wider than one line.
 				  If so we mark it as an overflow and break the token.
@@ -621,7 +607,7 @@ void write_screen( const wchar_t *msg, string_buffer_t *buff )
 			else if( overflow )
 			{
 				/*
-				  In case of overflow, we print a newline, except if we alreade are at position 0
+				  In case of overflow, we print a newline, except if we already are at position 0
 				*/
 				wchar_t *token = wcsndup( start, pos-start );
 				if( line_width != 0 )
@@ -645,6 +631,7 @@ void write_screen( const wchar_t *msg, string_buffer_t *buff )
 				free( token );
 				line_width += (line_width!=0?1:0) + tok_width;
 			}
+			
 			/*
 			  Break on end of string
 			*/
@@ -1417,4 +1404,30 @@ int common_get_height()
 {
 	return termsize.ws_row;
 }
+
+void tokenize_variable_array( const wchar_t *val, array_list_t *out )
+{
+	if( val )
+	{
+		wchar_t *cpy = wcsdup( val );
+		wchar_t *pos, *start;
+
+		if( !cpy )
+		{
+			die_mem();
+		}
+
+		for( start=pos=cpy; *pos; pos++ )
+		{
+			if( *pos == ARRAY_SEP )
+			{
+				*pos=0;
+				al_push( out, start==cpy?cpy:wcsdup(start) );
+				start=pos+1;
+			}
+		}
+		al_push( out, start==cpy?cpy:wcsdup(start) );
+	}
+}
+
 

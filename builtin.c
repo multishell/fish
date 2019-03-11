@@ -93,18 +93,6 @@ typedef struct builtin_data
 
 
 /**
-   Print modes for the jobs builtin
-*/
-enum
-{
-	JOBS_DEFAULT, /**< Print lots of general info */
-	JOBS_PRINT_PID, /**< Print pid of each process in job */
-	JOBS_PRINT_COMMAND, /**< Print command name of each process in job */
-	JOBS_PRINT_GROUP, /**< Print group id of job */
-}
-	;
-
-/**
    Table of all builtins
 */
 static hash_table_t builtin;
@@ -159,6 +147,15 @@ void builtin_wperror( const wchar_t *s)
 	}
 }
 
+static int count_char( const wchar_t *str, wchar_t c )
+{
+	int res = 0;
+	for( ; *str; str++ )
+	{
+		res += (*str==c);
+	}
+	return res;
+}
 
 /*
   Here follows the definition of all builtin commands. The function
@@ -170,9 +167,11 @@ void builtin_wperror( const wchar_t *s)
   are part of the parser. (They are not parsed as commands, instead
   they only slightly alter the parser state)
 
+  If \c b is the buffer representing standard error, and the help
+  message is about to be printed to an interactive screen, it may be
+  shortened to fit the screen.
+
 */
-
-
 
 void builtin_print_help( wchar_t *cmd, string_buffer_t *b )
 {
@@ -189,11 +188,50 @@ void builtin_print_help( wchar_t *cmd, string_buffer_t *b )
 	if( !h )
 		return;
 
-
-
-	wchar_t *str = str2wcs(builtin_help_get( cmd ));
+	wchar_t *str = str2wcs( h );
 	if( str )
 	{
+
+		if( is_interactive && !builtin_out_redirect && b==sb_err)
+		{
+			/* Interactive mode help to screen - only print synopsis if the rest won't fit  */
+			
+			int screen_height, lines;
+			
+			screen_height = common_get_height();
+			lines = count_char( str, L'\n' );
+			if( lines > 2*screen_height/3 )
+			{
+				wchar_t *pos;
+				
+				/* Find first empty line */
+				for( pos=str; *pos; pos++ )
+				{
+					if( *pos == L'\n' )
+					{
+						wchar_t *pos2;
+						int is_empty = 1;
+						
+						for( pos2 = pos+1; *pos2; pos2++ )
+						{
+							if( *pos2 == L'\n' )
+								break;
+							
+							if( *pos2 != L'\t' && *pos2 !=L' ' )
+							{
+								is_empty = 0;
+								break;
+							}
+						}
+						if( is_empty )
+						{
+							*(pos+1)=L'\0';
+						}
+					}
+				}
+			}
+		}
+		
 		sb_append( b, str );
 		free( str );
 	}
@@ -216,6 +254,10 @@ static int builtin_bind( wchar_t **argv )
 			}
 			,
 			{
+				L"help", no_argument, 0, 'h'
+			}
+			,
+			{
 				0, 0, 0, 0
 			}
 		}
@@ -227,7 +269,7 @@ static int builtin_bind( wchar_t **argv )
 
 		int opt = wgetopt_long( argc,
 								argv,
-								L"M:",
+								L"M:h",
 								long_options,
 								&opt_index );
 		if( opt == -1 )
@@ -250,6 +292,10 @@ static int builtin_bind( wchar_t **argv )
 				input_set_mode( woptarg );
 				break;
 
+			case 'h':
+				builtin_print_help( argv[0], sb_out );
+				return 0;
+				
 			case '?':
 				builtin_print_help( argv[0], sb_err );
 
@@ -337,7 +383,7 @@ static int builtin_block( wchar_t **argv )
 
 				return 1;
 			case 'h':
-				builtin_print_help( argv[0], sb_err );
+				builtin_print_help( argv[0], sb_out );
 				return 0;
 
 			case 'g':
@@ -478,7 +524,7 @@ static int builtin_builtin(  wchar_t **argv )
 
 				return 1;
 			case 'h':
-				builtin_print_help( argv[0], sb_err );
+				builtin_print_help( argv[0], sb_out );
 				return 0;
 
 			case 'n':
@@ -702,6 +748,10 @@ static int builtin_functions( wchar_t **argv )
 			}
 			,
 			{
+				L"help", no_argument, 0, 'h'
+			}
+			,
+			{
 				0, 0, 0, 0
 			}
 		}
@@ -713,7 +763,7 @@ static int builtin_functions( wchar_t **argv )
 
 		int opt = wgetopt_long( argc,
 								argv,
-								L"ed:na",
+								L"ed:nah",
 								long_options,
 								&opt_index );
 		if( opt == -1 )
@@ -748,6 +798,10 @@ static int builtin_functions( wchar_t **argv )
 			case 'a':
 				show_hidden=1;
 				break;
+
+			case 'h':
+				builtin_print_help( argv[0], sb_out );
+				return 0;
 
 			case '?':
 				builtin_print_help( argv[0], sb_err );
@@ -949,6 +1003,10 @@ static int builtin_function( wchar_t **argv )
 			}
 			,
 			{
+				L"help", no_argument, 0, 'h'
+			}
+			,
+			{
 				0, 0, 0, 0
 			}
 		}
@@ -960,7 +1018,7 @@ static int builtin_function( wchar_t **argv )
 
 		int opt = wgetopt_long( argc,
 								argv,
-								L"bd:s:j:p:v:",
+								L"bd:s:j:p:v:h",
 								long_options,
 								&opt_index );
 		if( opt == -1 )
@@ -1114,6 +1172,10 @@ static int builtin_function( wchar_t **argv )
 				break;
 			}
 
+			case 'h':
+				builtin_print_help( argv[0], sb_out );
+				return 0;
+				
 			case '?':
 				builtin_print_help( argv[0], sb_err );
 				res = 1;
@@ -1160,7 +1222,7 @@ static int builtin_function( wchar_t **argv )
 		array_list_t names;
 		int chars=0;
 
-//		builtin_print_help( argv[0], sb_err );
+		builtin_print_help( argv[0], sb_err );
 		const wchar_t *cfa =  _( L"Current functions are: " );
 		sb_append( sb_err, cfa );
 		chars += wcslen( cfa );
@@ -1258,7 +1320,7 @@ static int builtin_random( wchar_t **argv )
 				return 1;
 
 			case 'h':
-				builtin_print_help( argv[0], sb_err );
+				builtin_print_help( argv[0], sb_out );
 				break;
 
 			case '?':
@@ -1369,6 +1431,10 @@ static int builtin_read( wchar_t **argv )
 				}
 				,
 				{
+					L"help", no_argument, 0, 'h'
+				}
+				,
+				{
 					0, 0, 0, 0
 				}
 			}
@@ -1378,7 +1444,7 @@ static int builtin_read( wchar_t **argv )
 
 		int opt = wgetopt_long( argc,
 								argv,
-								L"xglUup:c:",
+								L"xglUup:c:h",
 								long_options,
 								&opt_index );
 		if( opt == -1 )
@@ -1418,6 +1484,10 @@ static int builtin_read( wchar_t **argv )
 			case L'c':
 				commandline = woptarg;
 				break;
+
+			case 'h':
+				builtin_print_help( argv[0], sb_out );
+				return 0;
 
 			case L'?':
 				builtin_print_help( argv[0], sb_err );
@@ -1695,7 +1765,7 @@ static int builtin_status( wchar_t **argv )
 				return 1;
 
 			case 'h':
-				builtin_print_help( argv[0], sb_err );
+				builtin_print_help( argv[0], sb_out );
 				return 0;
 
 			case 'j':
@@ -1849,7 +1919,7 @@ static int builtin_exit( wchar_t **argv )
 
 		default:
 			sb_printf( sb_err,
-					   _( L"%ls: Too many arguments\n" ),
+					   BUILTIN_ERR_TOO_MANY_ARGUMENTS,
 					   argv[0] );
 
 			builtin_print_help( argv[0], sb_err );
@@ -2259,309 +2329,6 @@ static int builtin_bg( wchar_t **argv )
 }
 
 
-#ifdef HAVE__PROC_SELF_STAT
-/**
-   Calculates the cpu usage (in percent) of the specified job.
-*/
-static int cpu_use( job_t *j )
-{
-	double u=0;
-	process_t *p;
-
-	for( p=j->first_process; p; p=p->next )
-	{
-		struct timeval t;
-		int jiffies;
-		gettimeofday( &t, 0 );
-		jiffies = proc_get_jiffies( p );
-
-		double t1 = 1000000.0*p->last_time.tv_sec+p->last_time.tv_usec;
-		double t2 = 1000000.0*t.tv_sec+t.tv_usec;
-
-/*		fwprintf( stderr, L"t1 %f t2 %f p1 %d p2 %d\n",
-  t1, t2, jiffies, p->last_jiffies );
-*/
-
-		u += ((double)(jiffies-p->last_jiffies))/(t2-t1);
-	}
-	return u*1000000;
-}
-#endif
-
-/**
-   Print information about the specified job
-*/
-static void builtin_jobs_print( job_t *j, int mode, int header )
-{
-	process_t *p;
-	switch( mode )
-	{
-		case JOBS_DEFAULT:
-		{
-
-			if( header )
-			{
-				/*
-				  Print table header before first job
-				*/
-				sb_append( sb_out, _( L"Job\tGroup\t" ));
-#ifdef HAVE__PROC_SELF_STAT
-				sb_append( sb_out, _( L"CPU\t" ) );
-#endif
-				sb_append( sb_out, _( L"State\tCommand\n" ) );
-			}
-
-			sb_printf( sb_out, L"%d\t%d\t", j->job_id, j->pgid );
-
-#ifdef HAVE__PROC_SELF_STAT
-			sb_printf( sb_out, L"%d%%\t", cpu_use(j) );
-#endif
-			sb_append2( sb_out,
-						job_is_stopped(j)?_(L"stopped"):_(L"running"),
-						L"\t",
-						j->command,
-						L"\n",
-						(void *)0 );
-			break;
-		}
-
-		case JOBS_PRINT_GROUP:
-		{
-			if( header )
-			{
-				/*
-				  Print table header before first job
-				*/
-				sb_append( sb_out, _( L"Group\n" ));
-			}
-			sb_printf( sb_out, L"%d\n", j->pgid );
-			break;
-		}
-
-		case JOBS_PRINT_PID:
-		{
-			if( header )
-			{
-				/*
-				  Print table header before first job
-				*/
-				sb_append( sb_out, _( L"Procces\n" ));
-			}
-
-			for( p=j->first_process; p; p=p->next )
-			{
-				sb_printf( sb_out, L"%d\n", p->pid );
-			}
-			break;
-		}
-
-		case JOBS_PRINT_COMMAND:
-		{
-			if( header )
-			{
-				/*
-				  Print table header before first job
-				*/
-				sb_append( sb_out, _( L"Command\n" ));
-			}
-
-			for( p=j->first_process; p; p=p->next )
-			{
-				sb_printf( sb_out, L"%ls\n", p->argv[0] );
-			}
-			break;
-		}
-	}
-
-}
-
-
-
-/**
-   Builtin for printing running jobs
-*/
-static int builtin_jobs( wchar_t **argv )
-{
-	int argc=0;
-	int found=0;
-	int mode=JOBS_DEFAULT;
-	int print_last = 0;
-	job_t *j;
-
-	argc = builtin_count_args( argv );
-	woptind=0;
-
-	while( 1 )
-	{
-		const static struct woption
-			long_options[] =
-			{
-				{
-					L"pid", no_argument, 0, 'p'
-				}
-				,
-				{
-					L"command", no_argument, 0, 'c'
-				}
-				,
-				{
-					L"group", no_argument, 0, 'g'
-				}
-				,
-				{
-					L"last", no_argument, 0, 'l'
-				}
-				,
-				{
-					0, 0, 0, 0
-				}
-			}
-		;
-
-		int opt_index = 0;
-
-		int opt = wgetopt_long( argc,
-								argv,
-								L"pclg",
-								long_options,
-								&opt_index );
-		if( opt == -1 )
-			break;
-
-		switch( opt )
-		{
-			case 0:
-				if(long_options[opt_index].flag != 0)
-					break;
-                sb_printf( sb_err,
-                           BUILTIN_ERR_UNKNOWN,
-                           argv[0],
-                           long_options[opt_index].name );
-
-				sb_append( sb_err,
-						   parser_current_line() );
-//				builtin_print_help( argv[0], sb_err );
-
-
-				return 1;
-
-
-			case 'p':
-				mode=JOBS_PRINT_PID;
-				break;
-
-			case 'c':
-				mode=JOBS_PRINT_COMMAND;
-				break;
-
-			case 'g':
-				mode=JOBS_PRINT_GROUP;
-				break;
-
-			case 'l':
-			{
-				print_last = 1;
-				break;
-			}
-
-
-			case '?':
-				//	builtin_print_help( argv[0], sb_err );
-
-				return 1;
-
-		}
-	}
-
-
-	/*
-	  Do not babble if not interactive
-	*/
-	if( builtin_out_redirect )
-	{
-		found=1;
-	}
-
-	if( print_last )
-	{
-		/*
-		  Ignore unconstructed jobs, i.e. ourself.
-		*/
-		for( j=first_job; j; j=j->next )
-		{
-			if( j->constructed && !job_is_completed(j) )
-			{
-				builtin_jobs_print( j, mode, !found );
-				return 0;
-			}
-		}
-
-	}
-	else
-	{
-		if( woptind < argc )
-		{
-			int i;
-
-			found = 1;
-
-			for( i=woptind; i<argc; i++ )
-			{
-				long pid;
-				wchar_t *end;
-				errno=0;
-				pid=wcstol( argv[i], &end, 10 );
-				if( errno || *end )
-				{
-					sb_printf( sb_err,
-							   _( L"%ls: '%ls' is not a job\n" ),
-							   argv[0],
-							   argv[i] );
-					return 1;
-				}
-
-				j = job_get_from_pid( pid );
-
-				if( j && !job_is_completed( j ) )
-				{
-					builtin_jobs_print( j, mode, !found );
-				}
-				else
-				{
-					sb_printf( sb_err,
-							   _( L"%ls: No suitable job: %d\n" ),
-							   argv[0],
-							   pid );
-					return 1;
-				}
-			}
-		}
-		else
-		{
-			for( j= first_job; j; j=j->next )
-			{
-				/*
-				  Ignore unconstructed jobs, i.e. ourself.
-				*/
-				if( j->constructed && !job_is_completed(j) )
-				{
-					builtin_jobs_print( j, mode, !found );
-					found = 1;
-				}
-			}
-		}
-	}
-
-	if( !found )
-	{
-		sb_printf( sb_out,
-				   _( L"%ls: There are no jobs\n" ),
-				   argv[0] );
-	}
-
-	return 0;
-}
-
 /**
    Builtin for looping over a list
 */
@@ -2590,7 +2357,7 @@ static int builtin_for( wchar_t **argv )
 	else if (wcscmp( argv[2], L"in") != 0 )
 	{
 		sb_printf( sb_err,
-				   _( L"%ls: Second argument must be 'in'\n" ),
+				   BUILTIN_FOR_ERR_IN,
 				   argv[0] );
 		builtin_print_help( argv[0], sb_err );
 	}

@@ -63,13 +63,13 @@ const static struct resource_t resource_arr[] =
 		RLIMIT_FSIZE, L"Maximum size of files created by the shell", L'f', 1024
 	}
 	,
-#if HAVE_RLIMIT_MEMLOCK
+#ifdef RLIMIT_MEMLOCK
 	{
 		RLIMIT_MEMLOCK, L"Maximum size that may be locked into memory", L'l', 1024
 	}
 	,
 #endif
-#if HAVE_RLIMIT_RSS
+#ifdef RLIMIT_RSS
 	{
 		RLIMIT_RSS, L"Maximum resident set size", L'm', 1024
 	}
@@ -87,13 +87,13 @@ const static struct resource_t resource_arr[] =
 		RLIMIT_CPU, L"Maximum amount of cpu time in seconds", L't', 1
 	}
 	,
-#if HAVE_RLIMIT_NPROC
+#ifdef RLIMIT_NPROC
 	{
 		RLIMIT_NPROC, L"Maximum number of processes available to a single user", L'u', 1
 	}
 	,
 #endif
-#if HAVE_RLIMIT_AS
+#ifdef RLIMIT_AS
 	{
 		RLIMIT_AS, L"Maximum amount of virtual memory available to the shell", L'v', 1024
 	}	
@@ -326,6 +326,10 @@ int builtin_ulimit( wchar_t ** argv )
 					L"virtual-memory-size", no_argument, 0, 'v'
 				}
 				,
+				{ 
+					L"help", no_argument, 0, 'h' 
+				} 
+				,
 				{
 					0, 0, 0, 0 
 				}
@@ -337,7 +341,7 @@ int builtin_ulimit( wchar_t ** argv )
 		
 		int opt = wgetopt_long( argc,
 								argv, 
-								L"aHScdflmnptuv", 
+								L"aHScdflmnptuvh", 
 								long_options, 
 								&opt_index );
 		if( opt == -1 )
@@ -379,13 +383,13 @@ int builtin_ulimit( wchar_t ** argv )
 			case L'f':
 				what=RLIMIT_FSIZE;
 				break;
-#if HAVE_RLIMIT_MEMLOCK
+#ifdef RLIMIT_MEMLOCK
 			case L'l':
 				what=RLIMIT_MEMLOCK;
 				break;
 #endif
 
-#if HAVE_RLIMIT_RSS				
+#ifdef RLIMIT_RSS				
 			case L'm':
 				what=RLIMIT_RSS;
 				break;
@@ -403,18 +407,22 @@ int builtin_ulimit( wchar_t ** argv )
 				what=RLIMIT_CPU;
 				break;
 			
-#if HAVE_RLIMIT_NPROC	
+#ifdef RLIMIT_NPROC	
 			case L'u':
 				what=RLIMIT_NPROC;
 				break;
 #endif
 				
-#if HAVE_RLIMIT_AS				
+#ifdef RLIMIT_AS				
 			case L'v':
 				what=RLIMIT_AS;
 				break;
 #endif
 				
+			case L'h':
+				builtin_print_help( argv[0], sb_out );				
+				return 0;
+
 			case L'?':
 				builtin_print_help( argv[0], sb_err );				
 				return 1;	

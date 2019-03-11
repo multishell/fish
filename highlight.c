@@ -40,11 +40,10 @@ static void highlight_universal_internal( wchar_t * buff,
 /**
    The environment variables used to specify the color of different tokens.
 */
-static wchar_t *hightlight_var[] = 
+static wchar_t *highlight_var[] = 
 {
 	L"fish_color_normal",
 	L"fish_color_command",
-	L"fish_color_subshell",
 	L"fish_color_redirection",
 	L"fish_color_end",
 	L"fish_color_error",
@@ -52,24 +51,24 @@ static wchar_t *hightlight_var[] =
 	L"fish_color_comment",
 	L"fish_color_match",
 	L"fish_color_search_match",
-	L"fish_color_pager_prefix",
-	L"fish_color_pager_completion",
-	L"fish_color_pager_description",
-	L"fish_color_pager_progress"
+	L"fish_color_operator",
+	L"fish_color_escape",
+	L"fish_color_quote"
 }
 	;
 
+#define VAR_COUNT ( sizeof(highlight_var)/sizeof(wchar_t *) )
 
 int highlight_get_color( int highlight )
 {
 	if( highlight < 0 )
 		return FISH_COLOR_NORMAL;
-	if( highlight >= (12) )
+	if( highlight >= VAR_COUNT )
 		return FISH_COLOR_NORMAL;
 	
-	wchar_t *val = env_get( hightlight_var[highlight]);
+	wchar_t *val = env_get( highlight_var[highlight]);
 	if( val == 0 )
-		val = env_get( hightlight_var[HIGHLIGHT_NORMAL]);
+		val = env_get( highlight_var[HIGHLIGHT_NORMAL]);
 	
 	if( val == 0 )
 	{
@@ -77,6 +76,289 @@ int highlight_get_color( int highlight )
 	}
 	
 	return output_color_code( val );
+}
+
+/**
+   Highligt operators (such as $, ~, %, as well as escaped characters.
+*/
+static void highlight_param( const wchar_t * buff,
+							 int *color,
+							 int pos,
+							 array_list_t *error )
+{
+	
+	
+	int mode = 0; 
+	int in_pos, len = wcslen( buff );
+	int bracket_count=0;
+	wchar_t c;
+	
+	for( in_pos=0;
+		 in_pos<len; 
+		 in_pos++ )
+	{
+		c = buff[in_pos];
+		switch( mode )
+		{
+
+			/*
+			  Mode 0 means unquoted string
+			*/
+			case 0:
+			{
+				if( c == L'\\' )
+				{
+					int start_pos = in_pos;
+					in_pos++;
+					
+					if( wcschr( L"~%", buff[in_pos] ) )
+					{
+						if( in_pos == 1 )
+						{
+							color[start_pos] = HIGHLIGHT_ESCAPE;
+							color[in_pos+1] = HIGHLIGHT_NORMAL;
+						}
+					}
+					else if( buff[in_pos]==L',' )
+					{
+						if( bracket_count )
+						{
+							color[start_pos] = HIGHLIGHT_ESCAPE;
+							color[in_pos+1] = HIGHLIGHT_NORMAL;
+						}
+					}
+					else if( wcschr( L"nrtbe*?$(){}'\"<>^ \\#;|&", buff[in_pos] ) )
+					{
+						color[start_pos]=HIGHLIGHT_ESCAPE;
+						color[in_pos+1]=HIGHLIGHT_NORMAL;
+					}
+					else if( wcschr( L"uUxX01234567", buff[in_pos] ) )
+					{
+						int i;
+						long long res=0;
+						int chars=2;
+						int base=16;
+						
+						int byte = 0;
+						wchar_t max_val = ASCII_MAX;
+						
+						switch( buff[in_pos] )
+						{
+							case L'u':
+							{
+								chars=4;
+								max_val = UCS2_MAX;
+								break;
+							}
+							
+							case L'U':
+							{
+								chars=8;
+								max_val = WCHAR_MAX;
+								break;
+							}
+							
+							case L'x':
+							{
+								break;
+							}
+							
+							case L'X':
+							{
+								byte=1;
+								max_val = BYTE_MAX;
+								break;
+							}
+							
+							default:
+							{
+								base=8;
+								chars=3;
+								in_pos--;
+								break;
+							}								
+						}
+						
+						for( i=0; i<chars; i++ )
+						{
+							int d = convert_digit( buff[++in_pos],base);
+							
+							if( d < 0 )
+							{
+								in_pos--;
+								break;
+							}
+							
+							res=(res*base)|d;
+						}
+
+						if( (res <= max_val) )
+						{
+							color[start_pos] = HIGHLIGHT_ESCAPE;
+							color[in_pos+1] = HIGHLIGHT_NORMAL;								
+						}
+						else
+						{	
+							color[start_pos] = HIGHLIGHT_ERROR;
+							color[in_pos+1] = HIGHLIGHT_NORMAL;								
+						}
+					}
+
+				}
+				else 
+				{
+					switch( buff[in_pos]){
+						case L'~':
+						case L'%':
+						{
+							if( in_pos == 0 )
+							{
+								color[in_pos] = HIGHLIGHT_OPERATOR;
+								color[in_pos+1] = HIGHLIGHT_NORMAL;
+							}
+							break;
+						}
+
+						case L'*':
+						case L'?':
+						case L'$':
+						case L'(':
+						case L')':
+						{
+							color[in_pos] = HIGHLIGHT_OPERATOR;
+							color[in_pos+1] = HIGHLIGHT_NORMAL;
+							break;
+						}
+						
+						case L'{':
+						{
+							color[in_pos] = HIGHLIGHT_OPERATOR;
+							color[in_pos+1] = HIGHLIGHT_NORMAL;
+							bracket_count++;
+							break;					
+						}
+						
+						case L'}':
+						{
+							color[in_pos] = HIGHLIGHT_OPERATOR;
+							color[in_pos+1] = HIGHLIGHT_NORMAL;
+							bracket_count--;
+							break;						
+						}
+
+						case L',':
+						{
+							if( bracket_count )
+							{
+								color[in_pos] = HIGHLIGHT_OPERATOR;
+								color[in_pos+1] = HIGHLIGHT_NORMAL;
+							}
+
+							break;					
+						}
+						
+						case L'\'':
+						{
+							color[in_pos] = HIGHLIGHT_QUOTE;
+							mode = 1;
+							break;					
+						}
+				
+						case L'\"':
+						{
+							color[in_pos] = HIGHLIGHT_QUOTE;
+							mode = 2;
+							break;
+						}
+
+					}
+				}		
+				break;
+			}
+
+			/*
+			  Mode 1 means single quoted string, i.e 'foo'
+			*/
+			case 1:
+			{
+				if( c == L'\\' )
+				{
+					int start_pos = in_pos;
+					switch( buff[++in_pos] )
+					{
+						case '\\':
+						case L'\'':
+						{
+							color[start_pos] = HIGHLIGHT_ESCAPE;
+							color[in_pos+1] = HIGHLIGHT_QUOTE;
+							break;
+						}
+						
+						case 0:
+						{
+							return;
+						}
+						
+					}
+					
+				}
+				if( c == L'\'' )
+				{
+					mode = 0;
+					color[in_pos+1] = HIGHLIGHT_NORMAL;
+				}
+				
+				break;
+			}
+
+			/*
+			  Mode 2 means double quoted string, i.e. "foo"
+			*/
+			case 2:
+			{
+				switch( c )
+				{
+					case '"':
+					{
+						mode = 0;
+						color[in_pos+1] = HIGHLIGHT_NORMAL;
+						break;
+					}
+				
+					case '\\':
+					{
+						int start_pos = in_pos;
+						switch( buff[++in_pos] )
+						{
+							case L'\0':
+							{
+								return;
+							}
+							
+							case '\\':
+							case L'$':
+							case '"':
+							{
+								color[start_pos] = HIGHLIGHT_ESCAPE;
+								color[in_pos+1] = HIGHLIGHT_QUOTE;
+								break;
+							}
+						}
+						break;
+					}
+					
+					case '$':
+					{
+						color[in_pos] = HIGHLIGHT_OPERATOR;
+						color[in_pos+1] = HIGHLIGHT_QUOTE;
+						break;
+					}
+				
+				}						
+				break;
+			}
+		}
+	}
 }
 
 
@@ -125,6 +407,12 @@ void highlight_shell( wchar_t * buff,
 					{
 						color[ tok_get_pos( &tok ) ] = HIGHLIGHT_PARAM;
 					}					
+
+					highlight_param( param,
+									 &color[tok_get_pos( &tok )],
+									 pos-tok_get_pos( &tok ), 
+									 error );
+
 				}
 				else
 				{ 
@@ -383,7 +671,7 @@ void highlight_shell( wchar_t * buff,
 			*end=0;
 		
 		highlight_shell( begin+1, color +(begin-buffcpy)+1, -1, error );
-		color[end-buffcpy]=HIGHLIGHT_PARAM;
+		color[end-buffcpy]=HIGHLIGHT_OPERATOR;
 		
 		if( done )
 			break;

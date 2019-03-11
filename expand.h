@@ -112,6 +112,27 @@ enum
 /** String containing the character for separating two array elements */
 #define ARRAY_SEP_STR L"\x1e"
 
+/**
+   Error issued on invalid variable name
+*/
+#define COMPLETE_VAR_DESC _( L"The '$' character begins a variable name. The character '%lc', which directly followed a '$', is not allowed as a part of a variable name, and variable names may not be zero characters long. To learn more about variable expansion in fish, type 'help expand-variable'.")
+
+/**
+   Error issued on invalid variable name
+*/
+#define COMPLETE_VAR_NULL_DESC _( L"The '$' begins a variable name. It was given at the end of an argument. Variable names may not be zero characters long. To learn more about variable expansion in fish, type 'help expand-variable'.")
+
+/**
+   Error issued on invalid variable name
+*/
+#define COMPLETE_VAR_BRACKET_DESC _( L"Did you mean {$VARIABLE}? The '$' character begins a variable name. A bracket, which directly followed a '$', is not allowed as a part of a variable name, and variable names may not be zero characters long. To learn more about variable expansion in fish, type 'help expand-variable'." )
+
+/**
+   Error issued on invalid variable name
+*/
+#define COMPLETE_VAR_PARAN_DESC _( L"Did you mean (COMMAND)? In fish, the '$' character is only used for accessing variables. To learn more about command substitution in fish, type 'help expand-command-substitution'.")
+
+
 
 
 /**
@@ -158,13 +179,14 @@ wchar_t *expand_tilde(wchar_t *in);
 
 
 /**
-   Tokenize the specified string into the specified array_list_t.
-   Each new element is allocated using malloc and must be freed by the
-   caller.
-   
-   \param val the input string. The contents of this string is not changed.
-   \param out the list in which to place the elements. 
+   Test if the specified argument is clean, i.e. it does not contain
+   any tokens which need to be expanded or otherwise altered. Clean
+   strings can be passed through expand_string and expand_one without
+   changing them. About two thirds of all strings are clean, so
+   skipping expansion on them actually does save a small amount of
+   time, since it avoids multiple memory allocations during the
+   expansion process.
 */
-void expand_variable_array( const wchar_t *val, array_list_t *out );
+int expand_is_clean( const wchar_t *in );
 
 #endif

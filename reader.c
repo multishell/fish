@@ -917,7 +917,7 @@ void repaint()
 	if( steps )
 		move_cursor( -steps );
 
-	set_color( FISH_COLOR_NORMAL, -1 );
+	set_color( FISH_COLOR_NORMAL, FISH_COLOR_IGNORE );
 	reader_save_status();
 }
 
@@ -1144,7 +1144,7 @@ static int insert_char( int c )
 		}
 		else
 			writech(c);
-		set_color( FISH_COLOR_NORMAL, -1 );
+		set_color( FISH_COLOR_NORMAL, FISH_COLOR_IGNORE );
 	}
 	else
 	{
@@ -2082,7 +2082,7 @@ void reader_run_command( wchar_t *cmd )
 
 	term_steal();
 
-	env_set( L"_", L"fish", ENV_GLOBAL );
+	env_set( L"_", program_name, ENV_GLOBAL );
 
 #ifdef HAVE__PROC_SELF_STAT
 	proc_update_jiffies();
@@ -2099,7 +2099,13 @@ void reader_run_command( wchar_t *cmd )
 
 static int shell_test( wchar_t *b )
 {
-	return !wcslen(b);
+	if( parser_test( b, 0 ) )
+	{
+		writech( L'\n' );
+		parser_test( b, 1 );
+		return 1;
+	}
+	return 0;
 }
 
 /**
@@ -2467,7 +2473,6 @@ wchar_t *reader_readline()
 			{
 				exit_forced = 1;
 				data->end_loop=1;
-				debug( 1, L"got R_EOF" );
 				break;
 			}
 

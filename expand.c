@@ -77,27 +77,6 @@ parameter expansion.
 #define COMPLETE_LAST_DESC _( L"Last background job")
 
 /**
-   Error issued on invalid variable name
-*/
-#define COMPLETE_VAR_DESC _( L"The '$' character begins a variable name. The character '%lc', which directly followed a '$', is not allowed as a part of a variable name, and variable names may not be zero characters long. To learn more about variable expansion in fish, type 'help expand-variable'.")
-
-/**
-   Error issued on invalid variable name
-*/
-#define COMPLETE_VAR_NULL_DESC _( L"The '$' begins a variable name. It was given at the end of an argument. Variable names may not be zero characters long. To learn more about variable expansion in fish, type 'help expand-variable'.")
-
-/**
-   Error issued on invalid variable name
-*/
-#define COMPLETE_VAR_BRACKET_DESC _( L"Did you mean {$VARIABLE}? The '$' character begins a variable name. A bracket, which directly followed a '$', is not allowed as a part of a variable name, and variable names may not be zero characters long. To learn more about variable expansion in fish, type 'help expand-variable'." )
-
-/**
-   Error issued on invalid variable name
-*/
-#define COMPLETE_VAR_PARAN_DESC _( L"Did you mean (COMMAND)? In fish, the '$' character is only used for accessing variables. To learn more about command substitution in fish, type 'help expand-command-substitution'.")
-
-
-/**
    String in process expansion denoting ourself
 */
 #define SELF_STR L"self"
@@ -117,15 +96,7 @@ parameter expansion.
 */
 #define UNCLEAN L"$*?\\\"'({})"
 
-/**
-   Test if the specified argument is clean, i.e. it does not contain
-   any tokens which need to be expanded or otherwise altered. Clean
-   strings can be passed through expand_string and expand_one without
-   changing them. About 90% of all strings are clean, so skipping
-   expansion on them actually does save a small amount of time, since
-   it avoids multiple memory allocations during the expansion process.
-*/
-static int is_clean( const wchar_t *in )
+int expand_is_clean( const wchar_t *in )
 {
 
 	const wchar_t * str = in;
@@ -159,32 +130,6 @@ static wchar_t *expand_var( wchar_t *in )
 	return env_get( in );
 }
 
-void expand_variable_array( const wchar_t *val, array_list_t *out )
-{
-	if( val )
-	{
-		wchar_t *cpy = wcsdup( val );
-		wchar_t *pos, *start;
-
-		if( !cpy )
-		{
-			die_mem();
-		}
-
-		for( start=pos=cpy; *pos; pos++ )
-		{
-			if( *pos == ARRAY_SEP )
-			{
-				*pos=0;
-				al_push( out, start==cpy?cpy:wcsdup(start) );
-				start=pos+1;
-			}
-		}
-		al_push( out, start==cpy?cpy:wcsdup(start) );
-	}
-}
-
-
 /**
    Test if the specified string does not contain character which can
    not be used inside a quoted string.
@@ -217,7 +162,7 @@ wchar_t *expand_escape_variable( const wchar_t *in )
 	string_buffer_t buff;
 
 	al_init( &l );
-	expand_variable_array( in, &l );
+	tokenize_variable_array( in, &l );
 	sb_init( &buff );
 
 	switch( al_get_count( &l) )
@@ -225,7 +170,7 @@ wchar_t *expand_escape_variable( const wchar_t *in )
 		case 0:
 			sb_append( &buff, L"''");
 			break;
-
+			
 		case 1:
 		{
 			wchar_t *el = (wchar_t *)al_get( &l, 0 );
@@ -282,27 +227,18 @@ wchar_t *expand_escape_variable( const wchar_t *in )
 }
 
 /**
-   Tests if all characters in the string are numeric
-*/
-static int isnumeric( const char *n )
-{
-	if( *n == '\0' )
-		return 1;
-	if( *n < '0' || *n > '9' )
-		return 0;
-	return isnumeric( n+1 );
-}
-
-/**
    Tests if all characters in the wide string are numeric
 */
 static int iswnumeric( const wchar_t *n )
 {
-	if( *n == L'\0' )
-		return 1;
-	if( *n < L'0' || *n > L'9' )
-		return 0;
-	return iswnumeric( n+1 );
+	for( ; *n; n++ )
+	{
+		if( *n < L'0' || *n > L'9' )
+		{
+			return 0;
+		}
+	}
+	return 1;
 }
 
 /**
@@ -377,9 +313,9 @@ static int find_process( const wchar_t *proc,
 						 array_list_t *out )
 {
 	DIR *dir;
-	struct dirent *next;
-	char *pdir_name;
-	char *pfile_name;
+	struct wdirent *next;
+	wchar_t *pdir_name;
+	wchar_t *pfile_name;
 	wchar_t *cmd=0;
 	int sz=0;
 	int found = 0;
@@ -515,20 +451,20 @@ static int find_process( const wchar_t *proc,
 		return 1;
 	}
 
-	pdir_name = malloc( 256 );
-	pfile_name = malloc( 64 );
-	strcpy( pdir_name, "/proc/" );
-
-	while( (next=readdir(dir))!=0 )
+	pdir_name = malloc( sizeof(wchar_t)*256 );
+	pfile_name = malloc( sizeof(wchar_t)*64 );
+	wcscpy( pdir_name, L"/proc/" );
+	
+	while( (next=wreaddir(dir))!=0 )
 	{
-		char *name = next->d_name;
+		wchar_t *name = next->d_name;
 		struct stat buf;
 
-		if( !isnumeric( name ) )
+		if( !iswnumeric( name ) )
 			continue;
 
-		strcpy( pdir_name + 6, name );
-		if( stat( pdir_name, &buf ) )
+		wcscpy( pdir_name + 6, name );
+		if( wstat( pdir_name, &buf ) )
 		{
 			continue;
 		}
@@ -536,17 +472,17 @@ static int find_process( const wchar_t *proc,
 		{
 			continue;
 		}
-		strcpy( pfile_name, pdir_name );
-		strcat( pfile_name, "/cmdline" );
+		wcscpy( pfile_name, pdir_name );
+		wcscat( pfile_name, L"/cmdline" );
 
-		if( !stat( pfile_name, &buf ) )
+		if( !wstat( pfile_name, &buf ) )
 		{
 			/*
 			  the 'cmdline' file exists, it should contain the commandline
 			*/
 			FILE *cmdfile;
 
-			if((cmdfile=fopen( pfile_name, "r" ))==0)
+			if((cmdfile=wfopen( pfile_name, "r" ))==0)
 			{
 				wperror( L"fopen" );
 				continue;
@@ -561,15 +497,15 @@ static int find_process( const wchar_t *proc,
 		else
 		{
 #ifdef SunOS
-			strcpy( pfile_name, pdir_name );
-			strcat( pfile_name, "/psinfo" );
-			if( !stat( pfile_name, &buf ) )
+			wcscpy( pfile_name, pdir_name );
+			wcscat( pfile_name, L"/psinfo" );
+			if( !wstat( pfile_name, &buf ) )
 			{
 				psinfo_t info;
 
 				FILE *psfile;
 
-				if((psfile=fopen( pfile_name, "r" ))==0)
+				if((psfile=wfopen( pfile_name, "r" ))==0)
 				{
 					wperror( L"fopen" );
 					continue;
@@ -608,7 +544,7 @@ static int find_process( const wchar_t *proc,
 				}
 				else
 				{
-					wchar_t *res = str2wcs(name);
+					wchar_t *res = wcsdup(name);
 					if( res )
 						al_push( out, res );
 				}
@@ -804,8 +740,7 @@ static int expand_variables( wchar_t *in, array_list_t *out, int last_idx )
 					{
 						error( SYNTAX_ERROR,
 							   -1,
-							   COMPLETE_VAR_NULL_DESC,
-							   in[stop_pos] );
+							   COMPLETE_VAR_NULL_DESC );
 						break;
 					}
 
@@ -873,7 +808,7 @@ static int expand_variables( wchar_t *in, array_list_t *out, int last_idx )
 
 				if( is_ok )
 				{
-					expand_variable_array( var_val, &var_item_list );
+					tokenize_variable_array( var_val, &var_item_list );
 					if( !all_vars )
 					{
 						int j;
@@ -1403,7 +1338,6 @@ static void remove_internal_separator( const void *s, int conv )
 	*out=0;
 }
 
-
 /**
    The real expansion function. expand_one is just a wrapper around this one.
 */
@@ -1420,9 +1354,7 @@ int expand_string( void *context,
 	int res = EXPAND_OK;
 	int start_count = al_get_count( end_out );
 
-//	debug( 1, L"Expand %ls", str );
-
-	if( (!(flags & ACCEPT_INCOMPLETE)) && is_clean( str ) )
+	if( (!(flags & ACCEPT_INCOMPLETE)) && expand_is_clean( str ) )
 	{
 		halloc_register( context, str );
 		al_push( end_out, str );
@@ -1667,8 +1599,8 @@ wchar_t *expand_one( void *context, wchar_t *string, int flags )
 	array_list_t l;
 	int res;
 	wchar_t *one;
-
-	if( (!(flags & ACCEPT_INCOMPLETE)) &&  is_clean( string ) )
+	
+	if( (!(flags & ACCEPT_INCOMPLETE)) &&  expand_is_clean( string ) )
 	{
 		halloc_register( context, string );
 		return string;

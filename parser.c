@@ -76,7 +76,7 @@ The fish parser. Contains functions for parsing code.
 /**
    Error message for short circuit command error.
 */
-#define COND_ERR_MSG _( L"Short circuit command requires additional command")
+#define COND_ERR_MSG _( L"Pipe or short circuit command requires additional command")
 
 /**
    Error message on reaching maximum recusrion depth
@@ -252,6 +252,10 @@ The fish parser. Contains functions for parsing code.
 #define UNKNOWN_BLOCK _( L"unknown/invalid block" )
 
 
+/**
+   Size of the error string buffer
+*/
+#define ERR_STR_SZ 1024
 /** Last error code */
 int error_code;
 
@@ -262,7 +266,7 @@ event_block_t *global_event_block=0;
 static int err_pos;
 
 /** Description of last error */
-static wchar_t err_str[256];
+static wchar_t err_str[ERR_STR_SZ];
 
 /** Pointer to the current tokenizer */
 static tokenizer *current_tokenizer;
@@ -698,7 +702,7 @@ void error( int ec, int p, const wchar_t *str, ... )
 	err_pos = p;
 
 	va_start( va, str );
-	vswprintf( err_str, 256, str, va );
+	vswprintf( err_str, ERR_STR_SZ, str, va );
 	va_end( va );
 
 }
@@ -1976,7 +1980,7 @@ static int parse_job( process_t *p,
 
 						tmp = (wchar_t *)al_get( args, 0 );
 						al_truncate( args, 0 );
-						al_push( args, wcsdup( L"cd" ) );
+						al_push( args, halloc_wcsdup( j, L"cd" ) );
 						al_push( args, tmp );
 						/*
 						  If we have defined a wrapper around cd, use it,
@@ -1994,7 +1998,7 @@ static int parse_job( process_t *p,
 						
 						/* 
 						   We couln't find the specified command.
-
+						   
 						   What we want to happen now is that the
 						   specified job won't get executed, and an
 						   error message is printed on-screen, but
@@ -2542,11 +2546,258 @@ int eval( const wchar_t *cmd, io_data_t *io, int block_type )
 	return code;
 }
 
-int parser_test( wchar_t * buff,
+static int parser_get_block_type( const wchar_t *cmd )
+{
+	if( wcscmp( cmd, L"while") == 0 )
+		return WHILE;
+	else if( wcscmp( cmd, L"for") == 0 )
+		return FOR;
+	else if( wcscmp( cmd, L"switch") == 0 )
+		return SWITCH;
+	else if( wcscmp( cmd, L"if") == 0 )
+		return IF;
+	else if( wcscmp( cmd, L"function") == 0 )
+		return FUNCTION_DEF;
+	else if( wcscmp( cmd, L"begin") == 0 )
+		return BEGIN;
+	else
+		return -1;
+}
+
+
+static int parser_test_argument( const wchar_t *arg, int babble, int offset )
+{
+	wchar_t *unesc;
+	wchar_t *pos;
+	int err=0;
+	
+	const wchar_t *paran_begin, *paran_end;
+	wchar_t *arg_cpy = wcsdup( arg );
+	int do_loop = 1;
+	
+	while( do_loop )
+	{
+		switch( parse_util_locate_cmdsubst(arg_cpy,
+										   &paran_begin,
+										   &paran_end,
+										   0 ) )
+		{
+			case -1:
+				err=1;
+				if( babble )
+				{
+					error( SYNTAX_ERROR,
+						   offset,
+						   L"Mismatched parans" );
+					print_errors();
+				}
+				free( arg_cpy );
+				return 1;
+								
+			case 0:
+				do_loop = 0;
+				break;
+
+			case 1:
+			{
+				
+				wchar_t *subst = wcsndup( paran_begin+1, paran_end-paran_begin-1 );
+				string_buffer_t tmp;
+				sb_init( &tmp );
+				
+				sb_append_substring( &tmp, arg_cpy, paran_begin - arg_cpy);
+				sb_append_char( &tmp, INTERNAL_SEPARATOR);
+				sb_append( &tmp, paran_end+1);
+				
+//				debug( 1, L"%ls -> %ls %ls", arg_cpy, subst, tmp.buff );
+	
+				err |= parser_test( subst, babble );
+				
+				free( subst );
+				free( arg_cpy );
+				arg_cpy = (wchar_t *)tmp.buff;
+				
+				/*
+				  Do _not_ call sb_destroy on this stringbuffer - it's
+				  buffer is used as the new 'arg_cpy'. It is free'd at
+				  the end of the loop.
+				*/
+				break;
+			}			
+		}
+	}
+
+	unesc = unescape( arg_cpy, 1 );
+	free( arg_cpy );
+
+	/*
+	  Check for invalid variable expansions
+	*/
+	for( pos = unesc; *pos; pos++ )
+	{
+		switch( *pos )
+		{
+			case VARIABLE_EXPAND:
+			case VARIABLE_EXPAND_SINGLE:
+			{
+				switch( *(pos+1))
+				{
+					case BRACKET_BEGIN:
+					{
+						err=1;
+						if( babble )
+						{
+							error( SYNTAX_ERROR,
+								   offset,
+								   COMPLETE_VAR_BRACKET_DESC );
+
+							print_errors();
+						}
+						break;
+					}
+
+					case INTERNAL_SEPARATOR:
+					{
+						err=1;
+						if( babble )
+						{
+							error( SYNTAX_ERROR,
+								   offset,
+								   COMPLETE_VAR_PARAN_DESC );
+							print_errors();
+						}
+						break;
+					}
+
+					case 0:
+					{
+						err=1;
+						if( babble )
+						{
+							error( SYNTAX_ERROR,
+								   offset,
+								   COMPLETE_VAR_NULL_DESC );
+							print_errors();
+						}
+						break;
+					}
+
+					default:
+					{
+						if( !iswalnum(*(pos+1)) && 
+							*(pos+1)!=L'_' && 
+							*(pos+1)!=VARIABLE_EXPAND &&
+							*(pos+1)!=VARIABLE_EXPAND_SINGLE ) 
+						{
+							err=1;
+							if( babble )
+							{
+								error( SYNTAX_ERROR,
+									   offset,
+									   COMPLETE_VAR_DESC,
+									   *(pos+1) );
+								print_errors();
+							}
+						}
+						
+						break;
+					}
+					
+				}
+				
+				break;
+			}
+		}
+		
+		
+	}
+	
+	free( unesc );
+	return err;
+	
+}
+
+int parser_test_args(const  wchar_t * buff,
+					 int babble )
+{
+	tokenizer tok;
+	tokenizer *previous_tokenizer = current_tokenizer;
+	int previous_pos = current_tokenizer_pos;
+	int do_loop = 1;
+	int err = 0;
+	
+	current_tokenizer = &tok;
+	
+	for( tok_init( &tok, buff, 0 );
+		 do_loop && tok_has_next( &tok );
+		 tok_next( &tok ) )
+	{
+		current_tokenizer_pos = tok_get_pos( &tok );
+		switch( tok_last_type( &tok ) )
+		{
+			
+			case TOK_STRING:
+			{
+				err |= parser_test_argument( tok_last( &tok ), babble, tok_get_pos( &tok ) );
+				break;
+			}
+			
+			case TOK_END:
+			{
+				break;
+			}
+			
+			case TOK_ERROR:
+			{
+				if( babble )
+				{
+					error( SYNTAX_ERROR,
+						   tok_get_pos( &tok ),
+						   TOK_ERR_MSG,
+						   tok_last(&tok) );
+					print_errors();
+				}
+				err=1;
+				do_loop=0;
+				break;
+			}
+			
+			default:
+			{
+				if( babble )
+				{
+					error( SYNTAX_ERROR,
+						   tok_get_pos( &tok ),
+						   UNEXPECTED_TOKEN_ERR_MSG,
+						   tok_get_desc( tok_last_type(&tok)) );
+					print_errors();
+				}
+				err=1;				
+				do_loop=0;
+				break;
+			}			
+		}
+	}
+	
+	tok_destroy( &tok );
+	
+	current_tokenizer=previous_tokenizer;
+	current_tokenizer_pos = previous_pos;
+	
+	error_code=0;
+	
+	return err;
+}
+
+int parser_test( const  wchar_t * buff,
 				 int babble )
 {
 	tokenizer tok;
-	int had_cmd=0;
+	/* 
+	   Set to one if a command name has been given for the currently
+	   parsed process specification 
+	*/
+	int had_cmd=0; 
 	int count = 0;
 	int err=0;
 	tokenizer *previous_tokenizer=current_tokenizer;
@@ -2554,10 +2805,18 @@ int parser_test( wchar_t * buff,
 	static int block_pos[BLOCK_MAX_COUNT];
 	static int block_type[BLOCK_MAX_COUNT];
 	int is_pipeline = 0;
+	/*
+	  Set to one if the currently specified process can not be used inside a pipeline
+	*/
 	int forbid_pipeline = 0;
-	int needs_cmd=0;
-	int require_additional_commands=0;
-
+	/* 
+	   Set to one if an additional process specification is needed 
+	*/
+	int needs_cmd=0; 
+	void *context = halloc( 0, 0 );
+	int arg_count=0;
+	wchar_t *cmd=0;
+		
 	current_tokenizer = &tok;
 
 	for( tok_init( &tok, buff, 0 );
@@ -2575,10 +2834,32 @@ int parser_test( wchar_t * buff,
 				{
 					int mark = tok_get_pos( &tok );
 					had_cmd = 1;
-
-					if( require_additional_commands )
+					arg_count=0;
+							
+					if( !(cmd = expand_one( context, 
+											wcsdup( tok_last( &tok ) ), 
+											EXPAND_SKIP_SUBSHELL | EXPAND_SKIP_VARIABLES ) ) )
 					{
-						if( contains_str( tok_last(&tok),
+						err=1;
+						if( babble )
+						{
+							error( SYNTAX_ERROR,
+								   tok_get_pos( &tok ),
+								   ILLEGAL_CMD_ERR_MSG,
+								   cmd );
+							
+							print_errors();
+						}						
+					}
+					
+					if( needs_cmd )
+					{
+						/*
+						  end is not a valid command when a followup
+						  command is needed, such as after 'and' or
+						  'while'
+						*/
+						if( contains_str( cmd,
 										  L"end",
 										  0 ) )
 						{
@@ -2588,18 +2869,18 @@ int parser_test( wchar_t * buff,
 								error( SYNTAX_ERROR,
 									   tok_get_pos( &tok ),
 									   COND_ERR_MSG );
-
+								
 								print_errors();
 							}
 						}
-
-						require_additional_commands--;
+						
+						needs_cmd=0;
 					}
-
+					
 					/*
 					  Decrement block count on end command
 					*/
-					if( wcscmp(tok_last(&tok), L"end")==0)
+					if( wcscmp(cmd, L"end")==0)
 					{
 						tok_next( &tok );
 						count--;
@@ -2609,7 +2890,7 @@ int parser_test( wchar_t * buff,
 					/*
 					  Handle block commands
 					*/
-					if( parser_is_block( tok_last(&tok) ) )
+					if( parser_is_block( cmd ) )
 					{
 						if( count >= BLOCK_MAX_COUNT )
 						{
@@ -2621,24 +2902,7 @@ int parser_test( wchar_t * buff,
 						}
 						else
 						{
-							if( wcscmp( tok_last(&tok), L"while") == 0 )
-								block_type[count] = WHILE;
-							else if( wcscmp( tok_last(&tok), L"for") == 0 )
-								block_type[count] = FOR;
-							else if( wcscmp( tok_last(&tok), L"switch") == 0 )
-								block_type[count] = SWITCH;
-							else if( wcscmp( tok_last(&tok), L"if") == 0 )
-								block_type[count] = IF;
-							else if( wcscmp( tok_last(&tok), L"function") == 0 )
-								block_type[count] = FUNCTION_DEF;
-							else if( wcscmp( tok_last(&tok), L"begin") == 0 )
-								block_type[count] = BEGIN;
-							else
-								block_type[count] = -1;
-
-//							debug( 2, L"add block of type %d after cmd %ls\n", block_type[count], tok_last(&tok) );
-
-
+							block_type[count] = parser_get_block_type( cmd );
 							block_pos[count] = current_tokenizer_pos;
 							tok_next( &tok );
 							count++;
@@ -2652,20 +2916,20 @@ int parser_test( wchar_t * buff,
 					  argument. If parser_skip_arguments is true, the
 					  second argument is optional.
 					*/
-					if( parser_is_subcommand( tok_last( &tok ) ) && !parser_skip_arguments(tok_last( &tok ) ) )
+					if( parser_is_subcommand( cmd ) && !parser_skip_arguments(cmd ) )
 					{
 						needs_cmd = 1;
 						had_cmd = 0;
 					}
-
-					/*
-					  The short circuit commands requires _two_ additional commands.
-					*/
-					if( contains_str( tok_last( &tok ),
+					
+					if( contains_str( cmd,
 									  L"or",
 									  L"and",
 									  0 ) )
 					{
+						/*
+						  'or' and 'and' can not be used inside pipelines
+						*/
 						if( is_pipeline )
 						{
 							err=1;
@@ -2679,15 +2943,14 @@ int parser_test( wchar_t * buff,
 
 							}
 						}
-						require_additional_commands=1;
 					}
-
+					
 					/*
 					  There are a lot of situations where pipelines
-					  are forbidden, inclusing when using the exec
+					  are forbidden, including when using the exec
 					  builtin.
 					*/
-					if( parser_is_pipe_forbidden( tok_last( &tok ) ) )
+					if( parser_is_pipe_forbidden( cmd ) )
 					{
 						if( is_pipeline )
 						{
@@ -2706,16 +2969,13 @@ int parser_test( wchar_t * buff,
 					}
 
 					/*
-					  Test that the case builtin is only used in a switch block
+					  Test that the case builtin is only used directly in a switch block
 					*/
-					if( wcscmp( L"case", tok_last( &tok ) )==0 )
+					if( wcscmp( L"case", cmd )==0 )
 					{
 						if( !count || block_type[count-1]!=SWITCH )
 						{
 							err=1;
-
-//							debug( 2, L"Error on block type %d\n", block_type[count-1] );
-
 
 							if( babble )
 							{
@@ -2729,10 +2989,9 @@ int parser_test( wchar_t * buff,
 					}
 
 					/*
-					  Test that break and continue are only used in loop blocks
+					  Test that break and continue are only used within loop blocks
 					*/
-					if( wcscmp( L"break", tok_last( &tok ) )==0 ||
-						wcscmp( L"continue", tok_last( &tok ) )==0)
+					if( contains_str( cmd, L"break", L"continue", (void *)0 ) )
 					{
 						int found_loop=0;
 						int i;
@@ -2761,9 +3020,9 @@ int parser_test( wchar_t * buff,
 					}
 
 					/*
-					  Test that else is only used in an if-block
+					  Test that else is only used directly in an if-block
 					*/
-					if( wcscmp( L"else", tok_last( &tok ) )==0 )
+					if( wcscmp( L"else", cmd )==0 )
 					{
 						if( !count || block_type[count-1]!=IF )
 						{
@@ -2781,7 +3040,7 @@ int parser_test( wchar_t * buff,
 					}
 
 					/*
-					  Test that end is not used when not inside a blovk
+					  Test that end is not used when not inside any block
 					*/
 					if( count < 0 )
 					{
@@ -2795,6 +3054,47 @@ int parser_test( wchar_t * buff,
 						}
 					}
 				}
+				else
+				{
+					err |= parser_test_argument( tok_last( &tok ), babble, tok_get_pos( &tok ) );
+					
+					/*
+					  If possible, keep track of number of supplied arguments
+					*/
+					if( arg_count >= 0 && expand_is_clean( tok_last( &tok ) ) )
+					{
+						arg_count++;
+					}
+					else
+					{
+						arg_count = -1;
+					}
+					
+					/*
+					  Try to make sure the second argument to 'for' is 'in'
+					*/
+					if( wcscmp( cmd, L"for" ) == 0 )
+					{
+						if( arg_count == 2 )
+						{
+							if( wcscmp( tok_last( &tok ), L"in" ) != 0 )
+							{
+								err = 1;
+															
+								if( babble )
+								{
+									error( SYNTAX_ERROR,
+										   tok_get_pos( &tok ),
+										   BUILTIN_FOR_ERR_IN,
+										   L"for" );
+									
+									print_errors();
+								}
+							}
+						}
+					}
+				}
+				
 				break;
 			}
 
@@ -2840,7 +3140,31 @@ int parser_test( wchar_t * buff,
 
 			case TOK_PIPE:
 			{
-				if( forbid_pipeline )
+				if( !had_cmd )
+				{
+					err=1;
+					if( babble )
+					{
+						if( tok_get_pos(&tok)>0 && buff[tok_get_pos(&tok)-1] == L'|' )
+						{
+							error( SYNTAX_ERROR,
+								   tok_get_pos( &tok ),
+								   CMD_OR_ERR_MSG,
+								   tok_get_desc( tok_last_type(&tok) ) );
+							
+						}
+						else
+						{
+							error( SYNTAX_ERROR,
+								   tok_get_pos( &tok ),
+								   CMD_ERR_MSG,
+								   tok_get_desc( tok_last_type(&tok)));
+						}
+						
+						print_errors();
+					}
+				}
+				else if( forbid_pipeline )
 				{
 					err=1;
 					if( babble )
@@ -2848,31 +3172,46 @@ int parser_test( wchar_t * buff,
 						error( SYNTAX_ERROR,
 							   tok_get_pos( &tok ),
 							   EXEC_ERR_MSG );
-
+						
 						print_errors();
 					}
 				}
-				needs_cmd=0;
-				is_pipeline=1;
+				else
+				{
+					needs_cmd=1;
+					is_pipeline=1;
+					had_cmd=0;
+				}
+				break;
 			}
-
-
+			
 			case TOK_BACKGROUND:
 			{
-				if( needs_cmd && !had_cmd )
+				if( !had_cmd )
 				{
 					err = 1;
 					if( babble )
 					{
-						error( SYNTAX_ERROR,
-							   tok_get_pos( &tok ),
-							   CMD_ERR_MSG,
-							   tok_get_desc( tok_last_type(&tok)));
-
+						if( tok_get_pos(&tok)>0 && buff[tok_get_pos(&tok)-1] == L'&' )
+						{
+							error( SYNTAX_ERROR,
+								   tok_get_pos( &tok ),
+								   CMD_AND_ERR_MSG,
+								   tok_get_desc( tok_last_type(&tok) ) );
+							
+						}
+						else
+						{
+							error( SYNTAX_ERROR,
+								   tok_get_pos( &tok ),
+								   CMD_ERR_MSG,
+								   tok_get_desc( tok_last_type(&tok)));
+						}
+						
 						print_errors();
 					}
 				}
-
+				
 				if( had_cmd )
 				{
 					had_cmd = 0;
@@ -2898,7 +3237,7 @@ int parser_test( wchar_t * buff,
 		}
 	}
 
-	if( require_additional_commands )
+	if( needs_cmd )
 	{
 		err=1;
 		if( babble )
@@ -2927,6 +3266,8 @@ int parser_test( wchar_t * buff,
 	current_tokenizer_pos = previous_pos;
 
 	error_code=0;
+
+	halloc_free( context );
 
 	return err | ((count!=0)<<1);
 }
