@@ -62,6 +62,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "translate.h"
 #include "halloc_util.h"
 
+
 /**
    Parse init files
 */
@@ -69,7 +70,7 @@ static int read_init()
 {
 	char cwd[4096];
 	wchar_t *wcwd;
-	
+
 	if( !getcwd( cwd, 4096 ) )
 	{
 		wperror( L"getcwd" );		
@@ -77,11 +78,11 @@ static int read_init()
 	}
 
 	env_set( L"__fish_help_dir", DOCDIR, 0);	
-	
+
 	eval( L"builtin cd " DATADIR L"/fish 2>/dev/null; . fish 2>/dev/null", 0, TOP );
 	eval( L"builtin cd " SYSCONFDIR L" 2>/dev/null; . fish 2>/dev/null", 0, TOP );
 	eval( L"builtin cd 2>/dev/null;. .fish 2>/dev/null", 0, TOP );
-	
+
 	if( chdir( cwd ) == -1 )
 	{
 //		fwprintf( stderr, L"Invalid directory: %s\n", cwd );
@@ -138,6 +139,10 @@ int main( int argc, char **argv )
 				}
 				,
 				{
+					"no-execute", no_argument, 0, 'n' 
+				}
+				,
+				{
 					"profile", required_argument, 0, 'p' 
 				}
 				,
@@ -159,14 +164,14 @@ int main( int argc, char **argv )
 		
 		int opt = getopt_long( argc,
 							   argv, 
-							   "hilvc:p:d:", 
+							   "hilnvc:p:d:", 
 							   long_options, 
 							   &opt_index );
 		
 #else	
 		int opt = getopt( argc,
 						  argv, 
-						  "hilvc:p:d:" );
+						  "hilnvc:p:d:" );
 #endif
 		if( opt == -1 )
 			break;
@@ -209,6 +214,10 @@ int main( int argc, char **argv )
 				is_login=1;
 				break;				
 				
+			case 'n':
+				no_exec=1;
+				break;				
+				
 			case 'p':
 				profile = optarg;
 				break;				
@@ -235,6 +244,15 @@ int main( int argc, char **argv )
 	is_interactive_session &= isatty(STDIN_FILENO);	
 	is_interactive_session |= force_interactive;
 
+	/*
+	  No-exec is prohibited when in interactive mode
+	*/
+	if( is_interactive_session && no_exec)
+	{
+		debug( 1, _(L"Can not use the no-execute mode when running an interactive session") );
+		no_exec = 0;
+	}
+	
 	common_init();
 	halloc_util_init();	
 
@@ -248,7 +266,7 @@ int main( int argc, char **argv )
 	env_init();
 	complete_init();
 	reader_init();
-	
+
 	if( read_init() )
 	{
 		if( cmd != 0 )

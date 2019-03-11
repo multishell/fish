@@ -586,6 +586,7 @@ static int builtin_generic( wchar_t **argv )
 }
 
 /**
+   Output a definition of the specified function to the sb_out
    stringbuffer. Used by the functions builtin.
 */
 static void functions_def( wchar_t *name )
@@ -1347,7 +1348,8 @@ static int builtin_read( wchar_t **argv )
 	wchar_t *nxt;
 	wchar_t *prompt = DEFAULT_READ_PROMPT;
 	wchar_t *commandline = L"";
-
+	int exit_res=0;
+	
 	woptind=0;
 
 	while( 1 )
@@ -1529,10 +1531,12 @@ static int builtin_read( wchar_t **argv )
 	else
 	{
 		string_buffer_t sb;
+		int eof=0;
+		
 		sb_init( &sb );
+		
 		while( 1 )
 		{
-			int eof=0;
 			int finished=0;
 
 			wchar_t res=0;
@@ -1573,11 +1577,18 @@ static int builtin_read( wchar_t **argv )
 
 			if( eof )
 				break;
+
 			if( res == L'\n' )
 				break;
 
 			sb_append_char( &sb, res );
 		}
+
+		if( sb.used < 2 && eof )
+		{
+			exit_res = 1;
+		}
+		
 		buff = wcsdup( (wchar_t *)sb.buff );
 		sb_destroy( &sb );
 	}
@@ -1596,7 +1607,7 @@ static int builtin_read( wchar_t **argv )
 	}
 
 	free( buff );
-	return 0;
+	return exit_res;
 }
 
 /**
@@ -2017,10 +2028,10 @@ static int builtin_source( wchar_t ** argv )
 		parser_push_block( SOURCE );		
 		reader_push_current_filename( fn_intern );
 
-	
 		current_block->param1.source_dest = fn_intern;
 
 		parse_util_set_argv( argv+2);
+
 		res = reader_read( fd );
 		
 		parser_pop_block();
@@ -2029,8 +2040,7 @@ static int builtin_source( wchar_t ** argv )
 			sb_printf( sb_err,
 					   _( L"%ls: Error while reading file '%ls'\n" ),
 					   argv[0],
-					   argv[1]
-				);
+					   argv[1] );
 		}
 
 		/*
@@ -3221,7 +3231,7 @@ static int internal_help( wchar_t *cmd )
 int builtin_run( wchar_t **argv )
 {
 	int (*cmd)(wchar_t **argv)=0;
-	cmd = hash_get( &builtin, argv[0] );
+	cmd = (int (*)(wchar_t **))hash_get( &builtin, argv[0] );
 
 	if( argv[1] != 0 && !internal_help(argv[0]) )
 	{

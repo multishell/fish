@@ -124,6 +124,14 @@ static int wildcard_match2( const wchar_t *str,
 		while( *(str++) != 0 );
 		return 0;
 	}
+	else if( *str == 0 )
+	{
+		/*
+		  End of string, but not end of wildcard, and the next wildcard
+		  element is not a '*', so this is not a match.
+		*/
+		return 0;
+	}
 
 	if( *wc == ANY_CHAR )
 	{
@@ -343,7 +351,7 @@ void get_desc( wchar_t *fn, string_buffer_t *sb, int is_cmd )
 		}
 		else if( sz < 1024 )
 		{
-			sb_printf( sb, L"%dB", sz );
+			sb_printf( sb, L"%lldB", sz );
 		}
 		else
 		{
@@ -597,7 +605,7 @@ int wildcard_expand( const wchar_t *wc,
 		/*
 		  The maximum length of a file element
 		*/
-		size_t ln=MAX_FILE_LENGTH;
+		long ln=MAX_FILE_LENGTH;
 		char * narrow_dir_string = wcs2str( dir_string );
 		
 		if( narrow_dir_string )

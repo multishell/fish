@@ -1,19 +1,21 @@
 # Process this file with autoconf to produce a configure script.
-AC_INIT(fish,1.21.2,fish-users@lists.sf.net)
+AC_INIT(fish,1.21.3,fish-users@lists.sf.net)
 
 # If needed, run autoconf to regenerate the configure file
 AC_MSG_CHECKING([if autoconf needs to be run])
 if test configure -ot configure.ac; then
 	AC_MSG_RESULT([yes])
 	if which autoconf >/dev/null; then
+		# No need to provide any error messages if autoconf fails, the
+		# shell and autconf should take care of that themselves
 		AC_MSG_NOTICE([running autoconf])
 		if autoconf; then
-			./configure $@
+			./configure "$@"
 		fi
 		exit			
 	else
 		AC_MSG_ERROR( [cannot find the autoconf program in your path.
-This program is needs to be run whenever the configure.ac file is modified.
+This program needs to be run whenever the configure.ac file is modified.
 Please install it and try again.])
 	fi
 else
@@ -30,7 +32,7 @@ if test ! -f ./config.h.in -o config.h.in -ot configure.ac; then
 		autoheader
 	else
 		AC_MSG_ERROR( [cannot find the autoheader program in your path.
-This program is needs to be run whenever the configure.ac file is modified.
+This program needs to be run whenever the configure.ac file is modified.
 Please install it and try again.])
 	fi
 else
@@ -110,14 +112,108 @@ else
     AC_SUBST( XSEL_MAN_PATH,[ ])
 fi
 
+#
+# Test if the compiler accepts the -std=c99 flag. If so, using it
+# increases the odds of correct compilation, since we want to use the
+# *wprintf functions, which where defined in C99.
+#
+
+XCFLAGS="$CFLAGS"
+CFLAGS="$CFLAGS -std=c99"
+AC_MSG_CHECKING(if -std=c99 works)
+AC_CACHE_VAL(local_cv_has__std_c99,[
+AC_TRY_RUN([
+#include <stdlib.h>
+#include <stdio.h>
+
+int main() {
+return 0;
+}],
+local_cv_has__std_c99=yes,
+local_cv_has__std_c99=no,
+)])
+AC_MSG_RESULT($local_cv_has__std_c99)
+case x$local_cv_has__std_c99 in
+xno) CFLAGS="$XCFLAGS" ;;
+esac
+
+#
+# If we are using gcc, set some flags that increase the odds of the
+# compiler producing a working binary...
+#
+
+if test "$CC" = gcc; then
+
+	#
+	# -fno-optimize-sibling-calls seems to work around a bug where
+	# sending a SIGWINCH to fish on NetBSD causes fish to exit when
+	# compiled with GCC 3.3.3. This is probably either a compiler bug
+	# or a libc bug, but adding this flag seems to fix things for
+	# now. Long term, the real problem should be tracked down and
+	# truly fixed, at which point we can remove this silly flag. This
+	# bug has been verified to not exist on Linux using GCC 3.3.3.
+	#
+
+	CFLAGS="$CFLAGS -fno-optimize-sibling-calls"
+
+
+	#
+	# -Wall is there to keep me on my toes
+	#
+
+	CFLAGS="$CFLAGS -Wall"
+
+fi
+
+#
+# If we are compiling against glibc, set some flags to work around
+# some rather stupid attempts to hide prototypes for *wprintf
+# functions, as well as prototypes of various gnu extensions.
+#
+
+AC_MSG_CHECKING([if we are compiling against glibc])
+AC_RUN_IFELSE(
+	[AC_LANG_PROGRAM([
+#include <stdlib.h>
+#ifdef __GLIBC__
+#define STATUS 0
+#else
+#define STATUS 1
+#endif],
+		[return STATUS;])], 
+	[glibc=yes], 
+	[glibc=no] )
+
+if test "$glibc" = yes; then
+	AC_MSG_RESULT(yes)
+
+	#
+	# This gives us access to prototypes for gnu extensions and C99
+	# functions if we are compiling agains glibc. All GNU extensions
+	# that are used must have a fallback implementation available in
+	# fallback.h, in order to keep fish working on non-gnu platforms.
+	#
+
+	CFLAGS="$CFLAGS -D _GNU_SOURCE -D _ISOC99_SOURCE"
+
+else
+	AC_MSG_RESULT(no)
+fi
+
 # Test cpu for special handling of ppc
+#
+# This is used to skip use of tputs on ppc systems, since it seemed to
+# be broken, at least on older debin-based systems. This is obviously
+# not the right way to to detect whether this workaround should be
+# used, since it catches far to many systems, but I do not have the
+# hardware available to narrow this problem down, and in practice, it
+# seems that tputs is never really needed.
+#
 AC_CANONICAL_TARGET
 
 if test $target_cpu = powerpc; then
    AC_DEFINE([TPUTS_KLUDGE],[1],[Evil kludge to get Power based machines to work])
 fi
-
-AC_DEFINE_UNQUOTED([CPU],[L"$target_cpu"],[CPU type])
 
 
 # Set up PREFIX and related preprocessor symbols. Fish needs to know
@@ -157,6 +253,12 @@ AC_SUBST( [LOCALEDIR], [$datadir/locale])
 # See if Linux procfs is present. This is used to get extra
 # information about running processes.
 AC_CHECK_FILES([/proc/self/stat])
+
+# This is ued to tell the wgetopt library to translate strings. This
+# way wgetopt can be dropped into any project without requiring i18n.
+
+AC_DEFINE([HAVE_TRANSLATE_H], [1],
+			  [Define to 1 if the wgettext function should be used for translating strings.])
 
 # Check for presense of various libraries
 AC_SEARCH_LIBS( gettext, intl, AC_SUBST( HAVE_GETTEXT, [1] ), AC_SUBST( HAVE_GETTEXT, [0] ) )
@@ -198,9 +300,10 @@ else
 	AC_MSG_RESULT(no)
 fi
 
+# If we have a fwprintf in libc, test that it actually works. As of
+# March 2006, it is broken under Dragonfly BSD.
 if test "$ac_cv_func_fwprintf" = yes; then
 
-	# Check if fwprintf is broken
 	AC_MSG_CHECKING([if fwprintf is broken])
 	AC_RUN_IFELSE(
 		[AC_LANG_PROGRAM([
@@ -271,9 +374,6 @@ else
     AC_MSG_RESULT(no)
 fi
 
-AC_DEFINE([HAVE_TRANSLATE_H], [1],
-			  [Define to 1 if the wgettext function should be used for translating strings.])
-
 # Check for _nl_msg_cat_cntr symbol
 AC_MSG_CHECKING([for _nl_msg_cat_cntr symbol])
 AC_TRY_LINK([#if HAVE_LIBINTL_H]
@@ -290,9 +390,8 @@ else
 fi
 
 # Tell the world what we know
-AC_CONFIG_FILES([Makefile fish.spec doc_src/fish.1 doc_src/Doxyfile etc/fish etc/fish_interactive.fish seq])
+AC_CONFIG_FILES([Makefile fish.spec doc_src/fish.1 doc_src/Doxyfile etc/fish etc/fish_interactive.fish share/fish seq])
 AC_OUTPUT
 
 echo "fish is now configured."
-echo "Now run 'make' and 'make install' to built and install fish."
-echo "Good luck!"
+echo "Use 'make' and 'make install' to built and install fish."

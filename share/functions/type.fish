@@ -105,18 +105,19 @@ function type -d (N_ "Print the type of a command")
 
 		end
 
-		if which $i ^/dev/null >/dev/null
+		set -l path (which $i ^/dev/null)
+		if test -x (echo $path)
 			set status 0
 			set found 1
 			switch $mode
 				case normal
-					printf (_ '%s is %s\n') $i (which $i)
+					printf (_ '%s is %s\n') $i $path
 
 					case type
 						printf (_ 'file\n')
 
 					case path
-						which $i
+						echo $path
 			end
 			if test $selection != multi
 				continue
@@ -124,7 +125,7 @@ function type -d (N_ "Print the type of a command")
 		end
 
 		if test $found = 0
-			printf (_ "%s: Could not find '%s'") type $i
+			printf (_ "%s: Could not find '%s'\n") type $i
 		end
 
 	end

@@ -463,11 +463,7 @@ int parser_is_subcommand( const wchar_t *cmd )
 					  (void *)0 );
 }
 
-/**
-   Test if the specified string is command that opens a new block
-*/
-
-static int parser_is_block( const wchar_t *word)
+int parser_is_block( const wchar_t *word)
 {
 	return contains_str( word,
 						 L"for",
@@ -2521,7 +2517,7 @@ int parser_test( wchar_t * buff,
 	current_tokenizer = &tok;
 
 	for( tok_init( &tok, buff, 0 );
-		 tok_has_next( &tok ) && !err;
+		 tok_has_next( &tok );
 		 tok_next( &tok ) )
 	{
 		current_tokenizer_pos = tok_get_pos( &tok );
