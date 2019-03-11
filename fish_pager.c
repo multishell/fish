@@ -412,54 +412,68 @@ static void printed_length( wchar_t *str,
 		int has_description = 0;
 		while( *str != 0 )
 		{
-			switch( *str )
+			if( ( *str >= ENCODE_DIRECT_BASE) &&
+				( *str < ENCODE_DIRECT_BASE+256) )
 			{
-				case L'\n':
-				case L'\b':
-				case L'\r':
-				case L'\e':
-				case L'\t':
-				case L'\\':
-				case L'&':
-				case L'$':
-				case L' ':
-				case L'#':
-				case L'^':
-				case L'<':
-				case L'>':
-				case L'(':
-				case L')':
-				case L'[':
-				case L']':
-				case L'{':
-				case L'}':
-				case L'?':
-				case L'*':
-				case L'|':
-				case L';':
-				case L':':
-				case L'\'':
-				case L'"':
-				case L'%':
-				case L'~':
-					
-					if( has_description )
-						desc_len++;
-					else
-						comp_len+=2;
-					break;
+				if( has_description )
+					desc_len+=4;
+				else
+					comp_len+=4;
 
-				case COMPLETE_SEP:
-					has_description = 1;
-					break;
-
-				default:
-					if( has_description )
-						desc_len+= wcwidth(*str);
-					else
-						comp_len+= wcwidth(*str);
-					break;
 			}
+			else
+			{
+				
+				switch( *str )
+				{
+					case L'\n':
+					case L'\b':
+					case L'\r':
+					case L'\e':
+					case L'\t':
+					case L'\\':
+					case L'&':
+					case L'$':
+					case L' ':
+					case L'#':
+					case L'^':
+					case L'<':
+					case L'>':
+					case L'(':
+					case L')':
+					case L'[':
+					case L']':
+					case L'{':
+					case L'}':
+					case L'?':
+					case L'*':
+					case L'|':
+					case L';':
+					case L':':
+					case L'\'':
+					case L'"':
+					case L'%':
+					case L'~':
+					
+						if( has_description )
+							desc_len++;
+						else
+							comp_len+=2;
+						break;
+
+					case COMPLETE_SEP:
+						has_description = 1;
+						break;
+
+					default:
+						if( has_description )
+							desc_len+= wcwidth(*str);
+						else
+							comp_len+= wcwidth(*str);
+						break;
+				}
+			}
+			
 			str++;
 		}
 		if( has_description )
@@ -550,7 +564,7 @@ static int completion_try_print( int cols,
 	memset( pref_width, 0, sizeof(pref_width) );
 	memset( min_width, 0, sizeof(min_width) );
 
-	/* Calculated how wide the list would be */
+	/* Calculate how wide the list would be */
 	for( j = 0; j < cols; j++ )
 	{
 		for( i = 0; i<rows; i++ )
@@ -800,7 +814,7 @@ static void mangle_descriptions( array_list_t *l )
 	{
 		wchar_t *next = (wchar_t *)al_get(l, i);
 		wchar_t *in, *out;
-		skip=0;
+		skip=1;
 		
 		while( *next != COMPLETE_SEP && *next )
 			next++;
@@ -851,7 +865,11 @@ static void init()
 	struct sigaction act;
 	program_name = L"fish_pager";
 	wsetlocale( LC_ALL, L"" );
-	
+
+	/*
+	  Make fd 1 output to screen, and use some other fd for writing
+	  the resulting output back to the caller
+	*/
 	int out = dup( 1 );
 	close(1);
 	if( open( ttyname(0), O_WRONLY ) != 1 )
@@ -863,6 +881,10 @@ static void init()
 		}
 	}
 	out_file = fdopen( out, "w" );
+
+	/**
+	   Init the stringbuffer used to keep any output in
+	*/
 	sb_init( &out_buff );
 
 	output_init();
@@ -880,33 +902,6 @@ static void init()
 		exit(1);
 	}
 	
-	/* Loop until we are in the foreground.  */
-	while (tcgetpgrp( 0 ) != getpid())
-	{
-		kill (- getpid(), SIGTTIN);
-	}
-
-	/* Put ourselves in our own process group.  */
-	if( getpgrp() != getpid() )
-	{
-		if (setpgid (getpid(), getpid()) < 0)
-		{
-			debug( 1,
-				   L"Couldn't put the shell in its own process group");
-			wperror( L"setpgid" );
-			exit (1);
-		}
-	}
-
-	/* Grab control of the terminal.  */
-	if( tcsetpgrp (STDIN_FILENO, getpid()) )
-	{
-		debug( 1,
-			   L"Couldn't grab control of terminal" );
-		wperror( L"tcsetpgrp" );
-		exit(1);
-	}
-
 	handle_winch( 0 );                /* Set handler for window change events */
 	
 	tcgetattr(0,&pager_modes);        /* get the current terminal modes */
@@ -968,7 +963,11 @@ int main( int argc, char **argv )
 	
 		for( i=3; i<argc; i++ )
 		{
-			al_push( &comp, str2wcs( argv[i] ) );
+			wchar_t *wcs = str2wcs( argv[i] );
+			if( wcs )
+			{
+				al_push( &comp, wcs );
+			}
 		}
 	
 		mangle_descriptions( &comp );

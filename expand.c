@@ -39,6 +39,7 @@ parameter expansion.
 #include "tokenizer.h"
 #include "complete.h"
 #include "translate.h"
+#include "parse_util.h"
 
 /**
    Description for child process
@@ -121,7 +122,7 @@ parameter expansion.
 */
 static int is_clean( const wchar_t *in )
 {
-	
+
 	const wchar_t * str = in;
 
 	/*
@@ -129,7 +130,7 @@ static int is_clean( const wchar_t *in )
 	*/
 	if( wcschr( UNCLEAN_FIRST, *str ) )
 		return 0;
-	
+
 	/*
 	  Test characters that have a special meaning in any character position
 	*/
@@ -139,12 +140,12 @@ static int is_clean( const wchar_t *in )
 			return 0;
 		str++;
 	}
-	
+
 	return 1;
 }
 
 /**
-   Return the environment variable value for the string starting at \c in. 
+   Return the environment variable value for the string starting at \c in.
 */
 static wchar_t *expand_var( wchar_t *in )
 {
@@ -159,7 +160,7 @@ void expand_variable_array( const wchar_t *val, array_list_t *out )
 	{
 		wchar_t *cpy = wcsdup( val );
 		wchar_t *pos, *start;
-		
+
 		if( !cpy )
 		{
 			die_mem();
@@ -170,20 +171,12 @@ void expand_variable_array( const wchar_t *val, array_list_t *out )
 			if( *pos == ARRAY_SEP )
 			{
 				*pos=0;
-				al_push( out, wcsdup(start) );
+				al_push( out, start==cpy?cpy:wcsdup(start) );
 				start=pos+1;
 			}
 		}
-		al_push( out, wcsdup(start) );
-		
-		free(cpy);	
+		al_push( out, start==cpy?cpy:wcsdup(start) );
 	}
-}
-
-wchar_t *expand_escape( const wchar_t *in,
-						int escape_all )
-{
-	return escape( in, escape_all );
 }
 
 
@@ -197,41 +190,41 @@ static int is_quotable( wchar_t *str )
 	{
 		case 0:
 			return 1;
-	
+
 		case L'\n':
 		case L'\t':
 		case L'\r':
 		case L'\b':
 		case L'\e':
 			return 0;
-			
+
 		default:
-			return is_quotable(str+1);			
+			return is_quotable(str+1);
 	}
 	return 0;
-	
+
 }
 
 wchar_t *expand_escape_variable( const wchar_t *in )
 {
-	
+
 	array_list_t l;
 	string_buffer_t buff;
-	
+
 	al_init( &l );
 	expand_variable_array( in, &l );
 	sb_init( &buff );
-	
+
 	switch( al_get_count( &l) )
 	{
 		case 0:
 			sb_append( &buff, L"''");
-			break;			
+			break;
 
 		case 1:
 		{
 			wchar_t *el = (wchar_t *)al_get( &l, 0 );
-						
+
 			if( wcschr( el, L' ' ) && is_quotable( el ) )
 			{
 				sb_append2( &buff,
@@ -242,7 +235,7 @@ wchar_t *expand_escape_variable( const wchar_t *in )
 			}
 			else
 			{
-				wchar_t *val = expand_escape( el, 1 );								
+				wchar_t *val = escape( el, 1 );
 				sb_append( &buff, val );
 				free( val );
 			}
@@ -257,7 +250,7 @@ wchar_t *expand_escape_variable( const wchar_t *in )
 				wchar_t *el = (wchar_t *)al_get( &l, j );
 				if( j )
 					sb_append( &buff, L"  " );
-								
+
 				if( is_quotable( el ) )
 				{
 					sb_append2( &buff,
@@ -268,19 +261,19 @@ wchar_t *expand_escape_variable( const wchar_t *in )
 				}
 				else
 				{
-					wchar_t *val = expand_escape( el, 1 );								
+					wchar_t *val = escape( el, 1 );
 					sb_append( &buff, val );
 					free( val );
 				}
-								
+
 				free( el );
-			}							
-		}						
+			}
+		}
 	}
 	al_destroy( &l );
 
 	return (wchar_t *)buff.buff;
-					
+
 }
 
 /**
@@ -311,33 +304,33 @@ static int iswnumeric( const wchar_t *n )
    See if the process described by \c proc matches the commandline \c
    cmd
 */
-static int match_pid( const wchar_t *cmd, 
+static int match_pid( const wchar_t *cmd,
 					  const wchar_t *proc,
 					  int flags )
 {
 	/* Test for direct match */
-	
+
 	if( wcsncmp( cmd, proc, wcslen( proc ) ) == 0 )
 		return 1;
-	
+
 	if( flags & ACCEPT_INCOMPLETE )
 		return 0;
 
-	/* 
-	   Test if the commandline is a path to the command, if so we try
-	   to match against only the command part
+	/*
+	  Test if the commandline is a path to the command, if so we try
+	  to match against only the command part
 	*/
 	wchar_t *first_token = tok_first( cmd );
 	if( first_token == 0 )
 		return 0;
-		
+
 	wchar_t *start=0;
 	wchar_t prev=0;
 	wchar_t *p;
-	
-	/* 
-	   This should be done by basename(), if it wasn't for the fact
-	   that is does not accept wide strings
+
+	/*
+	  This should be done by basename(), if it wasn't for the fact
+	  that is does not accept wide strings
 	*/
 	for( p=first_token; *p; p++ )
 	{
@@ -347,7 +340,7 @@ static int match_pid( const wchar_t *cmd,
 	}
 	if( start )
 	{
-			
+
 		if( wcsncmp( start+1, proc, wcslen( proc ) ) == 0 )
 		{
 			free( first_token );
@@ -355,9 +348,9 @@ static int match_pid( const wchar_t *cmd,
 		}
 	}
 	free( first_token );
-	
+
 	return 0;
-	
+
 }
 
 /**
@@ -374,8 +367,8 @@ static int match_pid( const wchar_t *cmd,
    filesystem, all the users processes are searched for matches.
 */
 
-static int find_process( const wchar_t *proc, 
-						 int flags, 
+static int find_process( const wchar_t *proc,
+						 int flags,
 						 array_list_t *out )
 {
 	DIR *dir;
@@ -385,14 +378,14 @@ static int find_process( const wchar_t *proc,
 	wchar_t *cmd=0;
 	int sz=0;
 	int found = 0;
-	wchar_t *result;	
-	
+	wchar_t *result;
+
 	job_t *j;
-	
+
 	if( iswnumeric(proc) || (wcslen(proc)==0) )
 	{
 		/*
-		  This is a numeric job string, like '%2' 
+		  This is a numeric job string, like '%2'
 		*/
 
 		//	fwprintf( stderr, L"Numeric\n\n\n" );
@@ -407,30 +400,30 @@ static int find_process( const wchar_t *proc,
 
 				swprintf( jid, 16, L"%d", j->job_id );
 //				fwprintf( stderr, L"Jid %ls\n", jid );
-				
+
 				if( wcsncmp( proc, jid, wcslen(proc ) )==0 )
 				{
-					al_push( out, 
-							 wcsdupcat2( jid+wcslen(proc), 
+					al_push( out,
+							 wcsdupcat2( jid+wcslen(proc),
 										 COMPLETE_SEP_STR,
-										 COMPLETE_JOB_DESC_VAL, 
-										 j->command, 
+										 COMPLETE_JOB_DESC_VAL,
+										 j->command,
 										 (void *)0 ) );
-					
-					
+
+
 				}
 			}
-			
+
 		}
 		else
 		{
-	
+
 			int jid = wcstol( proc, 0, 10 );
-		
+
 			j = job_get( jid );
 			if( (j != 0) && (j->command != 0 ) )
 			{
-				
+
 				{
 					result = malloc(sizeof(wchar_t)*16 );
 					swprintf( result, 16, L"%d", j->pgid );
@@ -438,7 +431,7 @@ static int find_process( const wchar_t *proc,
 					al_push( out, result );
 					found = 1;
 				}
-			}		
+			}
 		}
 	}
 	if( found )
@@ -449,19 +442,19 @@ static int find_process( const wchar_t *proc,
 //		fwprintf( stderr, L"..." );
 		if( j->command == 0 )
 			continue;
-		
+
 		//	fwprintf( stderr, L"match '%ls' '%ls'\n\n\n", j->command, proc );
-		
+
 		if( match_pid( j->command, proc, flags ) )
 		{
 			if( flags & ACCEPT_INCOMPLETE )
 			{
-				wchar_t *res = wcsdupcat2( j->command + wcslen(proc), 
+				wchar_t *res = wcsdupcat2( j->command + wcslen(proc),
 										   COMPLETE_SEP_STR,
 										   COMPLETE_JOB_DESC,
 										   (void *)0 );
 //				fwprintf( stderr, L"Woot %ls\n", res );
-				
+
 				al_push( out, res );
 			}
 			else
@@ -486,21 +479,21 @@ static int find_process( const wchar_t *proc,
 			continue;
 		for( p=j->first_process; p; p=p->next )
 		{
-			
+
 //		fwprintf( stderr, L"..." );
 			if( p->actual_cmd == 0 )
 				continue;
-			
+
 			//	fwprintf( stderr, L"match '%ls' '%ls'\n\n\n", j->command, proc );
-			
+
 			if( match_pid( p->actual_cmd, proc, flags ) )
 			{
 				if( flags & ACCEPT_INCOMPLETE )
 				{
-					wchar_t *res = wcsdupcat2( p->actual_cmd + wcslen(proc), 
-											  COMPLETE_SEP_STR,
-											  COMPLETE_CHILD_PROCESS_DESC,
-											  (void *)0);
+					wchar_t *res = wcsdupcat2( p->actual_cmd + wcslen(proc),
+											   COMPLETE_SEP_STR,
+											   COMPLETE_CHILD_PROCESS_DESC,
+											   (void *)0);
 					al_push( out, res );
 				}
 				else
@@ -522,15 +515,15 @@ static int find_process( const wchar_t *proc,
 	if( !(dir = opendir( "/proc" )))
 	{
 		/*
-		  This system does not have a /proc filesystem. 
+		  This system does not have a /proc filesystem.
 		*/
 		return 1;
 	}
-	
+
 	pdir_name = malloc( 256 );
 	pfile_name = malloc( 64 );
 	strcpy( pdir_name, "/proc/" );
-	
+
 	while( (next=readdir(dir))!=0 )
 	{
 		char *name = next->d_name;
@@ -543,29 +536,29 @@ static int find_process( const wchar_t *proc,
 		if( stat( pdir_name, &buf ) )
 		{
 			continue;
-		}		
+		}
 		if( buf.st_uid != getuid() )
 		{
 			continue;
 		}
 		strcpy( pfile_name, pdir_name );
 		strcat( pfile_name, "/cmdline" );
-		
+
 		if( !stat( pfile_name, &buf ) )
 		{
 			/*
 			  the 'cmdline' file exists, it should contain the commandline
 			*/
 			FILE *cmdfile;
-			
+
 			if((cmdfile=fopen( pfile_name, "r" ))==0)
 			{
 				wperror( L"fopen" );
 				continue;
 			}
-			
-			fgetws2( &cmd, &sz, cmdfile );		
-			
+
+			fgetws2( &cmd, &sz, cmdfile );
+
 			fclose( cmdfile );
 		}
 		else
@@ -578,13 +571,13 @@ static int find_process( const wchar_t *proc,
 				psinfo_t info;
 
 				FILE *psfile;
-				
+
 				if((psfile=fopen( pfile_name, "r" ))==0)
 				{
 					wperror( L"fopen" );
 					continue;
 				}
-				
+
 				if( fread( &info, sizeof(info), 1, psfile ) )
 				{
 					if( cmd != 0 )
@@ -602,15 +595,15 @@ static int find_process( const wchar_t *proc,
 				}
 			}
 		}
-		
+
 		if( cmd != 0 )
 		{
 			if( match_pid( cmd, proc, flags ) )
-			{			
+			{
 				if( flags & ACCEPT_INCOMPLETE )
 				{
 					wchar_t *res = wcsdupcat2( cmd + wcslen(proc),
-											  COMPLETE_SEP_STR,
+											   COMPLETE_SEP_STR,
 											   COMPLETE_PROCESS_DESC,
 											   (void *)0);
 					if( res )
@@ -625,22 +618,22 @@ static int find_process( const wchar_t *proc,
 			}
 		}
 	}
-	
+
 	if( cmd != 0 )
 		free( cmd );
-	
+
 	free( pdir_name );
 	free( pfile_name );
-	
-	closedir( dir );	
-	
+
+	closedir( dir );
+
 	return 1;
 }
 
 /**
    Process id expansion
 */
-static int expand_pid( wchar_t *in, 
+static int expand_pid( wchar_t *in,
 					   int flags,
 					   array_list_t *out )
 {
@@ -655,13 +648,13 @@ static int expand_pid( wchar_t *in,
 		if( wcsncmp( in+1, SELF_STR, wcslen(in+1) )==0 )
 		{
 			wchar_t *res = wcsdupcat2( SELF_STR+wcslen(in+1), COMPLETE_SEP_STR, COMPLETE_SELF_DESC, (void *)0 );
-			al_push( out, res );			
-		}		
+			al_push( out, res );
+		}
 		else if( wcsncmp( in+1, LAST_STR, wcslen(in+1) )==0 )
 		{
 			wchar_t *res = wcsdupcat2( LAST_STR+wcslen(in+1), COMPLETE_SEP_STR, COMPLETE_LAST_DESC, (void *)0 );
-			al_push( out, res );			
-		}		
+			al_push( out, res );
+		}
 	}
 	else
 	{
@@ -671,9 +664,9 @@ static int expand_pid( wchar_t *in,
 			free(in);
 			swprintf( str, 32, L"%d", getpid() );
 			al_push( out, str );
-			
-			return 1;			
-		}		
+
+			return 1;
+		}
 		if( wcscmp( (in+1), LAST_STR )==0 )
 		{
 			wchar_t *str;
@@ -685,20 +678,20 @@ static int expand_pid( wchar_t *in,
 				swprintf( str, 32, L"%d", proc_last_bg_pid );
 				al_push( out, str );
 			}
-			
-			return 1;			
-		}		
-	}	
-	
+
+			return 1;
+		}
+	}
+
 //	fwprintf( stderr, L"expand_pid() %ls\n", in );
 	int prev = al_get_count( out );
 	if( !find_process( in+1, flags, out ) )
 		return 0;
-	
+
 	if( prev == al_get_count( out ) )
 	{
 //		fwprintf( stderr, L"no match\n" );
-		
+
 		if( flags & ACCEPT_INCOMPLETE )
 			free( in );
 		else
@@ -707,19 +700,30 @@ static int expand_pid( wchar_t *in,
 //			fwprintf( stderr, L"return %ls\n", in );
 			al_push( out, in );
 		}
-	}	
+	}
 	else
 	{
 //		fwprintf( stderr, L"match\n" );
 		free( in );
 	}
-	
+
 	return 1;
 }
 
 
 /**
-   Expand all environment variables in the string *ptr. 
+   Expand all environment variables in the string *ptr.
+
+   This function is slow, fragile and complicated. There are lots of
+   little corner cases, like $$foo should do a double expansion,
+   $foo$bar should not double expand bar, etc. Also, it's easy to
+   accidentally leak memory on array out of bounds errors an various
+   other situations. All in all, this function should be rewritten,
+   split out into multiple logical units and carefully tested. After
+   that, it can probably be optimized to do fewer memory allocations,
+   fewer string scans and overall just less work. But until that
+   happens, don't edit it unless you know exactly what you are doing,
+   and do proper testing afterwards.
 */
 static int expand_variables( wchar_t *in, array_list_t *out )
 {
@@ -728,7 +732,7 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 	int i, j;
 	int is_ok= 1;
 	int empty=0;
-	
+
 	for( i=wcslen(in)-1; (i>=0) && is_ok && !empty; i-- )
 	{
 		c = in[i];
@@ -739,10 +743,10 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 			int var_len, new_len;
 			wchar_t *var_name;
 			wchar_t * var_val;
-			wchar_t * new_in;			
+			wchar_t * new_in;
 			array_list_t l;
 			int is_single = (c==VARIABLE_EXPAND_SINGLE);
-			
+
 			stop_pos = start_pos;
 
 			while( 1 )
@@ -752,12 +756,12 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 				if( !( iswalnum( in[stop_pos] ) ||
 					   (wcschr(L"_", in[stop_pos])!= 0)  ) )
 					break;
-			
+
 				stop_pos++;
 			}
-			
+
 /*			printf( "Stop for '%c'\n", in[stop_pos]);*/
-			
+
 			var_len = stop_pos - start_pos;
 
 			if( var_len == 0 )
@@ -767,19 +771,19 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 					case BRACKET_BEGIN:
 					{
 						error( SYNTAX_ERROR,
-							   -1, 
+							   -1,
 							   COMPLETE_VAR_BRACKET_DESC );
 						break;
 					}
-					
+
 					case INTERNAL_SEPARATOR:
 					{
 						error( SYNTAX_ERROR,
-							   -1, 
+							   -1,
 							   COMPLETE_VAR_PARAN_DESC );
 						break;
 					}
-					
+
 					case 0:
 					{
 						error( SYNTAX_ERROR,
@@ -788,23 +792,23 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 							   in[stop_pos] );
 						break;
 					}
-					
+
 					default:
 					{
 						error( SYNTAX_ERROR,
 							   -1,
 							   COMPLETE_VAR_DESC,
 							   in[stop_pos] );
-						break;						
+						break;
 					}
 				}
-				
-				
+
+
 				is_ok = 0;
 				break;
 			}
-			
-			
+
+
 			if( !(var_name = malloc( sizeof(wchar_t)*(var_len+1) )))
 			{
 				die_mem();
@@ -813,29 +817,29 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 			var_name[var_len]='\0';
 /*			printf( "Variable name is %s, len is %d\n", var_name, var_len );*/
 			wchar_t *var_val_orig = expand_var( var_name );
-		
+
 			if( var_val_orig && (var_val = wcsdup( var_val_orig) ) )
 			{
 				int all_vars=1;
 				array_list_t idx;
 				al_init( &idx );
 				al_init( &l );
-					
+
 				if( in[stop_pos] == L'[' )
-				{						
+				{
 					wchar_t *end;
-						
+
 					all_vars = 0;
-		
+
 					stop_pos++;
 					while( 1 )
 					{
 						int tmp;
-							
+
 						while( iswspace(in[stop_pos]) || (in[stop_pos]==INTERNAL_SEPARATOR))
 							stop_pos++;
-							
-							
+
+
 						if( in[stop_pos] == L']' )
 						{
 							stop_pos++;
@@ -846,10 +850,10 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 						tmp = wcstol( &in[stop_pos], &end, 10 );
 						if( ( errno ) || ( end == &in[stop_pos] ) )
 						{
-							error( SYNTAX_ERROR, 
-								   -1, 
+							error( SYNTAX_ERROR,
+								   -1,
 								   L"Expected integer or \']\'" );
-															   
+
 							is_ok = 0;
 							break;
 						}
@@ -857,25 +861,25 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 						stop_pos = end-in;
 					}
 				}
-							
+
 				if( is_ok )
-				{				
+				{
 					expand_variable_array( var_val, &l );
 					if( !all_vars )
-					{	
+					{
 						int j;
 						for( j=0; j<al_get_count( &idx ); j++)
 						{
 							int tmp = (int)al_get( &idx, j );
 							if( tmp < 1 || tmp > al_get_count( &l ) )
 							{
-								error( SYNTAX_ERROR, 
+								error( SYNTAX_ERROR,
 									   -1,
 									   L"Array index out of bounds" );
 								is_ok=0;
 								al_truncate( &idx, j );
 								break;
-							}				
+							}
 							else
 							{
 								/* Move string from list l to list idx */
@@ -886,84 +890,85 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 						/* Free remaining strings in list l and truncate it */
 						al_foreach( &l, (void (*)(const void *))&free );
 						al_truncate( &l, 0 );
-						/* Add items from list idx back to list l */							
-						al_push_all( &l, &idx );							
+						/* Add items from list idx back to list l */
+						al_push_all( &l, &idx );
 					}
 					free( var_val );
-				}				
-				
-				if( is_single )
-				{
-					string_buffer_t res;
-					sb_init( &res );
-					
-					in[i]=0;
-					
-					sb_append( &res, in );
-					sb_append_char( &res, INTERNAL_SEPARATOR );
-
-					for( j=0; j<al_get_count( &l); j++ )
-					{
-						wchar_t *next = (wchar_t *)al_get( &l, j );
-						
-						if( is_ok )
-						{						
-							if( j != 0 )
-								sb_append( &res, L" " );
-							sb_append( &res, next );
-						}
-						free( next );
-					}	
-					sb_append( &res, &in[stop_pos] );
-					is_ok &= expand_variables( wcsdup((wchar_t *)res.buff), out );
-					
-					sb_destroy( &res );
-					
 				}
-				else
+
+				if( is_ok )
 				{
-					for( j=0; j<al_get_count( &l); j++ )
+					
+					if( is_single )
 					{
-						wchar_t *next = (wchar_t *)al_get( &l, j );
-						
-						if( is_ok )
+						string_buffer_t res;
+						sb_init( &res );
+
+						in[i]=0;
+
+						sb_append( &res, in );
+						sb_append_char( &res, INTERNAL_SEPARATOR );
+
+						for( j=0; j<al_get_count( &l); j++ )
 						{
-						
-							new_len = wcslen(in) - (stop_pos-start_pos+1) + wcslen( next) +2;
+							wchar_t *next = (wchar_t *)al_get( &l, j );
 							
-							if( !(new_in = malloc( sizeof(wchar_t)*new_len )))
+							if( is_ok )
 							{
-								die_mem();
+								if( j != 0 )
+									sb_append( &res, L" " );
+								sb_append( &res, next );
 							}
-							else
+							free( next );
+						}
+						sb_append( &res, &in[stop_pos] );
+						is_ok &= expand_variables( (wchar_t *)res.buff, out );
+					}
+					else
+					{
+						for( j=0; j<al_get_count( &l); j++ )
+						{
+							wchar_t *next = (wchar_t *)al_get( &l, j );
+
+							if( is_ok )
 							{
-								
-								wcsncpy( new_in, in, start_pos-1 );
-								
-								if(start_pos>1 && new_in[start_pos-2]!=VARIABLE_EXPAND)
-								{									
-									new_in[start_pos-1]=INTERNAL_SEPARATOR;
-									new_in[start_pos]=L'\0';
+
+								new_len = wcslen(in) - (stop_pos-start_pos+1) + wcslen( next) +2;
+
+								if( !(new_in = malloc( sizeof(wchar_t)*new_len )))
+								{
+									die_mem();
 								}
 								else
-									new_in[start_pos-1]=L'\0';
-								
-								wcscat( new_in, next );
-								wcscat( new_in, &in[stop_pos] );
-								
+								{
+
+									wcsncpy( new_in, in, start_pos-1 );
+
+									if(start_pos>1 && new_in[start_pos-2]!=VARIABLE_EXPAND)
+									{
+										new_in[start_pos-1]=INTERNAL_SEPARATOR;
+										new_in[start_pos]=L'\0';
+									}
+									else
+										new_in[start_pos-1]=L'\0';
+
+									wcscat( new_in, next );
+									wcscat( new_in, &in[stop_pos] );
+
 //								fwprintf( stderr, L"New value %ls\n", new_in );
-								is_ok &= expand_variables( new_in, out );
+									is_ok &= expand_variables( new_in, out );
+								}
 							}
+							free( next );
 						}
-						free( next );
-					}	
+					}
 				}
 				
 				al_destroy( &l );
 				al_destroy( &idx );
 				free(in);
 				free(var_name );
-				return is_ok;					
+				return is_ok;
 			}
 			else
 			{
@@ -980,13 +985,13 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 				else
 				{
 					/*
-					  Expansion to single argument. 
+					  Expansion to single argument.
 					*/
 					string_buffer_t res;
 					sb_init( &res );
-					
+
 					in[i]=0;
-					
+
 					sb_append( &res, in );
 
 					sb_append( &res, &in[stop_pos] );
@@ -997,16 +1002,16 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 					free(var_name );
 					return is_ok;
 				}
-				
+
 			}
-				
-			free(var_name );				
-				
+
+			free(var_name );
+
 		}
-		
-		prev_char = c;		
+
+		prev_char = c;
 	}
-	
+
 	if( !empty )
 	{
 		al_push( out, in );
@@ -1015,7 +1020,7 @@ static int expand_variables( wchar_t *in, array_list_t *out )
 	{
 		free( in );
 	}
-	
+
 	return is_ok;
 }
 
@@ -1026,19 +1031,19 @@ static int expand_brackets( wchar_t *in, int flags, array_list_t *out )
 {
 	wchar_t *pos;
 	int syntax_error=0;
-	int bracket_count=0;	
+	int bracket_count=0;
 
 	wchar_t *bracket_begin=0, *bracket_end=0;
 	wchar_t *last_sep=0;
-	
+
 	wchar_t *item_begin;
 	int len1, len2, tot_len;
 
 //	fwprintf( stderr, L"expand %ls\n", in );
-	
-	
-	for( pos=in; 
-		 (!bracket_end) && (*pos) && !syntax_error; 
+
+
+	for( pos=in;
+		 (!bracket_end) && (*pos) && !syntax_error;
 		 pos++ )
 	{
 		switch( *pos )
@@ -1047,17 +1052,17 @@ static int expand_brackets( wchar_t *in, int flags, array_list_t *out )
 			{
 				if(( bracket_count == 0)&&(bracket_begin==0))
 					bracket_begin = pos;
-				
+
 				bracket_count++;
 				break;
-				
+
 			}
 			case BRACKET_END:
 			{
 				bracket_count--;
 				if( (bracket_count == 0) && (bracket_end == 0) )
 					bracket_end = pos;
-				
+
 				if( bracket_count < 0 )
 				{
 					syntax_error = 1;
@@ -1071,14 +1076,14 @@ static int expand_brackets( wchar_t *in, int flags, array_list_t *out )
 			}
 		}
 	}
-	
+
 	if( bracket_count > 0 )
 	{
 		if( !(flags & ACCEPT_INCOMPLETE) )
 			syntax_error = 1;
 		else
 		{
-			
+
 			string_buffer_t mod;
 			sb_init( &mod );
 			if( last_sep )
@@ -1092,22 +1097,22 @@ static int expand_brackets( wchar_t *in, int flags, array_list_t *out )
 				sb_append( &mod, in );
 				sb_append_char( &mod, BRACKET_END );
 			}
-			
 
-			
+
+
 
 			return expand_brackets( (wchar_t*)mod.buff, 1, out );
 		}
 	}
-	
+
 	if( syntax_error )
 	{
-		error( SYNTAX_ERROR, 
+		error( SYNTAX_ERROR,
 			   -1,
 			   L"Mismatched brackets" );
 		return 0;
 	}
-	
+
 	if( bracket_begin == 0 )
 	{
 		al_push( out, in );
@@ -1126,114 +1131,32 @@ static int expand_brackets( wchar_t *in, int flags, array_list_t *out )
 			{
 				wchar_t *whole_item;
 				int item_len = pos-item_begin;
-				
+
 				whole_item = malloc( sizeof(wchar_t)*(tot_len + item_len + 1) );
 				wcsncpy( whole_item, in, len1 );
-				wcsncpy( whole_item+len1, item_begin, item_len );	
+				wcsncpy( whole_item+len1, item_begin, item_len );
 				wcscpy( whole_item+len1+item_len, bracket_end+1 );
-				
+
 				expand_brackets( whole_item, flags, out );
-				
+
 				item_begin = pos+1;
 				if( pos == bracket_end )
 					break;
-			}			
+			}
 		}
-		
+
 		if( *pos == BRACKET_BEGIN )
 		{
 			bracket_count++;
 		}
-		
+
 		if( *pos == BRACKET_END )
 		{
 			bracket_count--;
 		}
 	}
-	free(in);	
-	return 1;	
-}
-
-int expand_locate_subshell( wchar_t *in, 
-							wchar_t **begin, 
-							wchar_t **end,
-							int allow_incomplete )
-{
-	wchar_t *pos;
-	wchar_t prev=0;
-	int syntax_error=0;
-	int paran_count=0;	
-
-	wchar_t *paran_begin=0, *paran_end=0;
-
-	for( pos=in; *pos; pos++ )
-	{
-		if( prev != '\\' )
-		{
-			if( wcschr( L"\'\"", *pos ) )
-			{
-				wchar_t *end = quote_end( pos );
-				if( end && *end)
-				{
-					pos=end;
-				}
-				else
-					break;
-			}
-			else
-			{
-				if( *pos == '(' )
-				{
-					if(( paran_count == 0)&&(paran_begin==0))
-						paran_begin = pos;
-				
-					paran_count++;
-				}
-				else if( *pos == ')' )
-				{
-					paran_count--;
-					if( (paran_count == 0) && (paran_end == 0) )
-					{
-						paran_end = pos;
-						break;
-					}
-				
-					if( paran_count < 0 )
-					{
-						syntax_error = 1;
-						break;
-					}
-				}
-			}
-			
-		}
-		
-		prev = *pos;
-	}
-	
-	syntax_error |= (paran_count < 0 );
-	syntax_error |= ((paran_count>0)&&(!allow_incomplete));
-	
-	if( syntax_error )
-	{
-		return -1;
-	}
-	
-	if( paran_begin == 0 )
-	{
-		return 0;
-	}
-
-	*begin = paran_begin;
-	*end = paran_count?in+wcslen(in):paran_end;
-	
-/*	assert( *begin >= in );
-	assert( *begin < (in+wcslen(in) ) );
-	assert( *end >= *begin );
-	assert( *end < (in+wcslen(in) ) );
-*/
+	free(in);
 	return 1;
-
 }
 
 /**
@@ -1241,32 +1164,32 @@ int expand_locate_subshell( wchar_t *in,
 */
 static int expand_subshell( wchar_t *in, array_list_t *out )
 {
-	wchar_t *paran_begin=0, *paran_end=0;
+	const wchar_t *paran_begin=0, *paran_end=0;
 	int len1, len2;
 	wchar_t prev=0;
 	wchar_t *subcmd;
 	array_list_t sub_res, tail_expand;
 	int i, j;
-	wchar_t *item_begin;
+	const wchar_t *item_begin;
 
-	switch( expand_locate_subshell(in, 
-								   &paran_begin,
-								   &paran_end,
-								   0 ) )
+	switch( parse_util_locate_cmdsubst(in,
+									   &paran_begin,
+									   &paran_end,
+									   0 ) )
 	{
 		case -1:
-			error( SYNTAX_ERROR, 
+			error( SYNTAX_ERROR,
 				   -1,
 				   L"Mismatched parans" );
 			return 0;
 		case 0:
 			al_push( out, in );
-			return 1;		
+			return 1;
 		case 1:
-			
+
 			break;
-		
-	}	
+
+	}
 
 	len1 = (paran_begin-in);
 	len2 = wcslen(paran_end)-1;
@@ -1277,62 +1200,62 @@ static int expand_subshell( wchar_t *in, array_list_t *out )
 	if( !(subcmd = malloc( sizeof(wchar_t)*(paran_end-paran_begin) )))
 	{
 		al_destroy( &sub_res );
-		return 0;		
+		return 0;
 	}
-	
+
 	wcsncpy( subcmd, paran_begin+1, paran_end-paran_begin-1 );
-	subcmd[ paran_end-paran_begin-1]=0;	
-	
+	subcmd[ paran_end-paran_begin-1]=0;
+
 	if( exec_subshell( subcmd, &sub_res)==-1 )
 	{
 		al_foreach( &sub_res, (void (*)(const void *))&free );
 		al_destroy( &sub_res );
 		free( subcmd );
 		return 0;
-	}	
-	
+	}
+
 	al_init( &tail_expand );
 	expand_subshell( wcsdup(paran_end+1), &tail_expand );
-	
+
     for( i=0; i<al_get_count( &sub_res ); i++ )
     {
         wchar_t *sub_item, *sub_item2;
         sub_item = (wchar_t *)al_get( &sub_res, i );
-        sub_item2 = expand_escape( sub_item, 1 );
-		free(sub_item);		
+        sub_item2 = escape( sub_item, 1 );
+		free(sub_item);
         int item_len = wcslen( sub_item2 );
-		
+
         for( j=0; j<al_get_count( &tail_expand ); j++ )
         {
             string_buffer_t whole_item;
             wchar_t *tail_item = (wchar_t *)al_get( &tail_expand, j );
-			
+
             sb_init( &whole_item );
-			
+
             sb_append_substring( &whole_item, in, len1 );
             sb_append_char( &whole_item, INTERNAL_SEPARATOR );
             sb_append_substring( &whole_item, sub_item2, item_len );
 			sb_append_char( &whole_item, INTERNAL_SEPARATOR );
-            sb_append( &whole_item, tail_item );			
-			
-            al_push( out, whole_item.buff );			
+            sb_append( &whole_item, tail_item );
+
+            al_push( out, whole_item.buff );
         }
-		
+
         free( sub_item2 );
-    }	
+    }
 	free(in);
-	
+
 	al_destroy( &sub_res );
-	
+
 	al_foreach( &tail_expand, (void (*)(const void *))&free );
 	al_destroy( &tail_expand );
-	
+
 	free( subcmd );
-	return 1;	
+	return 1;
 }
 
 
-wchar_t *expand_unescape( const wchar_t * in, int escape_special )
+static wchar_t *expand_unescape( const wchar_t * in, int escape_special )
 {
 	wchar_t *res = unescape( in, escape_special );
 	if( !res )
@@ -1348,31 +1271,31 @@ wchar_t *expand_unescape( const wchar_t * in, int escape_special )
 */
 static wchar_t * expand_tilde_internal( wchar_t *in )
 {
-	
+
 	if( in[0] == HOME_DIRECTORY )
 	{
 		int tilde_error = 0;
 		wchar_t *home=0;
 		wchar_t *new_in=0;
 		wchar_t *old_in=0;
-		
+
 //		fwprintf( stderr, L"Tilde expand ~%ls\n", (*ptr)+1 );
 		if( in[1] == '/' || in[1] == '\0' )
 		{
 			/* Current users home directory */
-			
+
 			home = env_get( L"HOME" );
 			if( home )
 				home = wcsdup(home);
 			else
 				home = wcsdup(L"");
-			
+
 			if( !home )
 			{
 				*in = L'~';
 				tilde_error = 1;
 			}
-			
+
 			old_in = &in[1];
 		}
 		else
@@ -1381,17 +1304,17 @@ static wchar_t * expand_tilde_internal( wchar_t *in )
 			wchar_t *name;
 			wchar_t *name_end = wcschr( in, L'/' );
 			if( name_end == 0 )
-			{	
+			{
 				name_end = in+wcslen( in );
 			}
 			name = wcsndup( in+1, name_end-in-1 );
 			old_in = name_end;
-			
-			char *name_str = wcs2str( name );			
-			
-			struct passwd *userinfo = 
+
+			char *name_str = wcs2str( name );
+
+			struct passwd *userinfo =
 				getpwnam( name_str );
-			
+
 			if( userinfo == 0 )
 			{
 				tilde_error = 1;
@@ -1399,28 +1322,28 @@ static wchar_t * expand_tilde_internal( wchar_t *in )
 			}
 			else
 			{
-				home = str2wcs(userinfo->pw_dir);				
+				home = str2wcs(userinfo->pw_dir);
 				if( !home )
 				{
 					*in = L'~';
 					tilde_error = 1;
 				}
 			}
-			
+
 			free( name_str );
 			free(name);
 		}
-		
+
 		if( !tilde_error && home && old_in )
 		{
-			new_in = wcsdupcat( home, old_in ); 
+			new_in = wcsdupcat( home, old_in );
 		}
 		free(home);
 		free( in );
-		return new_in;			
+		return new_in;
 	}
 	return in;
-} 
+}
 
 wchar_t *expand_tilde( wchar_t *in)
 {
@@ -1429,7 +1352,7 @@ wchar_t *expand_tilde( wchar_t *in)
 		in[0] = HOME_DIRECTORY;
 		return expand_tilde_internal( in );
 	}
-	return in;	
+	return in;
 }
 
 /**
@@ -1448,7 +1371,7 @@ static void remove_internal_separator( const void *s, int conv )
 			case INTERNAL_SEPARATOR:
 				in++;
 				break;
-				
+
 			case ANY_CHAR:
 				in++;
 				*out++ = conv?L'?':ANY_CHAR;
@@ -1458,7 +1381,7 @@ static void remove_internal_separator( const void *s, int conv )
 				in++;
 				*out++ = conv?L'*':ANY_STRING;
 				break;
-				
+
 			default:
 				*out++ = *in++;
 		}
@@ -1471,18 +1394,18 @@ static void remove_internal_separator( const void *s, int conv )
    The real expansion function. expand_one is just a wrapper around this one.
 */
 int expand_string( wchar_t *str,
-				   array_list_t *end_out, 
+				   array_list_t *end_out,
 				   int flags )
 {
 	array_list_t list1, list2;
 	array_list_t *in, *out;
-	
+
 	int i;
 	int subshell_ok = 1;
 	int res = EXPAND_OK;
-	
+
 //	debug( 1, L"Expand %ls", str );
-	
+
 
 	if( (!(flags & ACCEPT_INCOMPLETE)) && is_clean( str ) )
 	{
@@ -1496,13 +1419,13 @@ int expand_string( wchar_t *str,
 	if( EXPAND_SKIP_SUBSHELL & flags )
 	{
 		wchar_t *pos = str;
-		
+
 		while( 1 )
 		{
 			pos = wcschr( pos, L'(' );
 			if( pos == 0 )
 				break;
-			
+
 			if( (pos == str) || ( *(pos-1) != L'\\' ) )
 			{
 				error( SUBSHELL_ERROR, -1, L"Subshells not allowed" );
@@ -1512,7 +1435,7 @@ int expand_string( wchar_t *str,
 				return EXPAND_ERROR;
 			}
 			pos++;
-		}		
+		}
 		al_push( &list1, str );
 	}
 	else
@@ -1533,15 +1456,15 @@ int expand_string( wchar_t *str,
 		for( i=0; i<al_get_count( in ); i++ )
 		{
 			wchar_t *next;
-			
-			next = expand_unescape( (wchar_t *)al_get( in, i ), 
+
+			next = expand_unescape( (wchar_t *)al_get( in, i ),
 									1);
 
 			free( (void *)al_get( in, i ) );
-			
+
 			if( !next )
-				continue;			
-			
+				continue;
+
 			if( EXPAND_SKIP_VARIABLES & flags )
 			{
 				wchar_t *tmp;
@@ -1549,7 +1472,7 @@ int expand_string( wchar_t *str,
 					if( *tmp == VARIABLE_EXPAND )
 						*tmp = L'$';
 				al_push( out, next );
-				
+
 			}
 			else
 			{
@@ -1557,16 +1480,16 @@ int expand_string( wchar_t *str,
 				{
 					al_destroy( in );
 					al_destroy( out );
-					return EXPAND_ERROR;	
+					return EXPAND_ERROR;
 				}
 			}
 		}
-		
+
 		al_truncate( in, 0 );
 
 		in = &list2;
 		out = &list1;
-		
+
 		for( i=0; i<al_get_count( in ); i++ )
 		{
 			wchar_t *next = (wchar_t *)al_get( in, i );
@@ -1581,17 +1504,17 @@ int expand_string( wchar_t *str,
 
 		in = &list1;
 		out = &list2;
-		
+
 		for( i=0; i<al_get_count( in ); i++ )
 		{
-			wchar_t *next = (wchar_t *)al_get( in, i );		
+			wchar_t *next = (wchar_t *)al_get( in, i );
 			if( !(next=expand_tilde_internal( next ) ) )
 			{
 				al_destroy( in );
 				al_destroy( out );
 				return EXPAND_ERROR;
 			}
-		
+
 			if( flags & ACCEPT_INCOMPLETE )
 			{
 				if( *next == PROCESS_EXPAND )
@@ -1620,20 +1543,20 @@ int expand_string( wchar_t *str,
 			}
 		}
 		al_truncate( in, 0 );
-		
+
 		in = &list2;
-		out = &list1;		
-		
+		out = &list1;
+
 		for( i=0; i<al_get_count( in ); i++ )
 		{
 			wchar_t *next = (wchar_t *)al_get( in, i );
 			int wc_res;
 
-			remove_internal_separator( next, EXPAND_SKIP_WILDCARDS & flags );				
-			if( ((flags & ACCEPT_INCOMPLETE) && (!(flags & EXPAND_SKIP_WILDCARDS))) || 
+			remove_internal_separator( next, EXPAND_SKIP_WILDCARDS & flags );
+			if( ((flags & ACCEPT_INCOMPLETE) && (!(flags & EXPAND_SKIP_WILDCARDS))) ||
 				wildcard_has( next, 1 ) )
 			{
-				
+
 				if( next[0] == '/' )
 				{
 					wc_res = wildcard_expand( &next[1], L"/",flags, out );
@@ -1647,20 +1570,20 @@ int expand_string( wchar_t *str,
 				{
 					case 0:
 						if( !(flags & ACCEPT_INCOMPLETE) )
-						{	
+						{
 							if( res == EXPAND_OK )
 								res = EXPAND_WILDCARD_NO_MATCH;
 							break;
 						}
-						
+
 					case 1:
 						res = EXPAND_WILDCARD_MATCH;
 						sort_list( out );
 						al_push_all( end_out, out );
-						al_truncate( out, 0 );						
+						al_truncate( out, 0 );
 						break;
-						
-				}			
+
+				}
 			}
 			else
 			{
@@ -1668,14 +1591,14 @@ int expand_string( wchar_t *str,
 					free( next );
 				else
 					al_push( end_out, next );
-			}		
+			}
 		}
 		al_destroy( in );
 		al_destroy( out );
 	}
 
 	return res;
-	
+
 }
 
 
@@ -1686,8 +1609,8 @@ wchar_t *expand_one( wchar_t *string, int flags )
 	wchar_t *one;
 
 	if( (!(flags & ACCEPT_INCOMPLETE)) &&  is_clean( string ) )
-		return string;	
-	
+		return string;
+
 	al_init( &l );
 	res = expand_string( string, &l, flags );
 	if( !res )

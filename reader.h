@@ -48,7 +48,7 @@ wchar_t *reader_current_filename();
    
    \param fn The fileanme to push
 */
-void reader_push_current_filename( wchar_t *fn );
+void reader_push_current_filename( const wchar_t *fn );
 /**
    Pop the current filename from the stack of read files
  */
@@ -151,27 +151,6 @@ void reader_set_prompt( wchar_t *prompt );
    Returns true if the shell is exiting, 0 otherwise. 
 */
 int exit_status();
-
-/**
-   Find the beginning and the end of the current subshell
-*/
-void reader_current_subshell_extent( wchar_t **a, wchar_t **b );
-
-/**
-   Find the beginning and the end of the job under the cursor 
-*/
-void reader_current_job_extent( wchar_t **a, wchar_t **b );
-
-/**
-   Find the beginning and the end of the process under the cursor 
-*/
-void reader_current_process_extent( wchar_t **a, wchar_t **b );
-
-/**
-   Find the beginning and the end of the token under the curor and the token before the cursor
-*/
-
-void reader_current_token_extent( wchar_t **a, wchar_t **b, wchar_t **pa, wchar_t **pb );
 
 /**
    Replace the current token with the specified string

@@ -48,6 +48,13 @@ enum
 }
 	;
 
+enum
+{
+	JOB_CONTROL_ALL, 
+	JOB_CONTROL_INTERACTIVE,
+	JOB_CONTROL_NONE,
+}
+	;
 
 /** 
 	A structure representing a single fish process. Contains variables
@@ -156,9 +163,12 @@ typedef struct job
 	/** Skip executing this job. This flag is set by the short-circut builtins, i.e. and and or */
 	int skip;
 
-	/** Whether this job wants to have control of the terminal when it is in the foreground */
+	/** Whether the job is under job control */
+	int job_control;
+			
+	/** Whether the job wants to own the terminal when in the foreground */
 	int terminal;
-		
+			
 	/** Pointer to the next job */
 	struct job *next;           
 } 
@@ -217,6 +227,11 @@ extern int proc_had_barrier;
 extern pid_t proc_last_bg_pid;
 
 /**
+   Can be one of JOB_CONTROL_ALL, JOB_CONTROL_INTERACTIVE and JOB_CONTROL_NONE
+*/
+extern int job_control_mode;
+
+/**
    Sets the status of the last process to exit
 */
 void proc_set_last_status( int s );
@@ -232,7 +247,9 @@ int proc_get_last_status();
 void job_free( job_t* j );
 
 /**
-   Create a new job
+   Create a new job. Job struct is allocated using halloc, so anything
+   that should be freed with the job can uset it as a halloc context
+   when allocating.
 */
 job_t *job_create();
 

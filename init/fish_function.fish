@@ -1,39 +1,15 @@
 #
-# This file defines various functions for fish
+# This file defines various shellscript functions. Most of them are
+# meant to be used directly by the user, but some of them, typically
+# the ones whose name start with '__fish_', are only meant to be used
+# internally by fish.
 #
-
-
-function _contains_help -d "Helper function for contains"
-
-	set bullet \*
-	if expr "$LANG" : ".*UTF" >/dev/null
-		set bullet \u2022
-	end
-
-	echo \tcontains - Test if a word is present in a list\n
-	__bold Synopsis
-	echo \n\n\tcontains \[OPTION] KEY [VALUES...]\n
-	__bold Description
-	echo \n\n\t$bullet (__bold -h) or (__bold --help) display help and exit\n
-	echo \tTest if the set VALUES contains the string KEY.
-	echo \tReturn status is 0 if yes, 1 otherwise.\n
-	__bold Example
-	echo \n
-	echo \tfor i in \~/bin /usr/local/bin
-	echo \t\tif not contains \$i \$PATH
-	echo \t\t\tset PATH \$PATH i
-	echo \t\tend
-	echo \tend
-	echo
-	echo \tThe above code tests if "~/bin" and  /usr/local/bin are in the path
-	echo \tand if they are not, they are added.
-end
 
 function contains -d "Test if a key is contained in a set of values"
 	while set -q argv
 		switch $argv[1]
 			case '-h' '--h' '--he' '--hel' '--help'
-				_contains_help
+				help contains
 				return
 
 			case '--'
@@ -42,8 +18,8 @@ function contains -d "Test if a key is contained in a set of values"
 				break
 			
 			case '-*'
-				echo Unknown option $argv[$i]
-				_contains_help
+				printf (_ "%s: Unknown option '%s'\n") contains $argv[$i]
+				help contains
 				return 1
 
 			case '*'
@@ -82,8 +58,8 @@ end
 function help -d "Show help for the fish shell"
 
 	# Declare variables to set correct scope
-	set fish_browser
-	set fish_browser_bg
+	set -l fish_browser
+	set -l fish_browser_bg
 
 	set -l h syntax completion editor job-control todo bugs history killring help
 	set h $h color prompt title variables builtin-overview changes expand 
@@ -94,8 +70,8 @@ function help -d "Show help for the fish shell"
 	# Find a suitable browser for viewing the help pages. This is needed
 	# by the help function defined below.
 	#
-	set graphical_browsers htmlview x-www-browser firefox galeon mozilla konqueror epiphany opera netscape
-	set text_browsers htmlview www-browser links elinks lynx w3m
+	set -l graphical_browsers htmlview x-www-browser firefox galeon mozilla konqueror epiphany opera netscape
+	set -l text_browsers htmlview www-browser links elinks lynx w3m
 
 	if test $BROWSER
 		# User has manualy set a preferred browser, so we respect that
@@ -116,7 +92,7 @@ function help -d "Show help for the fish shell"
 
 		# If we are in a graphical environment, check if there is a graphical
 		# browser to use instead.
-		if test (echo $DISPLAY) -a \( "$XAUTHORITY" = "$HOME/.Xauthority" -o "$XAUTHORITY" = "" \)
+		if test "$DISPLAY" -a \( "$XAUTHORITY" = "$HOME/.Xauthority" -o "$XAUTHORITY" = "" \)
 			for i in $graphical_browsers
 				if which $i 2>/dev/null >/dev/null
 					set fish_browser $i
@@ -145,11 +121,11 @@ function help -d "Show help for the fish shell"
 		case globbing
 			set fish_help_page "index.html\#expand"
 		case (builtin -n)
-			set fish_help_page "builtins.html\#"$fish_help_item
-		case count dirh dirs help mimedb nextd open popd prevd pushd set_color tokenize psub umask type 
-			set fish_help_page "commands.html\#"$fish_help_item
+			set fish_help_page "builtins.html\#$fish_help_item"
+		case contains count dirh dirs help mimedb nextd open popd prevd pushd set_color tokenize psub umask type vared
+			set fish_help_page "commands.html\#$fish_help_item"
 		case $help_topics
-			set fish_help_page "index.html\#"$fish_help_item
+			set fish_help_page "index.html\#$fish_help_item"
 		case "*"
 			if which $fish_help_item >/dev/null ^/dev/null
 				man $fish_help_item
@@ -199,22 +175,35 @@ end
 # application for the file.
 #
 
-function open -d "Open file in default application"
-	mimedb -l -- $argv
+if not test (uname) = Darwin
+	function open -d "Open file in default application"
+		mimedb -l -- $argv
+	end
 end
 
 #
-# Print the current working directory. If it is too long, it will be
-# ellipsised. This function is used by the default prompt command.
+# Print the current working directory in a shortened form.This
+# function is used by the default prompt command.
 #
 
-function prompt_pwd -d "Print the current working directory, shortend to fit the prompt"
-	set -l wd (pwd)
-	set -l res (echo $wd|sed -e 's-/\([^/]\)\([^/]*\)-/\1-g')
-	if test $wd != '~'
-		set res $res(echo $wd|sed -e 's-.*/[^/]\([^/]*$\)-\1-')
+if test (uname) = Darwin
+	function prompt_pwd -d "Print the current working directory, shortend to fit the prompt"
+		if test "$PWD" != "$HOME"
+			printf "%s" (echo $PWD|sed -e 's|/private||' -e "s|^$HOME|~|" -e 's-/\([^/]\)\([^/]*\)-/\1-g')
+			echo $PWD|sed -e 's-.*/[^/]\([^/]*$\)-\1-'
+		else
+			echo '~'
+		end
 	end
-	echo $res
+else
+	function prompt_pwd -d "Print the current working directory, shortend to fit the prompt"
+		if test "$PWD" != "$HOME"
+			printf "%s" (echo $PWD|sed -e "s|^$HOME|~|" -e 's-/\([^/]\)\([^/]*\)-/\1-g')
+			echo $PWD|sed -e 's-.*/[^/]\([^/]*$\)-\1-'
+		else
+			echo '~'
+		end
+	end
 end
 
 #
@@ -222,7 +211,7 @@ end
 #
 
 function pwd -d "Print working directory"
-	command pwd | sed -e "s|^$HOME|~|"
+	command pwd | sed -e 's|/private||' -e "s|^$HOME|~|"
 end
 
 #
@@ -235,10 +224,10 @@ function vared -d "Edit variable value"
 		switch $argv
 
 			case '-h' '--h' '--he' '--hel' '--help'
-				__vared_help
+				help vared
 
 			case '-*'
-				printf "vared: Unknown option %s\n" $argv
+				printf (_ "%s: Unknown option %s\n") vared $argv
 
 			case '*'
 				if test (count $$argv ) -lt 2
@@ -263,24 +252,20 @@ function vared -d "Edit variable value"
 
 				else
 
-					printf (_ 'vared: %s is an array variable. Use %svared%s %s[n] to edit the n:th element of %s\n') $argv (set_color $fish_color_command) (set_color $fish_color_normal) $argv $argv
+					printf (_ '%s: %s is an array variable. Use %svared%s %s[n] to edit the n:th element of %s\n') $argv (set_color $fish_color_command) (set_color $fish_color_normal) vared $argv $argv
 				end
 		end
 	else
-		printf (_ 'vared: Expected exactly one argument, got %s.\n\nSynopsis:\n\t%svared%s VARIABLE\n') (count $argv) (set_color $fish_color_command) (set_color $fish_color_normal)
+		printf (_ '%s: Expected exactly one argument, got %s.\n\nSynopsis:\n\t%svared%s VARIABLE\n') vared (count $argv) (set_color $fish_color_command) (set_color $fish_color_normal)
 	end
 end
 
-function __vared_help -d "Display help for the vared shellscript function"
+#
+# This function is used internally by the fish command completion code
+#
 
-	printf "\tvared - Interactively edit the value of an environment variable\n\n"
-	printf "%s\n\t%svared%s VARIABLE\n\n" (__bold Synopsis) (set_color $fish_color_command) (set_color normal)
-	__bold Description
-	printf "\n\n\tvared is used to interactively edit the value of an environment \n"
-	printf "\tvariable. Array variables as a whole can not be edited using vared,\n" 
-	printf "\tbut individual array elements can.\n\n"
-	__bold Example
-	printf "\n\n\t"\'"%svared%s PATH[3]"\'" edits the third element of the PATH array.\n\n" (set_color $fish_color_co\mmand) (set_color normal)
+function __fish_describe_command -d "Command used to find descriptions for commands"
+	apropos $argv | awk -v FS=" +- +" '{split($1, names, ", "); for (name in names) if (names[name] ~ /^'"$argv"'.* *\([18]\)/) { sub("\\([18]\\)", "", names[name]); print names[name] "\t" $2; } }'
 end
 
 #
@@ -314,7 +299,7 @@ function popd -d "Pop dir from stack"
 	if test $dirstack[1]
 		cd $dirstack[1]
 	else
-		echo Directory stack is empty...
+		printf (_ "%s: Directory stack is empty...") popd
 		return 1
 	end
 
@@ -369,10 +354,10 @@ end
 
 
 function __fish_move_last -d "Move the last element of a directory history from src to dest"
-	set src $argv[1]
-	set dest $argv[2]
+	set -l src $argv[1]
+	set -l dest $argv[2]
 
-	set size_src (count $$src)
+	set -l size_src (count $$src)
 
 	if test $size_src = 0
 		# Cannot make this step
@@ -398,15 +383,15 @@ end
 
 function prevd -d "Move back in the directory history"
 	# Parse arguments
-	set show_hist 0 
-	set times 1
+	set -l show_hist 0 
+	set -l times 1
 	for i in (seq (count $argv))
 		switch $argv[$i]
-			case '-l'
+			case '-l' --l --li --lis --list
 				set show_hist 1
 				continue
 			case '-*'
-				echo Uknown option $argv[$i]
+				printf (_ "%s: Unknown option %s\n" ) prevd $argv[$i]
 				return 1
 			case '*'
 				if test $argv[$i] -ge 0 ^/dev/null
@@ -420,7 +405,7 @@ function prevd -d "Move back in the directory history"
 	end
 
 	# Traverse history
-	set code 1
+	set -l code 1
 	for i in (seq $times)
 		# Try one step backward
 		if __fish_move_last dirprev dirnext;
@@ -449,21 +434,21 @@ end
 
 function nextd -d "Move forward in the directory history"
 	# Parse arguments
-	set show_hist 0 
-	set times 1
+	set -l show_hist 0 
+	set -l times 1
 	for i in (seq (count $argv))
 		switch $argv[$i]
-			case '-l'
+			case '-l' --l --li --lis --list
 				set show_hist 1
 				continue
 			case '-*'
-				echo Uknown option $argv[$i]
+				printf (_ "%s: Unknown option %s\n" ) nextd $argv[$i]
 				return 1
 			case '*'
 				if test $argv[$i] -ge 0 ^/dev/null
 					set times $argv[$i]
 				else
-					echo "The number of positions to skip must be a non-negative integer"
+					printf (_ "%s: The number of positions to skip must be a non-negative integer\n" ) nextd
 					return 1
 				end
 				continue
@@ -471,7 +456,7 @@ function nextd -d "Move forward in the directory history"
 	end
 
 	# Traverse history
-	set code 1
+	set -l code 1
 	for i in (seq $times)
 		# Try one step backward
 		if __fish_move_last dirnext dirprev;
@@ -500,9 +485,9 @@ end
 
 function dirh -d "Print the current directory history (the back- and fwd- lists)" 
 	# Avoid set comment
-	set current (command pwd)
-	set -- separator "  "
-	set -- line_len (echo (count $dirprev) + (echo $dirprev $current $dirnext | wc -m) | bc)
+	set -l current (command pwd)
+	set -l separator "  "
+	set -l line_len (echo (count $dirprev) + (echo $dirprev $current $dirnext | wc -m) | bc)
 	if test $line_len -gt $COLUMNS
 		# Print one entry per line if history is long
 		set separator "\n"
@@ -559,10 +544,9 @@ function trap -d 'Perform an action when the shell recives a signal'
 	set -l shortopt
 	set -l longopt
 
-	set shortopt -o lph
-	if getopt -T >/dev/null
-		set longopt
-	else
+	set -l shortopt -o lph
+	set -l longopt
+	if not getopt -T >/dev/null
 		set longopt -l print,help,list-signals
 	end
 
@@ -667,60 +651,31 @@ function trap -d 'Perform an action when the shell recives a signal'
 
 end
 
-function __fish_type_help -d "Help for the type shellscript function"
-
-set bullet \*
-if expr "$LANG" : ".*UTF" >/dev/null
-		set bullet \u2022
-end
-
-echo \ttype - Indicate how a name would be interpreted if used as a \n\tcommand name
-echo
-echo (__bold Synopsis)
-echo
-echo \t(set_color $fish_color_command)type(set_color normal) [OPTIONS] name [name ...]
-echo
-echo (__bold Description)
-echo
-echo \tWith no options, indicate how each name would be interpreted if \n\tused as a command name.  
-echo
-echo \t$bullet (__bold -h) or (__bold --help) print this message
-echo \t$bullet (__bold -a) or (__bold --all) print all possible definitions of the specified \n\t\ \ names
-echo \t$bullet (__bold -f) or (__bold --no-functions) supresses function and builtin lookup
-echo \t$bullet (__bold -t) or (__bold --type) print a string which is one of alias, keyword, \n\t\ \ function, builtin, or file if name is an alias, shell \n\t\ \ reserved word, function, builtin, or disk file, respectively
-echo \t$bullet (__bold -p) or (__bold --path) either return the name of the disk file that would \n\t\ \ be executed if name were specified as a command name, or nothing \n\t\ \ if (__bold "type -t name") would  not  return  file
-echo \t$bullet (__bold -P) or (__bold --force-path) either return the name of the disk file that \n\t\ \ would be executed if name were specified as a command name, \n\t\ \ or nothing no file with the spacified name could be found \n\t\ \ in the PATH
-echo
-echo (__bold Example)
-echo
-echo \t\'(set_color $fish_color_command)type(set_color normal) fg\' outputs the string \'fg is a shell builtin\'.
-echo
-
-end
 
 function type -d "Print the type of a command"
 
 	# Initialize
-	set status 1
-	set mode normal
-	set selection all
+	set -l status 1
+	set -l mode normal
+	set -l selection all
 
+	#
 	# Get options
 	#
-	set -- shortopt -o tpPafh
-	if getopt -T >/dev/null
-		set longopt
-	else
-		set -- longopt -l type,path,force-path,all,no-functions,help
+	set -l shortopt -o tpPafh
+	set -l longopt
+	if not getopt -T >/dev/null
+		set longopt -l type,path,force-path,all,no-functions,help
 	end
 
 	if not getopt -n type -Q $shortopt $longopt -- $argv
 		return 1
 	end
 
-	set -- tmp (getopt $shortopt $longopt -- $argv)
+	set -l tmp (getopt $shortopt $longopt -- $argv)
 
-	eval set -- opt $tmp
+	set -l opt
+	eval set opt $tmp
 
 	for i in $opt
 		switch $i
@@ -741,7 +696,7 @@ function type -d "Print the type of a command"
 				set selection files
 
 			case -h --help
-				 __fish_type_help
+				 help type
 				 return 0
 
 			case --
@@ -833,7 +788,7 @@ end
 function __fish_umask_parse -d "Parses a file permission specification as into an octal version"
 	# Test if already a valid octal mask, and pad it with zeros
 	if echo $argv | grep -E '^(0|)[0-7]{1,3}$' >/dev/null
-		for i in (seq (echo 5-(echo $argv|wc -c)|bc)); set -- argv 0$argv; end
+		for i in (seq (echo 5-(echo $argv|wc -c)|bc)); set argv 0$argv; end
 		echo $argv 
 	else
 		# Test if argument really is a valid symbolic mask
@@ -842,34 +797,38 @@ function __fish_umask_parse -d "Parses a file permission specification as into a
 			return 1
 		end
 
-		set -e implicit_all
+		set -l implicit_all
 
 		# Insert inverted umask into res variable
 
-		set tmp $umask
+		set -l mode
+		set -l val
+		set -l tmp $umask
+		set -l res
+
 		for i in 1 2 3
-			set -- tmp (echo $tmp|cut -c 2-)
-			set -- res[$i] (echo 7-(echo $tmp|cut -c 1)|bc)
+			set tmp (echo $tmp|cut -c 2-)
+			set res[$i] (echo 7-(echo $tmp|cut -c 1)|bc)
 		end
 				
-		set -- el (echo $argv|tr , \n)
+		set -l el (echo $argv|tr , \n)
 		for i in $el
 			switch $i
 				case 'u*'
 					set idx 1
-					set -- i (echo $i| cut -c 2-)
+					set i (echo $i| cut -c 2-)
 
 				case 'g*'
 					set idx 2
-					set -- i (echo $i| cut -c 2-)
+					set i (echo $i| cut -c 2-)
 
 				case 'o*'
 					set idx 3
-					set -- i (echo $i| cut -c 2-)
+					set i (echo $i| cut -c 2-)
 
 				case 'a*'
 					set idx 1 2 3
-					set -- i (echo $i| cut -c 2-)
+					set i (echo $i| cut -c 2-)
 
 				case '*'
 					set implicit_all 1
@@ -879,26 +838,26 @@ function __fish_umask_parse -d "Parses a file permission specification as into a
 			switch $i
 				case '=*'
 					set mode set
-					set -- i (echo $i| cut -c 2-) 
+					set i (echo $i| cut -c 2-) 
 
 				case '+*'
 					set mode add
-					set -- i (echo $i| cut -c 2-) 
+					set i (echo $i| cut -c 2-) 
 
 				case '-*'
 					set mode remove
-					set -- i (echo $i| cut -c 2-) 
+					set i (echo $i| cut -c 2-) 
 
 				case '*'
-					if not set -q implicit_all
-						echo umask: Invalid mask $argv >&2
+					if not count $implicit_all >/dev/null
+						printf (_ "%s: Invalid mask %s\n") umask $argv >&2
 						return
 					end
 					set mode set
 			end
 
 			if not echo $perm|grep -E '^(r|w|x)*$' >/dev/null
-				echo umask: Invalid mask $argv >&2
+				printf (_ "%s: Invalid mask %s\n") umask $argv >&2
 				return
 			end
 
@@ -964,20 +923,19 @@ function umask -d "Set default file permission mask"
 	set -l as_command 0
 	set -l symbolic 0
 
-	set -- shortopt -o pSh
-	if getopt -T >/dev/null
-		set longopt
-	else
-		set -- longopt -l as-command,symbolic,help
+	set -l shortopt -o pSh
+	set -l longopt
+	if not getopt -T >/dev/null
+		set longopt -l as-command,symbolic,help
 	end
 
 	if not getopt -n umask -Q $shortopt $longopt -- $argv
 		return 1
 	end
 
-	set tmp -- (getopt $shortopt $longopt -- $argv)
+	set -l tmp (getopt $shortopt $longopt -- $argv)
 
-	eval set -- opt $tmp
+	eval set opt $tmp
 
 	while count $opt >/dev/null
 
@@ -1022,7 +980,9 @@ function umask -d "Set default file permission mask"
 			set -l parsed (__fish_umask_parse $opt)
 			if test (count $parsed) -eq 1
 				set -g umask $parsed
+				return 0
 			end
+			return 1
 
 		case '*'
 			printf (_ '%s: Too many arguments\n') umask >&2

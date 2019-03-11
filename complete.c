@@ -36,14 +36,17 @@
 #include "history.h"
 #include "intern.h"
 #include "translate.h"
+#include "parse_util.h"
 
 #include "wutil.h"
 
 
 /*
-  Completion description strings for files
+  Completion description strings, mostly for different types of files, such as sockets, block devices, etc.
 
-  There are a few other completion description strings defined in expand.c
+  There are a few more completion description strings defined in
+  expand.c. Maybe all completion description strings should be defined
+  in the same file?
 */
 
 /**
@@ -94,20 +97,20 @@
 */
 #define COMPLETE_LOOP_SYMLINK_DESC _( L"Symbolic link loop" )
 /**
-   Description for socket
+   Description for socket files
 */
 #define COMPLETE_SOCKET_DESC _( L"Socket" )
 /**
-   Description for directory
+   Description for directories
 */
 #define COMPLETE_DIRECTORY_DESC _( L"Directory" )
 
 /**
-   Description for function
+   Generic description for functions
 */
 #define COMPLETE_FUNCTION_DESC _( L"Function" )
 /**
-   Description for builtin command
+   Generic description for builtin commands
 */
 #define COMPLETE_BUILTIN_DESC _( L"Builtin" )
 
@@ -125,30 +128,36 @@
 
 /**
    Condition cache value returned from hashtable when this condition
-   has not yet been tested
+   has not yet been tested. This value is NULL, so that when the hash
+   table returns NULL, this wil be seen as an untested condition.
 */
 #define CC_NOT_TESTED 0
 
 /**
-   Condition cache value returned from hashtable when the condition is met
+   Condition cache value returned from hashtable when the condition is
+   met. This can be any value, that is a valid pointer, and that is
+   different from CC_NOT_TESTED and CC_FALSE.
 */
 #define CC_TRUE L"true"
 
 /**
-   Condition cache value returned from hashtable when the condition is not met
+   Condition cache value returned from hashtable when the condition is
+   not met. This can be any value, that is a valid pointer, and that
+   is different from CC_NOT_TESTED and CC_TRUE.
+
 */
 #define CC_FALSE L"false"
 
 /**
-   Struct describing a completion option entry. 
+   Struct describing a completion option entry.
 
    If short_opt and long_opt are both zero, the comp field must not be
    empty and contains a list of arguments to the command.
 
    If either short_opt or long_opt are non-zero, they specify a switch
    for the command. If \c comp is also not empty, it contains a list
-   of arguments that may only follow after the specified switch.
-   
+   of non-switch arguments that may only follow directly after the
+   specified switch.   
 */
 typedef struct complete_entry_opt
 {
@@ -162,11 +171,13 @@ typedef struct complete_entry_opt
 	const wchar_t *desc;
 	/** Condition under which to use the option */
 	const wchar_t *condition;
-	/** Must be one of the values SHARED, NO_FILES, NO_COMMON, EXCLUSIVE. */
+	/** Must be one of the values SHARED, NO_FILES, NO_COMMON,
+		EXCLUSIVE, and determines how completions should be performed
+		on the argument after the switch. */
 	int result_mode;
-	/** Next option in the linked list */
 	/** True if old style long options are used */
 	int old_mode;
+	/** Next option in the linked list */
 	struct complete_entry_opt *next;
 }
 	complete_entry_opt;
@@ -227,9 +238,9 @@ static void condition_cache_clear()
 	if( condition_cache )
 	{
 		hash_destroy( condition_cache );
-		free( condition_cache );		
+		free( condition_cache );
 		condition_cache = 0;
-	}	
+	}
 }
 
 /**
@@ -241,38 +252,36 @@ static void condition_cache_clear()
 static int condition_test( const wchar_t *condition )
 {
 	const void *test_res;
-	
+
 	if( !condition || !wcslen(condition) )
 	{
 //		fwprintf( stderr, L"No condition specified\n" );
 		return 1;
 	}
-	
+
 	if( !condition_cache )
 	{
 		condition_cache = malloc( sizeof( hash_table_t ) );
 		if( !condition_cache )
 		{
 			die_mem();
-			
+
 		}
-		
-		hash_init( condition_cache, 
+
+		hash_init( condition_cache,
 				   &hash_wcs_func,
 				   &hash_wcs_cmp );
-		
-		
+
+
 	}
-	
+
 	test_res = hash_get( condition_cache, condition );
-	
+
 	if (test_res == CC_NOT_TESTED )
 	{
 		test_res = exec_subshell( condition, 0 )?CC_FALSE:CC_TRUE;
-//		debug( 1, L"Eval returns %ls for '%ls'", test_res, condition );		
-
 		hash_put( condition_cache, condition, test_res );
-		
+
 		/*
 		  Restore previous status information
 		*/
@@ -280,13 +289,10 @@ static int condition_test( const wchar_t *condition )
 
 	if( test_res == CC_TRUE )
 	{
-//		debug( 1, L"Use conditional completion on condition %ls", condition );		
-		return 1;			
+		return 1;
 	}
 
-//	debug( 1, L"Skip conditional completion on condition %ls", condition );
 	return 0;
-		
 }
 
 
@@ -340,15 +346,15 @@ void complete_destroy()
 		complete_free_entry( prev );
 	}
 	first_entry = 0;
-	
+
 	if( suffix_hash )
 	{
 		hash_foreach( suffix_hash, &clear_hash_entry );
 		hash_destroy( suffix_hash );
-		free( suffix_hash );		
+		free( suffix_hash );
 		suffix_hash=0;
 	}
-	
+
 	if( loaded_completions )
 	{
 		hash_foreach( loaded_completions,
@@ -403,8 +409,8 @@ void complete_add( const wchar_t *cmd,
 	{
 		if( !(c = malloc( sizeof(complete_entry) )))
 			die_mem();
-		
-		
+
+
 		c->next = first_entry;
 		first_entry = c;
 
@@ -418,7 +424,7 @@ void complete_add( const wchar_t *cmd,
 /*		wprintf( L"Add completion to option (short %lc, long %ls)\n", short_opt, long_opt );*/
 	if( !(opt = malloc( sizeof( complete_entry_opt ) )))
 		die_mem();
-	
+
 	opt->next = c->first_option;
 	c->first_option = opt;
 	c->authorative = authorative;
@@ -525,12 +531,12 @@ void complete_remove( const wchar_t *cmd,
 				}
 				else
 				{
-					eprev->next = e->next;					
+					eprev->next = e->next;
 				}
-				
+
 				free( e->short_opt_str );
 				free( e );
-				e=0;				
+				e=0;
 			}
 
 		}
@@ -614,12 +620,12 @@ int complete_is_valid_option( const wchar_t *str,
 
 		return 0;
 	}
-	
-	
+
+
 
 	if( !(short_validated = malloc( wcslen( opt ) )))
 		die_mem();
-	
+
 	memset( short_validated, 0, wcslen( opt ) );
 
 	hash_init( &gnu_match_hash,
@@ -840,7 +846,7 @@ static const wchar_t *complete_get_desc_suffix( const wchar_t *suff_orig )
 		}
 	}
 
-	wchar_t *tmp = expand_escape( suff, 0 );
+	wchar_t *tmp = escape( suff, 0 );
 	free(suff);
 	suff = tmp;
 
@@ -898,7 +904,7 @@ static const wchar_t *complete_get_desc_suffix( const wchar_t *suff_orig )
 const wchar_t *complete_get_desc( const wchar_t *filename )
 {
 	struct stat buf;
-			
+
 	if( !get_desc_buff )
 	{
 		get_desc_buff = malloc(sizeof(string_buffer_t) );
@@ -908,17 +914,17 @@ const wchar_t *complete_get_desc( const wchar_t *filename )
 	{
 		sb_clear( get_desc_buff );
 	}
-	
+
 	if( lwstat( filename, &buf )==0)
-	{		
+	{
 		if( S_ISCHR(buf.st_mode) )
 		{
-			sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_CHAR_DESC );				
+			sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_CHAR_DESC );
 		}
 		else if( S_ISBLK(buf.st_mode) )
-			sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_BLOCK_DESC );				
+			sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_BLOCK_DESC );
 		else if( S_ISFIFO(buf.st_mode) )
-			sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_FIFO_DESC );				
+			sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_FIFO_DESC );
 		else if( S_ISLNK(buf.st_mode))
 		{
 			struct stat buf2;
@@ -930,7 +936,7 @@ const wchar_t *complete_get_desc( const wchar_t *filename )
 					sb_printf( get_desc_buff, L"/%lc%ls", COMPLETE_SEP, COMPLETE_SYMLINK_DESC );
 				}
 				else if( waccess( filename, X_OK ) == 0 )
-					sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_EXEC_LINK_DESC );				
+					sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_EXEC_LINK_DESC );
 				else
 					sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_SYMLINK_DESC );
 			}
@@ -950,7 +956,7 @@ const wchar_t *complete_get_desc( const wchar_t *filename )
 						{
 							sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_LOOP_SYMLINK_DESC );
 						}
-						
+
 						/*
 						  Some kind of broken symlink. We ignore it
 						  here, and it will get a 'file' description,
@@ -980,16 +986,16 @@ const wchar_t *complete_get_desc( const wchar_t *filename )
 			sb_printf( get_desc_buff,
 					   L"%lc%ls",
 					   COMPLETE_SEP,
-					   complete_get_desc_suffix( suffix ) );			
+					   complete_get_desc_suffix( suffix ) );
 		}
 		else
-		{ 
+		{
 			sb_printf( get_desc_buff,
-					   L"%lc%ls", 
-					   COMPLETE_SEP, 
+					   L"%lc%ls",
+					   COMPLETE_SEP,
 					   COMPLETE_FILE_DESC );
 		}
-		
+
 	}
 
 	return (wchar_t *)get_desc_buff->buff;
@@ -997,7 +1003,7 @@ const wchar_t *complete_get_desc( const wchar_t *filename )
 
 /**
    Copy any strings in possible_comp which have the specified prefix
-   to the list comp_out. The prefix may contain wildcards. 
+   to the list comp_out. The prefix may contain wildcards.
 
    There are three ways to specify descriptions for each
    completion. Firstly, if a description has already been added to the
@@ -1052,10 +1058,9 @@ static void complete_cmd_desc( const wchar_t *cmd, array_list_t *comp )
 	int i;
 	const wchar_t *cmd_start;
 	int cmd_len;
-	wchar_t *apropos_cmd=0;
+	wchar_t *lookup_cmd=0;
 	array_list_t list;
 	hash_table_t lookup;
-	wchar_t *whatis_path = env_get( L"__fish_whatis_path" );
 	wchar_t *esc;
 
 	if( !cmd )
@@ -1067,7 +1072,7 @@ static void complete_cmd_desc( const wchar_t *cmd, array_list_t *comp )
 		cmd_start++;
 	else
 		cmd_start = cmd;
-	
+
 	cmd_len = wcslen(cmd_start);
 
 	/*
@@ -1075,26 +1080,19 @@ static void complete_cmd_desc( const wchar_t *cmd, array_list_t *comp )
 	  to many results - require at least two characters if we don't
 	  know the location of the whatis-database.
 	*/
-	if( (cmd_len < 2) && (!whatis_path) )
+	if(cmd_len < 2 )
 		return;
 
 	if( wildcard_has( cmd_start, 0 ) )
 	{
 		return;
 	}
-	
-	esc = expand_escape( cmd_start, 1 );		
-	
-	if( whatis_path )
-	{
-		apropos_cmd =wcsdupcat2( L"grep ^/dev/null -F <", whatis_path, L" ", esc, 0 );
-	}
-	else
-	{
-		apropos_cmd = wcsdupcat( L"apropos ^/dev/null ", esc );
-	}
-	free(esc);		
-	
+
+	esc = escape( cmd_start, 1 );
+
+	lookup_cmd = wcsdupcat( L"__fish_describe_command ", esc );
+	free(esc);
+
 	al_init( &list );
 	hash_init( &lookup, &hash_wcs_func, &hash_wcs_cmp );
 
@@ -1105,64 +1103,29 @@ static void complete_cmd_desc( const wchar_t *cmd, array_list_t *comp )
 	  systems with a large set of manuals, but it should be ok
 	  since apropos is only called once.
 	*/
-	exec_subshell( apropos_cmd, &list );
+	exec_subshell( lookup_cmd, &list );
 	/*
 	  Then discard anything that is not a possible completion and put
 	  the result into a hashtable with the completion as key and the
 	  description as value.
-	  
+
 	  Should be reasonably fast, since no memory allocations are needed.
 	*/
 	for( i=0; i<al_get_count( &list); i++ )
 	{
 		wchar_t *el = (wchar_t *)al_get( &list, i );
 		wchar_t *key, *key_end, *val_begin;
+		key = el+wcslen(cmd);
 		
 		if( !el )
 			continue;
-		
-		//fwprintf( stderr, L"%ls\n", el );
-		if( wcsncmp( el, cmd_start, cmd_len ) != 0 )
-			continue;
-		//fwprintf( stderr, L"%ls\n", el );
-		key = el + cmd_len;
-		
-		key_end = wcschr( el, L' ' );
+
+		key_end = wcschr( el, L'\t' );
 		if( !key_end )
-		{
-			key_end = wcschr( el, L'\t' );
-			if( !key_end )
-			{
-				continue;
-			}
-		}
+			continue;
 		
 		*key_end = 0;
-		val_begin=key_end+1;
-		
-		//fwprintf( stderr, L"Key %ls\n", el );
-		
-		while( *val_begin != L'-' && *val_begin)
-		{
-			val_begin++;
-		}
-		
-		if( !*val_begin )
-		{
-			continue;
-		}
-		
-		val_begin++;
-		
-		while( *val_begin == L' ' || *val_begin == L'\t' )
-		{
-			val_begin++;
-		}
-		
-		if( !*val_begin )
-		{
-			continue;
-		}
+		val_begin = key_end+1;
 		
 		/*
 		  And once again I make sure the first character is uppercased
@@ -1170,37 +1133,37 @@ static void complete_cmd_desc( const wchar_t *cmd, array_list_t *comp )
 		  things.
 		*/
 		val_begin[0]=towupper(val_begin[0]);
-		hash_put( &lookup, key, val_begin );				
+		hash_put( &lookup, key, val_begin );
 	}
 
 	/*
 	  Then do a lookup on every completion and if a match is found,
-	  change to the new description. 
-	  
+	  change to the new description.
+
 	  This needs to do a reallocation for every description added, but
 	  there shouldn't be that many completions, so it should be ok.
 	*/
 	for( i=0; i<al_get_count(comp); i++ )
 	{
 		wchar_t *el = (wchar_t *)al_get( comp, i );
-		wchar_t *cmd_end = wcschr( el, 
+		wchar_t *cmd_end = wcschr( el,
 								   COMPLETE_SEP );
 		wchar_t *new_desc;
-		
+
 		if( cmd_end )
 			*cmd_end = 0;
 
 		new_desc = (wchar_t *)hash_get( &lookup,
 										el );
-		
+
 		if( new_desc )
 		{
 			wchar_t *new_el = wcsdupcat2( el,
 										  COMPLETE_SEP_STR,
-										  new_desc, 
+										  new_desc,
 										  0 );
 			al_set( comp, i, new_el );
-			free( el );			
+			free( el );
 		}
 		else
 		{
@@ -1208,12 +1171,12 @@ static void complete_cmd_desc( const wchar_t *cmd, array_list_t *comp )
 				*cmd_end = COMPLETE_SEP;
 		}
 	}
-	
+
 	hash_destroy( &lookup );
-	al_foreach( &list, 
+	al_foreach( &list,
 				(void(*)(const void *))&free );
-	al_destroy( &list );	
-	free( apropos_cmd );
+	al_destroy( &list );
+	free( lookup_cmd );
 }
 
 static const wchar_t *complete_function_desc( const wchar_t *fn )
@@ -1247,16 +1210,16 @@ static void complete_cmd( const wchar_t *cmd,
 	int i;
 	array_list_t tmp;
 	wchar_t *nxt_completion;
-	
+
 	wchar_t *cdpath = env_get(L"CDPATH");
 	wchar_t *cdpath_cpy = wcsdup( cdpath?cdpath:L"." );
-	
+
 	if( (wcschr( cmd, L'/') != 0) || (cmd[0] == L'~' ) )
 	{
 		array_list_t tmp;
 		al_init( &tmp );
-		
-		if( expand_string( wcsdup(cmd), 
+
+		if( expand_string( wcsdup(cmd),
 						   comp,
 						   ACCEPT_INCOMPLETE | EXECUTABLES_ONLY ) != EXPAND_ERROR )
 		{
@@ -1268,7 +1231,7 @@ static void complete_cmd( const wchar_t *cmd,
 	{
 		path = env_get(L"PATH");
 		path_cpy = wcsdup( path );
-						
+
 		for( nxt_path = wcstok( path_cpy, ARRAY_SEP_STR, &state );
 			 nxt_path != 0;
 			 nxt_path = wcstok( 0, ARRAY_SEP_STR, &state) )
@@ -1279,12 +1242,12 @@ static void complete_cmd( const wchar_t *cmd,
 										 0 );
 			if( ! nxt_completion )
 				continue;
-			
+
 			al_init( &tmp );
 
-			if( expand_string( nxt_completion, 
-						   &tmp, 
-						   ACCEPT_INCOMPLETE | 
+			if( expand_string( nxt_completion,
+						   &tmp,
+						   ACCEPT_INCOMPLETE |
 							   EXECUTABLES_ONLY ) != EXPAND_ERROR )
 			{
 				for( i=0; i<al_get_count(&tmp); i++ )
@@ -1292,7 +1255,7 @@ static void complete_cmd( const wchar_t *cmd,
 					al_push( comp, al_get( &tmp, i ) );
 				}
 			}
-			
+
 			al_destroy( &tmp );
 
 		}
@@ -1336,19 +1299,19 @@ static void complete_cmd( const wchar_t *cmd,
 
 		al_init( &tmp );
 
-		if( expand_string( nxt_completion, 
+		if( expand_string( nxt_completion,
 					   &tmp,
 						   ACCEPT_INCOMPLETE | DIRECTORIES_ONLY ) != EXPAND_ERROR )
 		{
-			
+
 			for( i=0; i<al_get_count(&tmp); i++ )
 			{
 				wchar_t *nxt = (wchar_t *)al_get( &tmp, i );
-				
+
 				wchar_t *desc = wcsrchr( nxt, COMPLETE_SEP );
 				if( desc )
 				{
-					int is_valid = desc && (wcscmp(desc+1, 
+					int is_valid = desc && (wcscmp(desc+1,
 												   COMPLETE_DIRECTORY_DESC)==0);
 					if( is_valid )
 					{
@@ -1375,7 +1338,7 @@ static void complete_cmd( const wchar_t *cmd,
    copy_strings_with_prefix, meaning the completion may contain
    wildcards. Logically, this is not always the right thing to do, but
    I have yet to come up with a case where this matters.
-   
+
    \param str The string to complete.
    \param args The list of option arguments to be evaluated.
    \param desc Description of the completion
@@ -1387,16 +1350,16 @@ static void complete_from_args( const wchar_t *str,
 								array_list_t *comp_out )
 {
 	int was_interactive = is_interactive;
-	
+
 	array_list_t possible_comp;
 	int i;
-	
+
 	al_init( &possible_comp );
 
 	is_interactive=0;
 	eval_args( args, &possible_comp );
 	is_interactive=was_interactive;
-	
+
 	/* We need to unescape these strings before matching them */
 	for( i=0; i< al_get_count( &possible_comp ); i++ )
 	{
@@ -1501,15 +1464,15 @@ static int short_ok( wchar_t *arg,
 	return 1;
 }
 
-void complete_load( wchar_t *cmd, 
+void complete_load( wchar_t *cmd,
 					int reload )
 {
-	const wchar_t *path_var;	
+	const wchar_t *path_var;
 	array_list_t path_list;
 	int i;
 	string_buffer_t path;
 	time_t *tm;
-	
+
 	/*
 	  First check that the specified completion hasn't already been loaded
 	*/
@@ -1533,7 +1496,7 @@ void complete_load( wchar_t *cmd,
 	*/
 	if( !reload && tm )
 		return;
-	
+
 	/*
 	  Do we know where to look for completions?
 	*/
@@ -1544,7 +1507,7 @@ void complete_load( wchar_t *cmd,
 	al_init( &path_list );
 
 	sb_init( &path );
-	
+
 	expand_variable_array( path_var, &path_list );
 
 	/*
@@ -1552,18 +1515,18 @@ void complete_load( wchar_t *cmd,
 	*/
 	for( i=0; i<al_get_count( &path_list ); i++ )
 	{
-		struct stat buf;		
-		wchar_t *next = (wchar_t *)al_get( &path_list, i );		
+		struct stat buf;
+		wchar_t *next = (wchar_t *)al_get( &path_list, i );
 		sb_clear( &path );
 		sb_append2( &path, next, L"/", cmd, L".fish", (void *)0 );
-		if( (wstat( (wchar_t *)path.buff, &buf )== 0) && 
+		if( (wstat( (wchar_t *)path.buff, &buf )== 0) &&
 			(waccess( (wchar_t *)path.buff, R_OK ) == 0) )
 		{
 			if( !tm || (*tm != buf.st_mtime ) )
 			{
-				wchar_t *esc = expand_escape( (wchar_t *)path.buff, 1 );
+				wchar_t *esc = escape( (wchar_t *)path.buff, 1 );
 				wchar_t *src_cmd = wcsdupcat( L". ", esc );
-				
+
 				if( !tm )
 				{
 					tm = malloc(sizeof(time_t));
@@ -1571,15 +1534,15 @@ void complete_load( wchar_t *cmd,
 						die_mem();
 				}
 
-				*tm = buf.st_mtime;				
+				*tm = buf.st_mtime;
 				hash_put( loaded_completions,
 						  intern( cmd ),
 						  tm );
-				
+
 				free( esc );
-				
+
 				complete_remove( cmd, COMMAND, 0, 0 );
-				
+
 				/*
 				  Source the completion file for the specified completion
 				*/
@@ -1587,7 +1550,7 @@ void complete_load( wchar_t *cmd,
 				free(src_cmd);
 
 				break;
-			}			
+			}
 		}
 	}
 
@@ -1598,17 +1561,17 @@ void complete_load( wchar_t *cmd,
 	*/
 	if( !tm )
 	{
-		tm = malloc(sizeof(time_t));		
+		tm = malloc(sizeof(time_t));
 		if( !tm )
 			die_mem();
-		
+
 		*tm = 0;
 		hash_put( loaded_completions, intern( cmd ), tm );
 	}
 
 	sb_destroy( &path );
 	al_foreach( &path_list, (void (*)(const void *))&free );
-	
+
 	al_destroy( &path_list );
 }
 
@@ -1633,7 +1596,7 @@ static int complete_param( wchar_t *cmd_orig,
 	parse_cmd_string( cmd_orig, &path, &cmd );
 
 	complete_load( cmd, 1 );
-	
+
 	al_init( &matches );
 
 
@@ -1656,7 +1619,7 @@ static int complete_param( wchar_t *cmd_orig,
 				wchar_t *arg;
 				if( (arg=param_match2( o, str ))!=0 && condition_test( o->condition ))
 				{
-						
+
 /*					wprintf( L"Use option with desc %ls\n", o->desc );		*/
 					use_common &= ((o->result_mode & NO_COMMON )==0);
 					use_files &= ((o->result_mode & NO_FILES )==0);
@@ -1705,13 +1668,13 @@ static int complete_param( wchar_t *cmd_orig,
 					*/
 					if( !o->old_mode && wcslen(o->long_opt) && !(o->result_mode & NO_COMMON) )
 						continue;
-					
+
 					if( param_match( o, popt ) && condition_test( o->condition  ))
 					{
 						use_common &= ((o->result_mode & NO_COMMON )==0);
 						use_files &= ((o->result_mode & NO_FILES )==0);
 						complete_from_args( str, o->comp, o->desc, comp_out );
-						
+
 					}
 				}
 			}
@@ -1726,15 +1689,15 @@ static int complete_param( wchar_t *cmd_orig,
 				  If this entry is for the base command,
 				  check if any of the arguments match
 				*/
-				
+
 				if( !condition_test( o->condition ))
 					continue;
-				
+
 
 				if( (o->short_opt == L'\0' ) && (o->long_opt[0]==L'\0'))
 				{
 					use_files &= ((o->result_mode & NO_FILES )==0);
-//					debug( 0, L"Running argument command %ls", o->comp );					
+//					debug( 0, L"Running argument command %ls", o->comp );
 					complete_from_args( str, o->comp, o->desc, comp_out );
 				}
 
@@ -1750,10 +1713,10 @@ static int complete_param( wchar_t *cmd_orig,
 							malloc( sizeof(wchar_t)*(3 + wcslen(o->desc)));
 						if( !next_opt )
 							die_mem();
-						
+
 						next_opt[0]=o->short_opt;
-						next_opt[1]=COMPLETE_SEP;						
-						next_opt[2]=L'\0';			
+						next_opt[1]=COMPLETE_SEP;
+						next_opt[2]=L'\0';
 						wcscat( next_opt, o->desc );
 						al_push( comp_out, next_opt );
 					}
@@ -1766,9 +1729,9 @@ static int complete_param( wchar_t *cmd_orig,
 						string_buffer_t whole_opt;
 						sb_init( &whole_opt );
 						sb_append2( &whole_opt, o->old_mode?L"-":L"--", o->long_opt, (void *)0 );
-						
+
 						if( wcsncmp( str, (wchar_t *)whole_opt.buff, wcslen(str) )==0)
-						{							
+						{
 							/*
 							  If the option requires arguments, add
 							  option with an appended '=' . If the
@@ -1783,14 +1746,14 @@ static int complete_param( wchar_t *cmd_orig,
 										 wcsdupcat2(&((wchar_t *)whole_opt.buff)[wcslen(str)], COMPLETE_SEP_STR, o->desc, (void *)0) );
 //								fwprintf( stderr, L"Add without param %ls\n", o->long_opt );
 							}
-							
+
 							if( !o->old_mode && ( wcslen(o->comp) || (o->result_mode & NO_COMMON ) ) )
 							{
 								al_push( comp_out,
 										 wcsdupcat2(&((wchar_t *)whole_opt.buff)[wcslen(str)], L"=", COMPLETE_SEP_STR, o->desc, (void *)0) );
 //								fwprintf( stderr, L"Add with param %ls\n", o->long_opt );
 							}
-							
+
 //							fwprintf( stderr, L"Matching long option %ls\n", o->long_opt );
 						}
 						sb_destroy( &whole_opt );
@@ -1807,8 +1770,8 @@ static int complete_param( wchar_t *cmd_orig,
 /**
    Perform file completion on the specified string
 */
-static void complete_param_expand( wchar_t *str, 
-								   array_list_t *comp_out, 
+static void complete_param_expand( wchar_t *str,
+								   array_list_t *comp_out,
 								   int do_file )
 {
 	wchar_t *comp_str;
@@ -1818,19 +1781,19 @@ static void complete_param_expand( wchar_t *str,
 	}
 	else
 		comp_str = str;
-	
-	debug( 2, 
-		   L"expand_string( \"%ls\", comp_out, EXPAND_SKIP_SUBSHELL | ACCEPT_INCOMPLETE | %ls );", 
-		   comp_str, 
+
+	debug( 2,
+		   L"expand_string( \"%ls\", comp_out, EXPAND_SKIP_SUBSHELL | ACCEPT_INCOMPLETE | %ls );",
+		   comp_str,
 		   do_file?L"0":L"EXPAND_SKIP_WILDCARDS" );
-	
+
 	expand_string( wcsdup(comp_str), comp_out,  EXPAND_SKIP_SUBSHELL | ACCEPT_INCOMPLETE | (do_file?0:EXPAND_SKIP_WILDCARDS) );
 }
 
 /**
    Complete the specified string as an environment variable
 */
-static int complete_variable( const wchar_t *var, 
+static int complete_variable( const wchar_t *var,
 							  array_list_t *comp )
 {
 	int i;
@@ -1876,7 +1839,7 @@ static int complete_variable( const wchar_t *var,
 /**
    Search the specified string for the \$ sign, try to complete as an environment variable
 */
-static int try_complete_variable( const wchar_t *cmd, 
+static int try_complete_variable( const wchar_t *cmd,
 								  array_list_t *comp )
 {
 	int len = wcslen( cmd );
@@ -1903,7 +1866,7 @@ static int try_complete_variable( const wchar_t *cmd,
    Try to complete the specified string as a username. This is used by ~USER type expansion.
 */
 
-static int try_complete_user( const wchar_t *cmd, 
+static int try_complete_user( const wchar_t *cmd,
 							  array_list_t *comp )
 {
 	const wchar_t *first_char=0;
@@ -1982,8 +1945,8 @@ static int try_complete_user( const wchar_t *cmd,
 					{
 						if( wcsncmp( user_name, pw_name, name_len )==0 )
 						{
-							wchar_t *blarg = wcsdupcat2( &pw_name[name_len], 
-														 L"/", 
+							wchar_t *blarg = wcsdupcat2( &pw_name[name_len],
+														 L"/",
 														 COMPLETE_SEP_STR,
 														 COMPLETE_USER_DESC,
 														 0 );
@@ -2007,16 +1970,19 @@ static int try_complete_user( const wchar_t *cmd,
 void complete( const wchar_t *cmd,
 			   array_list_t *comp )
 {
-	wchar_t *begin, *end, *prev_begin, *prev_end, *buff;
+	const wchar_t *begin, *end, *prev_begin, *prev_end;
+	wchar_t *buff;
 	tokenizer tok;
 	wchar_t *current_token=0, *current_command=0, *prev_token=0;
 
 	int on_command=0;
 	int pos;
-	
+
 	int old_error_max = error_max;
 	int done=0;
-	
+
+	int cursor_pos = wcslen(cmd );
+
 	error_max=0;
 
 	/**
@@ -2027,11 +1993,11 @@ void complete( const wchar_t *cmd,
 	if( try_complete_variable( cmd, comp ))
 	{
 		done=1;
-		
+
 	}
 	else if( try_complete_user( cmd, comp ))
 	{
-		done=1;		
+		done=1;
 	}
 
 	/*
@@ -2042,30 +2008,30 @@ void complete( const wchar_t *cmd,
 
 	if( !done )
 	{
-		reader_current_subshell_extent( &begin, &end );
+		parse_util_cmdsubst_extent( cmd, cursor_pos, &begin, &end );
 
 		if( !begin )
 			done=1;
 	}
-	
+
 	if( !done )
 	{
-		
-		pos = reader_get_cursor_pos()-(begin-reader_get_buffer());
+
+		pos = cursor_pos-(begin-cmd);
 
 		buff = wcsndup( begin, end-begin );
 
 		if( !buff )
 			done=1;
 	}
-	
+
 	if( !done )
 	{
 		int had_cmd=0;
 		int end_loop=0;
-		
+
 		tok_init( &tok, buff, TOK_ACCEPT_UNFINISHED );
-		
+
 		while( tok_has_next( &tok) && !end_loop )
 		{
 			switch( tok_last_type( &tok ) )
@@ -2075,31 +2041,31 @@ void complete( const wchar_t *cmd,
 					{
 						if( parser_is_subcommand( tok_last( &tok ) ) )
 							break;
-						
+
 						current_command = wcsdup( tok_last( &tok ) );
-						
+
 						on_command = (pos <= tok_get_pos( &tok) + wcslen( tok_last( &tok ) ) );
 						had_cmd=1;
 					}
 					break;
-					
+
 				case TOK_END:
 				case TOK_PIPE:
 				case TOK_BACKGROUND:
 					had_cmd=0;
 					break;
-					
-					
+
+
 				case TOK_ERROR:
 					end_loop=1;
 					break;
-					
+
 			}
 			if( tok_get_pos( &tok ) >= pos )
 				end_loop=1;
-			
+
 			tok_next( &tok );
-			
+
 		}
 
 		tok_destroy( &tok );
@@ -2109,17 +2075,17 @@ void complete( const wchar_t *cmd,
 		  Get the string to complete
 		*/
 
-		reader_current_token_extent( &begin, &end, &prev_begin, &prev_end );
+		parse_util_token_extent( cmd, cursor_pos, &begin, &end, &prev_begin, &prev_end );
 
-		current_token = wcsndup( begin, reader_get_cursor_pos()-(begin-reader_get_buffer()) );
+		current_token = wcsndup( begin, cursor_pos-(begin-cmd) );
 
 		prev_token = prev_begin ? wcsndup( prev_begin, prev_end - prev_begin ): wcsdup(L"");
 
 //		fwprintf( stderr, L"on_command: %d, %ls %ls\n", on_command, current_compmand, current_token );
-	
+
 		if( current_token && current_command && prev_token )
 		{
-			
+
 			if( on_command )
 			{
 				/* Complete command filename */
@@ -2160,15 +2126,15 @@ void complete( const wchar_t *cmd,
    non-null and longer than 0 characters.
 */
 static void append_switch( string_buffer_t *out,
-						   const wchar_t *opt, 
+						   const wchar_t *opt,
 						   const wchar_t *argument )
 {
 	wchar_t *esc;
-	
+
 	if( !argument || argument==L"" )
 		return;
 
-	esc = expand_escape( argument, 1 );
+	esc = escape( argument, 1 );
 	sb_printf( out, L" --%ls %ls", opt, esc );
 	free(esc);
 }
@@ -2176,7 +2142,7 @@ static void append_switch( string_buffer_t *out,
 void complete_print( string_buffer_t *out )
 {
 	complete_entry *e;
-	
+
 	for( e = first_entry; e; e=e->next )
 	{
 		complete_entry_opt *o;
@@ -2194,11 +2160,11 @@ void complete_print( string_buffer_t *out )
 			sb_printf( out,
 					   L"complete%ls",
 					   modestr[o->result_mode] );
-			
+
 			append_switch( out,
 						   e->cmd_type?L"path":L"command",
 						   e->cmd );
-			
+
 
 			if( o->short_opt != 0 )
 			{
@@ -2206,24 +2172,24 @@ void complete_print( string_buffer_t *out )
 						   L" --short-option '%lc'",
 						   o->short_opt );
 			}
-			
-			
+
+
 			append_switch( out,
 						   o->old_mode?L"old-option":L"long-option",
 						   o->long_opt );
-			
+
 			append_switch( out,
 						   L"description",
 						   o->desc );
-			
+
 			append_switch( out,
 						   L"arguments",
 						   o->comp );
-			
+
 			append_switch( out,
 						   L"condition",
 						   o->condition );
-			
+
 			sb_printf( out, L"\n" );
 		}
 	}

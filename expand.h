@@ -144,31 +144,6 @@ int expand_string( wchar_t *in, array_list_t *out, int flag );
 wchar_t *expand_one( wchar_t *in, int flag );
 
 /**
-   Expand backslashed escapes and substitute them with their unescaped
-   counterparts. Also optionally change the wildcards, the tilde
-   character and a few more into constants which are defined in a
-   private use area of Unicode. This assumes wchar_t is a unicode
-   character.  character set.
-
-   The result must be free()d. The original string is not modified. If
-   an invalid sequence is specified, 0 is returned.
-
-*/
-wchar_t *expand_unescape( const wchar_t * in, int escape_special );
-
-/**
-   Replace special characters with escape sequences. Newline is
-   replaced with \n, etc. 
-
-   The result must be free()d. The original string is not modified.
-
-   \param in The string to be escaped
-   \param escape_all Whether all characters wich hold special meaning in fish (Pipe, semicolon, etc,) should be escaped, or only unprintable characters
-   \return The escaped string
-*/
-wchar_t *expand_escape( const wchar_t *in, int escape_all );
-
-/**
    Convert the variable value to a human readable form, i.e. escape things, handle arrays, etc. Suitable for pretty-printing.
 */
 wchar_t *expand_escape_variable( const wchar_t *in );
@@ -181,20 +156,6 @@ wchar_t *expand_escape_variable( const wchar_t *in );
    new string, allocated using malloc, is returned.
 */
 wchar_t *expand_tilde(wchar_t *in);
-
-/**
-   Locate the first subshell in the specified string.
-   
-   \param in the string to search for subshells
-   \param begin the starting paranthesis of the subshell
-   \param end the ending paranthesis of the subshell
-   \param flags set this variable to ACCEPT_INCOMPLETE if in tab_completion mode
-   \return -1 on syntax error, 0 if no subshells exist and 1 on sucess
-*/
-int expand_locate_subshell( wchar_t *in, 
-							wchar_t **begin, 
-							wchar_t **end,
-							int flags );
 
 
 /**

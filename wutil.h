@@ -7,6 +7,8 @@
 #ifndef FISH_WUTIL_H
 #define FISH_WUTIL_H
 
+#include <stdlib.h>
+#include <stdio.h>
 #include <wchar.h>
 #include <dirent.h>
 #include <unistd.h>
@@ -80,6 +82,14 @@ wchar_t *wgetcwd( wchar_t *buff, size_t sz );
    Wide character version of chdir()
 */
 int wchdir( const wchar_t * dir );
+
+/** 
+	Wide character version of realpath function. Just like the GNU
+	version of realpath, wrealpath will accept 0 as the value for the
+	second argument, in which case the result will be allocated using
+	malloc, and must be free'd by the user.
+*/
+wchar_t *wrealpath(const wchar_t *pathname, wchar_t *resolved_path);
 
 /*
   Here follows the prototypes for fallback implementations of various

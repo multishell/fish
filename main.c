@@ -125,6 +125,10 @@ int main( int argc, char **argv )
 				}
 				,
 				{
+					"login", no_argument, 0, 'l' 
+				}
+				,
+				{
 					"profile", required_argument, 0, 'p' 
 				}
 				,
@@ -146,14 +150,14 @@ int main( int argc, char **argv )
 		
 		int opt = getopt_long( argc,
 							   argv, 
-							   "hivc:p:", 
+							   "hilvc:p:", 
 							   long_options, 
 							   &opt_index );
 		
 #else	
 		int opt = getopt( argc,
 						  argv, 
-						  "hivc:p:" );
+						  "hilvc:p:" );
 #endif
 		if( opt == -1 )
 			break;
@@ -170,12 +174,14 @@ int main( int argc, char **argv )
 
 			case 'h':
 				cmd = "help";
-				//interactive=0;
-				
 				break;
 
 			case 'i':
 				force_interactive = 1;
+				break;				
+				
+			case 'l':
+				is_login=1;
 				break;				
 				
 			case 'p':
@@ -198,16 +204,11 @@ int main( int argc, char **argv )
 	my_optind = optind;
 	
 	is_login |= strcmp( argv[0], "-fish") == 0;
-//	fwprintf( stderr, L"%s\n", argv[0] );
 		
 	is_interactive_session &= (cmd == 0);
 	is_interactive_session &= (my_optind == argc);
 	is_interactive_session &= isatty(STDIN_FILENO);	
-	
-//	fwprintf( stderr, L"%d %d %d\n", cmd==0, my_optind == argc, isatty(STDIN_FILENO) );
-
-	if( force_interactive )
-		is_interactive_session=1;	
+	is_interactive_session |= force_interactive;
 
 	translate_init();	
 	proc_init();	
@@ -244,7 +245,8 @@ int main( int argc, char **argv )
 				int i; 
 				string_buffer_t sb;
 				int fd;
-				
+				wchar_t *rel_filename, *abs_filename;
+								
 				if( ( fd = open(file, O_RDONLY) ) == -1 )
 				{
 					wperror( L"open" );
@@ -267,8 +269,15 @@ int main( int argc, char **argv )
 					env_set( L"argv", (wchar_t *)sb.buff, 0 );
 					sb_destroy( &sb );
 				}
-				
-				reader_push_current_filename( str2wcs( file ) );
+
+				rel_filename = str2wcs( file );
+				abs_filename = wrealpath( rel_filename, 0 );
+				if( !abs_filename )
+					abs_filename = wcsdup(rel_filename);
+				reader_push_current_filename( intern( abs_filename ) );
+				free( rel_filename );
+				free( abs_filename );
+
 				res = reader_read( fd );
 
 				if( res )
@@ -277,13 +286,13 @@ int main( int argc, char **argv )
 						   _(L"Error while reading file %ls\n"), 
 						   reader_current_filename()?reader_current_filename(): _(L"Standard input") );
 				}				
-				free(reader_pop_current_filename());
+				reader_pop_current_filename();
 			}
 		}
 	}
 
 	proc_fire_event( L"PROCESS_EXIT", EVENT_EXIT, getpid(), res );
-		
+
 	proc_destroy();
 	env_destroy();
 	builtin_destroy();
@@ -297,7 +306,7 @@ int main( int argc, char **argv )
 	event_destroy();
 	output_destroy();
 	translate_destroy();	
-	
+
 	intern_free_all();
 
 	return res;	

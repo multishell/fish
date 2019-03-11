@@ -18,6 +18,7 @@
 #include "intern.h"
 #include "event.h"
 #include "reader.h"
+#include "parse_util.h"
 
 
 /**
@@ -65,18 +66,6 @@ void function_destroy()
 	hash_destroy( &function );
 }
 
-static int count_lineno( const wchar_t *str, int len )
-{
-	int res = 0;
-	int i;
-	for( i=0; i<len; i++ )
-	{
-		if( str[i] == L'\n' )
-			res++;
-	}
-	return res;
-}
-
 
 void function_add( const wchar_t *name, 
 				   const wchar_t *val,
@@ -86,16 +75,14 @@ void function_add( const wchar_t *name,
 {
 	int i;
 	wchar_t *cmd_end;
+	function_data_t *d;
 	
-
-	if( function_exists( name ) )
-		function_remove( name );
+	function_remove( name );
 	
-
-	
-	function_data_t *d = malloc( sizeof( function_data_t ) );
-	d->definition_offset = count_lineno( parser_get_buffer(), current_block->tok_pos );
+	d = malloc( sizeof( function_data_t ) );
+	d->definition_offset = parse_util_lineno( parser_get_buffer(), current_block->tok_pos );
 	d->cmd = wcsdup( val );
+	
 	cmd_end = d->cmd + wcslen(d->cmd)-1;
 	while( (cmd_end>d->cmd) && wcschr( L"\n\r\t ", *cmd_end ) )
 	{
@@ -104,7 +91,8 @@ void function_add( const wchar_t *name,
 	
 	d->desc = desc?wcsdup( desc ):0;
 	d->is_binding = is_binding;
-	d->definition_file = reader_current_filename()?intern(reader_current_filename()):0;
+	d->definition_file = intern(reader_current_filename());
+	
 	hash_put( &function, intern(name), d );
 	
 	for( i=0; i<al_get_count( events ); i++ )
@@ -123,19 +111,19 @@ void function_remove( const wchar_t *name )
 {
 	void *key;
 	function_data_t *d;
-
 	event_t ev;
-	ev.type=EVENT_ANY;
-	ev.function_name=name;	
-	event_remove( &ev );
 
 	hash_remove( &function,
 				 name,
 				 (const void **) &key,
 				 (const void **)&d );
 
-	if( !d )
+	if( !key )
 		return;
+
+	ev.type=EVENT_ANY;
+	ev.function_name=name;	
+	event_remove( &ev );
 
 	clear_function_entry( key, d );
 }

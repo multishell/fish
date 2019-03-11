@@ -511,6 +511,20 @@ int hash_wcs_cmp( const void *a, const void *b )
 	return wcscmp((wchar_t *)a,(wchar_t *)b) == 0;
 }
 
+int hash_ptr_func( const void *data )
+{
+	return (int)(long) data;
+}
+
+/**
+   Hash comparison function suitable for direct pointer comparison
+*/
+int hash_ptr_cmp( const void *a,
+                  const void *b )
+{
+	return a == b;
+}
+
 void pq_init( priority_queue_t *q,
 			  int (*compare)(void *e1, void *e2) )
 {
@@ -893,19 +907,16 @@ void sb_append_substring( string_buffer_t *b, const wchar_t *s, size_t l )
 
 void sb_append_char( string_buffer_t *b, wchar_t c )
 {
-	wchar_t buff[2]=
-		{
-			c, 0
-		}
-	;
+    wchar_t tmp=0;
 
 	if( !b )
 	{
 		return;
 	}
 
-	sb_append( b, buff );
-
+	b_append( b, &c, sizeof(wchar_t) );
+    b_append( b, &tmp, sizeof(wchar_t) );
+    b->used -= sizeof(wchar_t);
 }
 
 void sb_append2( string_buffer_t *b, ... )

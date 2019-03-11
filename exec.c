@@ -37,6 +37,7 @@
 #include "signal.h"
 #include "env_universal.h"
 #include "translate.h"
+#include "halloc.h"
 
 /**
    Prototype for the getpgid library function. The prototype for this
@@ -66,6 +67,8 @@ pid_t getpgid( pid_t pid );
    around.
 */
 static array_list_t *open_fds=0;
+
+static int set_child_group( job_t *j, process_t *p, int print_errors );
 
 
 void exec_close( int fd )
@@ -238,7 +241,7 @@ void free_fd( io_data_t *io, int fd )
    \param io the list of IO redirections for the child
    \param exit_on_error whether to call exit() on errors
 
-   \return 1 on sucess, 0 on failiure
+   \return 0 on sucess, -1 on failiure
 */
 static int handle_child_io( io_data_t *io, int exit_on_error )
 {
@@ -283,7 +286,7 @@ static int handle_child_io( io_data_t *io, int exit_on_error )
 					}
 					else
 					{
-						return 0;
+						return -1;
 					}					
 				}				
 				else if( tmp != io->fd)
@@ -302,7 +305,7 @@ static int handle_child_io( io_data_t *io, int exit_on_error )
 						}
 						else
 						{
-							return 0;
+							return -1;
 						}
 					}
 					exec_close( tmp );
@@ -326,7 +329,7 @@ static int handle_child_io( io_data_t *io, int exit_on_error )
 					}
 					else
 					{
-						return 0;
+						return -1;
 					}
 				}
 				break;
@@ -349,7 +352,7 @@ static int handle_child_io( io_data_t *io, int exit_on_error )
 					}
 					else
 					{
-						return 0;
+						return -1;
 					}					
 
 				}
@@ -373,7 +376,7 @@ static int handle_child_io( io_data_t *io, int exit_on_error )
 	if( env_universal_server.fd >= 0 )
 		exec_close( env_universal_server.fd );
 
-	return 1;
+	return 0;
 	
 }
 
@@ -387,41 +390,24 @@ static int handle_child_io( io_data_t *io, int exit_on_error )
    \param j the job to set up the IO for
    \param p the child process to set up
 
-   \return 1 on sucess, 0 on failiure
+   \return 0 on sucess, -1 on failiure
 */
 static int setup_child_process( job_t *j, process_t *p )
 {
-	int res;
-
-	if( j->terminal )
-    {
-		pid_t pid;
-		/* 
-		   Put the process into the process group and give the process
-		   group the terminal, if appropriate.  This has to be done
-		   both by the shell and in the individual child processes
-		   because of potential race conditions.
-		*/
-		pid = getpid ();
-		if (j->pgid == 0)
-			j->pgid = pid;
-
-		/* Wait till shell puts os in our own group */
-		while( getpgrp() != j->pgid )
-			sleep(0);
-		
-		/* Wait till shell gives us stdin */
-		if ( j->fg )
-		{
-			while( tcgetpgrp( 0 ) != j->pgid )
-				sleep(0);
-		}
+	int res=0;
+	
+	if( p )
+	{
+		res = set_child_group( j, p, 1 );
 	}
 	
-	res = handle_child_io( j->io, (p==0) );
-
+	if( !res )	
+	{
+		res = handle_child_io( j->io, (p==0) );
+	}
+	
 	/* Set the handling for job control signals back to the default.  */
-	if( res )
+	if( !res )
 	{
 		signal_reset_handlers();
 	}
@@ -595,14 +581,22 @@ static void internal_exec_helper( const wchar_t *def,
 }
 
 /**
-   This function should be called by the parent process right after
-   fork() has been called. If job control is enabled, the child is put
-   in the jobs group.
+   This function should be called by both the parent process and the
+   child right after fork() has been called. If job control is
+   enabled, the child is put in the jobs group, and if the child is
+   also in the foreground, it is also given control of the
+   terminal. When called in the parent process, this function may
+   fail, since the child might have already finished and called
+   exit. The parent process may safely ignore the exit status of this
+   call.
+
+   Returns 0 on sucess, -1 on failiure. 
 */
-static int handle_new_child( job_t *j, process_t *p )
+static int set_child_group( job_t *j, process_t *p, int print_errors )
 {
+	int res = 0;
 	
-	if( j->terminal )
+	if( j->job_control )
 	{
 		int new_pgid=0;
 		
@@ -614,7 +608,7 @@ static int handle_new_child( job_t *j, process_t *p )
 		
 		if( setpgid (p->pid, j->pgid) )
 		{						
-			if( getpgid( p->pid) != j->pgid )
+			if( getpgid( p->pid) != j->pgid && print_errors )
 			{
 				debug( 1, 
 					   _( L"Could not send process %d from group %d to group %d" ),
@@ -622,38 +616,28 @@ static int handle_new_child( job_t *j, process_t *p )
 					   getpgid( p->pid),
 					   j->pgid );
 				wperror( L"setpgid" );
+				res = -1;
 			}
 		}
-
-		if( j->fg )
-		{
-			if( tcsetpgrp (0, j->pgid) )
-			{
-				debug( 1, _( L"Could not send job %d ('%ls') to foreground" ), 
-					   j->job_id, 
-					   j->command );
-				wperror( L"tcsetpgrp" );
-				return -1;
-			}
-		}
-
-		if( j->fg && new_pgid)
-		{
-			if( tcsetpgrp (0, j->pgid) )
-			{
-				debug( 1, _( L"Could not send job %d ('%ls') to foreground" ), 
-					   j->job_id, 
-					   j->command );
-				wperror( L"tcsetpgrp" );
-				return -1;
-			}
-		}		
 	}
 	else
 	{
 		j->pgid = getpid();
 	}
-	return 0;
+
+	if( j->terminal && j->fg )
+	{
+		if( tcsetpgrp (0, j->pgid) && print_errors )
+		{
+			debug( 1, _( L"Could not send job %d ('%ls') to foreground" ), 
+				   j->job_id, 
+				   j->command );
+			wperror( L"tcsetpgrp" );
+			res = -1;
+		}
+	}
+
+	return res;
 }
 
 
@@ -689,9 +673,10 @@ void exec( job_t *j )
 		signal_block();
 
 		/*
-		  setup_child_process make sure signals are propelry set up
+		  setup_child_process make sure signals are properly set
+		  up. It will also call signal_unblock
 		*/
-		if( setup_child_process( j, 0 ) )
+		if( !setup_child_process( j, 0 ) )
 		{
 			/*
 			  launch_process never returns
@@ -722,9 +707,9 @@ void exec( job_t *j )
 	if( block_io )
 	{
 		if( j->io )
-			j->io = io_add( io_duplicate(block_io), j->io );
+			j->io = io_add( io_duplicate( j, block_io), j->io );
 		else
-			j->io=io_duplicate(block_io);				
+			j->io=io_duplicate( j, block_io);				
 	}
 	
 	j->io = io_add( j->io, &pipe_write );
@@ -807,26 +792,18 @@ void exec( job_t *j )
 				int i;
 				string_buffer_t sb;
 				
-				const wchar_t * def = function_get_definition( p->argv[0] );
-//			fwprintf( stderr, L"run function %ls\n", argv[0] );
+				wchar_t * def = halloc_register( j, wcsdup( function_get_definition( p->argv[0] )));
+				//fwprintf( stderr, L"run function %ls\n", argv[0] );
 				if( def == 0 )
 				{
 					debug( 0, _( L"Unknown function '%ls'" ), p->argv[0] );
 					break;
 				}
 				
-				/*
-				  These two lines must be called before the new block is pushed
-				*/
-				int lineno = parser_get_lineno();
-				wchar_t *file = parser_current_filename()?wcsdup(parser_current_filename()):0;
-				
 				parser_push_block( FUNCTION_CALL );
 				
-				al_init( &current_block->param2.function_vars );
-				current_block->param1.function_name = wcsdup( p->argv[0] );
-				current_block->param3.function_lineno = lineno;
-				current_block->param4.function_filename = file;
+				current_block->param2.function_call_process = p;
+				current_block->param1.function_name = halloc_register( current_block, wcsdup( p->argv[0] ) );
 												
 				if( builtin_count_args(p->argv)>1 )
 				{
@@ -834,9 +811,6 @@ void exec( job_t *j )
 				
 					for( i=1, arg=p->argv+1; *arg; i++, arg++ )
 					{
-						al_push( &current_block->param2.function_vars, 
-								 escape(*arg, 1) );
-
 						if( i != 1 )
 							sb_append( &sb, ARRAY_SEP_STR );
 						sb_append( &sb, *arg );
@@ -1016,7 +990,7 @@ void exec( job_t *j )
 				if( !io_buffer )
 				{
 					/*
-					  No buffer, se we exit directly. This means we
+					  No buffer, so we exit directly. This means we
 					  have to manually set the exit status.
 					*/
 					if( p->next == 0 )
@@ -1062,11 +1036,18 @@ void exec( job_t *j )
 						   it control over the terminal.
 						*/
 						p->pid = pid;						
-						if( handle_new_child( j, p ) )
-							exit(1);
-						
+						set_child_group( j, p, 0 );
+												
 					}					
 					
+				}
+				else
+				{
+					if( p->next == 0 )
+					{
+						proc_set_last_status( j->negate?(status?0:1):status);
+					}
+					p->completed = 1;
 				}
 				
 				io_buffer_destroy( io_buffer );
@@ -1154,9 +1135,8 @@ void exec( job_t *j )
 					*/
 					p->pid = pid;
 						
-					if( handle_new_child( j, p ) )
-						exit( 1 );
-					
+					set_child_group( j, p, 0 );
+										
 				}					
 				
 				break;
@@ -1194,20 +1174,16 @@ void exec( job_t *j )
 					*/
 					p->pid = pid;
 
-					if( handle_new_child( j, p ) )
-						exit( 1 );
-					
-										
+					set_child_group( j, p, 0 );
+															
 				}
 				break;
 			}
 			
 		}
 
-
 		if( p->type == INTERNAL_BUILTIN )
-			builtin_pop_io();			
-		
+			builtin_pop_io();
 				
 		/* 
 		   Close the pipe the current process uses to read from the previous process_t 
@@ -1312,15 +1288,8 @@ int exec_subshell( const wchar_t *cmd,
 				{
 					wchar_t *el;
 					*end=0;
-					el = str2wcs( begin );				
-					if( !el )
-					{
-						debug( 0, _( L"Subshell '%ls' returned illegal string, discarded one entry" ), cmd );
-					}
-					else
-					{
-						al_push( l, el );
-					}
+					el = str2wcs( begin );
+					al_push( l, el );
 					begin = end+1;
 					break;
 				}

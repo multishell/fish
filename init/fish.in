@@ -1,7 +1,7 @@
 #
 # Init file for fish
 #
-
+# @configure_input@
 
 #
 # Set default field separators
@@ -15,11 +15,10 @@ set -g IFS \ \t\n
 # want this even for text-only terminals.
 #
 
-set -l path_list /bin /usr/bin /usr/X11R6/bin @PREFIX@/bin
+set -l path_list /bin /usr/bin /usr/X11R6/bin @PREFIX@/bin @optbindirs@
 
 # Root should also have the sbin directories in the path
-set -l uid (id -u 2>/dev/null)
-if test "$uid" = 0
+if test "$USER" = root
 	set path_list $path_list /sbin /usr/sbin /usr/local/sbin
 end
 
@@ -77,13 +76,14 @@ end
 # used by other init files.
 #
 
-if test 1 = "@HAVE_GETTEXT@"; and which gettext >/dev/null ^/dev/null
-	function _ -d "Alias for the gettext command"
-		gettext fish $argv
-	end
-else
-	function _ -d "Alias for the gettext command"
-		printf "%s" $argv
+function _ -d "Alias for the gettext command"
+	printf "%s" $argv
+end
+if test 1 = "@HAVE_GETTEXT@"
+	if which gettext ^/dev/null >/dev/null
+		function _ -d "Alias for the gettext command"
+			gettext fish $argv
+		end
 	end
 end
 

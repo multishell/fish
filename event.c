@@ -74,11 +74,15 @@ static array_list_t *killme;
 */
 static array_list_t *blocked;
 
+/**
+   String buffer used for formating event descriptions in event_get_desc()
+*/
+static string_buffer_t *get_desc_buff=0;
 
 /**
    Tests if one event instance matches the definition of a event
-   class. If the class defines a function name, that will also be a
-   match criterion.
+   class. If both the class and the instance name a function,
+   they must name the same function.
 
 */
 static int event_match( event_t *class, event_t *instance )
@@ -184,6 +188,63 @@ static int event_is_blocked( event_t *e )
 	}
 	
 	return 0;
+}
+
+const wchar_t *event_get_desc( event_t *e )
+{
+	if( !get_desc_buff )
+	{
+		get_desc_buff=malloc(sizeof(string_buffer_t) );
+		if( !get_desc_buff )
+			die_mem();
+		sb_init( get_desc_buff );
+	}
+	else
+	{
+		sb_clear( get_desc_buff );
+	}
+	
+	switch( e->type )
+	{
+		
+		case EVENT_SIGNAL:
+			sb_printf( get_desc_buff, _(L"signal handler for %ls (%ls)"), sig2wcs(e->param1.signal ), signal_get_desc( e->param1.signal ) );
+			break;
+		
+		case EVENT_VARIABLE:
+			sb_printf( get_desc_buff, _(L"handler for variable '%ls'"), e->param1.variable );
+			break;
+		
+		case EVENT_EXIT:
+			if( e->param1.pid > 0 )
+			{
+				sb_printf( get_desc_buff, _(L"exit handler for process %d"), e->param1.pid );
+			}
+			else
+			{
+				job_t *j = job_get_from_pid( -e->param1.pid );
+				if( j )
+					sb_printf( get_desc_buff, _(L"exit handler for job %d, '%ls'"), j->job_id, j->command );
+				else
+					sb_printf( get_desc_buff, _(L"exit handler for job with process group %d"), -e->param1.pid );
+			}
+			
+			break;
+		
+		case EVENT_JOB_ID:
+		{
+			job_t *j = job_get( e->param1.job_id );
+			if( j )
+				sb_printf( get_desc_buff, _(L"exit handler for job %d, '%ls'"), j->job_id, j->command );
+			else
+				sb_printf( get_desc_buff, _(L"exit handler for job with job id %d"), j->job_id );
+
+			break;
+		}
+		
+	}
+	
+	return (const wchar_t *)get_desc_buff->buff;
 }
 
 
@@ -327,7 +388,7 @@ static void event_fire_internal( event_t *event )
 	string_buffer_t *b=0;
 	array_list_t *fire=0;
 
-	int was_subshell = is_subshell;
+	int was_interactive = is_interactive;
 	
 	/*
 	  First we free all events that have been removed
@@ -403,15 +464,18 @@ static void event_fire_internal( event_t *event )
 		  Event handlers are not part of the main flow of code, so
 		  they are marked as non-interactive and as a subshell
 		*/
-		is_subshell=1;
+		is_interactive=0;
+		parser_push_block( EVENT );
+		current_block->param1.event = event;
 		eval( (wchar_t *)b->buff, 0, TOP );
-		
+		parser_pop_block();
+				
 	}
 
 	/*
 	  Restore interactivity flags
 	*/
-	is_subshell = was_subshell;
+	is_interactive = was_interactive;
 
 	if( b )
 	{
@@ -564,6 +628,7 @@ void event_init()
 
 void event_destroy()
 {
+
 	if( events )
 	{
 		al_foreach( events, (void (*)(const void *))&event_free );
@@ -571,6 +636,7 @@ void event_destroy()
 		free( events );		
 		events=0;
 	}
+
 	if( killme )
 	{
 		al_foreach( killme, (void (*)(const void *))&event_free );
@@ -578,6 +644,13 @@ void event_destroy()
 		free( killme );		
 		killme=0;		
 	}	
+
+	if( get_desc_buff )
+	{
+		sb_destroy( get_desc_buff );
+		free( get_desc_buff );
+	}
+	
 }
 
 void event_free( event_t *e )

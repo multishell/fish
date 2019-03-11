@@ -53,6 +53,7 @@ Some of the code in this file is based on code from the Glibc manual.
 #include "signal.h"
 #include "event.h"
 #include "translate.h"
+#include "halloc.h"
 
 /**
    Size of message buffer 
@@ -83,6 +84,7 @@ int is_login=0;
 int is_event=0;
 int proc_had_barrier;
 pid_t proc_last_bg_pid = 0;
+int job_control_mode = JOB_CONTROL_INTERACTIVE;
 
 /**
    The event variable used to send all process event
@@ -105,35 +107,6 @@ void proc_init()
 	al_init( &event.arguments );
 	sb_init( &event_pid );
 	sb_init( &event_status );
-}
-
-
-/**
-   Recursively free a process and those following it
-*/
-static void free_process( process_t *p )
-{
-	wchar_t **arg;
-	
-	if( p==0 )
-		return;
-
-	
-
-	free_process( p->next );
-	debug( 3, L"Free process %ls", p->actual_cmd );
-	free( p->actual_cmd );
-	if( p->argv != 0 )
-	{
-		debug( 3, L"Process has argument vector" );
-		for( arg=p->argv; *arg; arg++ )
-		{
-			debug( 3, L"Free argument %ls", *arg );
-			free( *arg );
-		}		
-		free(p->argv );
-	}
-	free( p );
 }
 
 /**
@@ -169,30 +142,8 @@ static int job_remove( job_t *j )
 */
 void job_free( job_t * j )
 {
-	io_data_t *io, *ionext;
-	
-//	fwprintf( stderr, L"Remove job %d (%ls)\n", j->job_id, j->command );	
-
 	job_remove( j );
-	
-	/* Then free ourselves */
-	free_process( j->first_process);
-	
-	if( j->command != 0 )
-		free( j->command );
-	
-	for( io=j->io; io; io=ionext )
-	{
-		ionext = io->next;
-//		fwprintf( stderr, L"Kill redirect %d of type %d\n", ionext, io->io_mode );
-		if( io->io_mode == IO_FILE )
-		{
-			free( io->param1.filename );
-		}
-		free( io );		
-	}
-	
-	free( j );
+	halloc_free( j );
 }
 
 void proc_destroy()
@@ -225,10 +176,14 @@ job_t *job_create()
 	
 	while( job_get( free_id ) != 0 )
 		free_id++;
-	res = calloc( 1, sizeof(job_t) );
+	res = halloc( 0, sizeof(job_t) );
 	res->next = first_job;
 	res->job_id = free_id;
 	first_job = res;
+
+	res->job_control = (job_control_mode==JOB_CONTROL_ALL) || 
+		((job_control_mode == JOB_CONTROL_INTERACTIVE) && (is_interactive));
+	
 //	if( res->job_id > 2 )
 //		fwprintf( stderr, L"Create job %d\n", res->job_id );	
 	return res;
@@ -388,7 +343,7 @@ static void handle_child_status( pid_t pid, int status )
   "Process %d is %ls from job %ls\n",
   (int) pid, p->actual_cmd, j->command );
   write( 2, mess, strlen(mess ));
-*/			
+*/		
 				
 				mark_process_status ( j, p, status);
 				if( p->completed && prev != 0  )
@@ -583,7 +538,7 @@ int job_reap( int interactive )
 									  j->job_id, 
 									  j->command,
 									  sig2wcs(WTERMSIG(p->status)),
-									  sig_description( WTERMSIG(p->status) ) );
+									  signal_get_desc( WTERMSIG(p->status) ) );
 						else
 							fwprintf( stdout,
 									  _( L"%ls: Process %d, \'%ls\' from job %d, \'%ls\' terminated by signal %ls (%ls)" ),
@@ -593,7 +548,7 @@ int job_reap( int interactive )
 									  j->job_id,
 									  j->command,
 									  sig2wcs(WTERMSIG(p->status)),
-									  sig_description( WTERMSIG(p->status) ) );
+									  signal_get_desc( WTERMSIG(p->status) ) );
 						tputs(clr_eol,1,&writeb);
 						fwprintf (stdout, L"\n" );
 						found=1;						
@@ -875,37 +830,33 @@ void job_continue (job_t *j, int cont)
 
 	if( !job_is_completed( j ) )
 	{
-		if( j->terminal )
-		{
-							
+		if( j->terminal && j->fg )
+		{							
 			/* Put the job into the foreground.  */
-			if(  j->fg )
+			signal_block();
+			if( tcsetpgrp (0, j->pgid) )
 			{
-				signal_block();
-				if( tcsetpgrp (0, j->pgid) )
-				{
-					debug( 1, 
-						   _( L"Could not send job %d ('%ls') to foreground" ), 
-						   j->job_id, 
-						   j->command );
-					wperror( L"tcsetpgrp" );
-					return;
-				}
-				
-				if( cont )
-				{  
-					if( tcsetattr (0, TCSADRAIN, &j->tmodes))
-					{
-						debug( 1,
-							   _( L"Could not send job %d ('%ls') to foreground" ),
-							   j->job_id,
-							   j->command );
-						wperror( L"tcsetattr" );
-						return;
-					}										
-				}
-				signal_unblock();
+				debug( 1, 
+					   _( L"Could not send job %d ('%ls') to foreground" ), 
+					   j->job_id, 
+					   j->command );
+				wperror( L"tcsetpgrp" );
+				return;
 			}
+			
+			if( cont )
+			{  
+				if( tcsetattr (0, TCSADRAIN, &j->tmodes))
+				{
+					debug( 1,
+						   _( L"Could not send job %d ('%ls') to foreground" ),
+						   j->job_id,
+						   j->command );
+					wperror( L"tcsetattr" );
+					return;
+				}										
+			}
+			signal_unblock();		
 		}
 
 		/* 
@@ -914,15 +865,28 @@ void job_continue (job_t *j, int cont)
 		if( cont )
 		{
 			process_t *p;
+
 			for( p=j->first_process; p; p=p->next )
 				p->stopped=0;
-			for( p=j->first_process; p; p=p->next )
+
+			if( j->job_control )
 			{
-				if (kill ( p->pid, SIGCONT) < 0)
+				if( killpg( j->pgid, SIGCONT ) )
 				{
-					wperror (L"kill (SIGCONT)");
+					wperror( L"killpg (SIGCONT)" );
 					return;
-				}		
+				}
+			}
+			else
+			{
+				for( p=j->first_process; p; p=p->next )
+				{
+					if (kill ( p->pid, SIGCONT) < 0)
+					{
+						wperror (L"kill (SIGCONT)");
+						return;
+					}		
+				}
 			}
 		}
 	
@@ -979,7 +943,7 @@ void job_continue (job_t *j, int cont)
 			}
 		}	
 	}
-			
+	
 	if( j->fg )
 	{
 		
@@ -1005,7 +969,7 @@ void job_continue (job_t *j, int cont)
 		/* 
 		   Put the shell back in the foreground.  
 		*/
-		if( j->terminal )
+		if( j->terminal && j->fg )
 		{
 			signal_block();
 			if( tcsetpgrp (0, getpid()) )

@@ -5,6 +5,8 @@
    client library and by the daemon.
 
 */
+#include "config.h"
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <wchar.h>
@@ -186,7 +188,7 @@ void read_message( connection_t *src )
 			}
 			else
 			{
-				sb_printf( &src->input, L"%lc", res );
+				sb_append_char( &src->input, res );
 			}
 		}
 	}

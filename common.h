@@ -8,6 +8,8 @@
 */
 #define FISH_COMMON_H
 
+#include <stdlib.h>
+#include <stdio.h>
 #include <wchar.h>
 #include <termios.h>
 
@@ -41,6 +43,11 @@ typedef char tputs_arg_t;
    Color code for set_color. Sets the default color.
 */
 #define FISH_COLOR_RESET -2
+
+/**
+   This is in the unicode private use area.
+*/
+#define ENCODE_DIRECT_BASE 0xf000
 
 /** 
 	Save the shell mode on startup so we can restore them on exit
@@ -76,9 +83,12 @@ extern wchar_t *program_name;
 
 /**
    Take an array_list_t containing wide strings and converts them to a
-   single null-terminated wchar_t **.
+   single null-terminated wchar_t **. The array is allocated using
+   halloc, and uses the \c context parameter as context. If \c context
+   is not noll, all elements of the \c array_list_t are also
+   registered to \c context using \c halloc_register().
 */
-wchar_t **list_to_char_arr( array_list_t *l );
+wchar_t **list_to_char_arr( void *context, array_list_t *l );
 
 /**
    Read a line from the stream f into the buffer buff of length len. If
@@ -172,8 +182,8 @@ int my_wcswidth( const wchar_t *c );
 
 /**
    This functions returns the end of the quoted substring beginning at
-   \c in. It can handle both single and double quotes. Returns 0 on
-   error.
+   \c in. The type of quoting character is detemrined by examining \c
+   in. Returns 0 on error.
 
    \param in the position of the opening quote
 */

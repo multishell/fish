@@ -80,6 +80,7 @@ commence.
 #include "output.h"
 #include "signal.h"
 #include "translate.h"
+#include "parse_util.h"
 
 /**
    Maximum length of prefix string when printing completion
@@ -320,14 +321,14 @@ static void term_donate()
 			break;
 	}
 
-	
+
 }
 
 /**
    Grab control of terminal
 */
 static void term_steal()
-{	
+{
 
 	while( 1 )
 	{
@@ -344,7 +345,7 @@ static void term_steal()
 			break;
 	}
 
-	common_handle_winch(0 );	
+	common_handle_winch(0 );
 
 	if( tcsetattr(0,TCSANOW,&old_modes))/* return to previous mode */
 	{
@@ -389,7 +390,7 @@ wchar_t *reader_current_filename()
 }
 
 
-void reader_push_current_filename( wchar_t *fn )
+void reader_push_current_filename( const wchar_t *fn )
 {
 	al_push( &current_filename, fn );
 }
@@ -430,7 +431,7 @@ static int check_size()
 			data->new_color == 0 )
 		{
 			die_mem();
-			
+
 		}
 	}
 	return 1;
@@ -509,7 +510,7 @@ static int calc_output()
 		{
 			data->output[0]=ellipsis_char;
 			data->output[1]=0;
-			
+
 		}
 
 		wcsncat( data->output,
@@ -519,7 +520,7 @@ static int calc_output()
 		if( offset_end<data->buff_len )
 		{
 			int l = wcslen(data->output);
-			
+
 			data->output[l]=ellipsis_char;
 			data->output[l+1]=0;
 
@@ -536,7 +537,7 @@ static int calc_output()
 
 
 /**
-   Compare two completions, ignoring their description. 
+   Compare two completions, ignoring their description.
 */
 static int fldcmp( wchar_t *a, wchar_t *b )
 {
@@ -605,7 +606,8 @@ void reader_write_title()
 	wchar_t *title;
 	array_list_t l;
 	wchar_t *term = env_get( L"TERM" );
-	
+	int was_interactive = is_interactive;
+
 	/*
 	  This is a pretty lame heuristic for detecting terminals that do
 	  not support setting the title. If we recognise the terminal name
@@ -626,6 +628,7 @@ void reader_write_title()
 
 	al_init( &l );
 
+	is_interactive = 0;
 	if( exec_subshell( title, &l ) != -1 )
 	{
 		int i;
@@ -636,6 +639,8 @@ void reader_write_title()
 		}
 		writestr( L"\7" );
 	}
+	is_interactive = was_interactive;
+	
 	al_foreach( &l, (void (*)(const void *))&free );
 	al_destroy( &l );
 	set_color( FISH_COLOR_RESET, FISH_COLOR_RESET );
@@ -649,16 +654,16 @@ void reader_write_title()
 static int try_sequence( char *seq, wchar_t *str )
 {
 	int i;
-	
+
 	for( i=0;; i++ )
 	{
 		if( !seq[i] )
 			return i;
-		
+
 		if( seq[i] != str[i] )
 			return 0;
 	}
-	
+
 	return 0;
 }
 
@@ -671,11 +676,11 @@ static int calc_prompt_width( array_list_t *arr )
 {
 	int res = 0;
 	int i, j, k;
-	
+
 	for( i=0; i<al_get_count( arr ); i++ )
 	{
 		wchar_t *next = (wchar_t *)al_get( arr, i );
-		
+
 		for( j=0; next[j]; j++ )
 		{
 			if( next[j] == L'\e' )
@@ -686,11 +691,11 @@ static int calc_prompt_width( array_list_t *arr )
 				int l;
 				int len=0;
 				int found = 0;
-				
+
 				/*
 				  Test these color escapes with parameter value 0..7
 				*/
-				char * esc[] = 
+				char * esc[] =
 					{
 						set_a_foreground,
 						set_a_background,
@@ -713,12 +718,12 @@ static int calc_prompt_width( array_list_t *arr )
 						flash_screen
 					}
 				;
-				
+
 				for( l=0; l < (sizeof(esc)/sizeof(char *)) && !found; l++ )
 				{
 					if( !esc[l] )
 						continue;
-					
+
 					for( k=0; k<8; k++ )
 					{
 						len = try_sequence( tparm(esc[l],k), &next[j] );
@@ -728,9 +733,9 @@ static int calc_prompt_width( array_list_t *arr )
 							found = 1;
 							break;
 						}
-					}							
+					}
 				}
-				
+
 				for( l=0; l < (sizeof(esc2)/sizeof(char *)) && !found; l++ )
 				{
 					if( !esc2[l] )
@@ -742,7 +747,7 @@ static int calc_prompt_width( array_list_t *arr )
 					*/
 					len = maxi( try_sequence( tparm(esc2[l]), &next[j] ),
 								try_sequence( esc2[l], &next[j] ));
-					
+
 					if( len )
 					{
 						j += (len-1);
@@ -750,14 +755,14 @@ static int calc_prompt_width( array_list_t *arr )
 					}
 				}
 			}
-			else				
+			else
 			{
 				/*
 				  Ordinary decent character. Just add width.
 				*/
 				res += wcwidth( next[j] );
 			}
-			
+
 		}
 	}
 	return res;
@@ -785,6 +790,8 @@ static void write_prompt()
 
 		if( data->prompt )
 		{
+			int was_interactive = is_interactive;
+			is_interactive = 0;
 			if( exec_subshell( data->prompt, &prompt_list ) == -1 )
 			{
 				/* If executing the prompt fails, make sure we at least don't print any junk */
@@ -792,6 +799,7 @@ static void write_prompt()
 				al_destroy( &prompt_list );
 				al_init( &prompt_list );
 			}
+			is_interactive = was_interactive;			
 		}
 
 		data->prompt_width=calc_prompt_width( &prompt_list );
@@ -1151,10 +1159,10 @@ static int insert_str(wchar_t *str)
 	else
 	{
 		int old_len = data->buff_len;
-		
+
 		data->buff_len += len;
 		check_size();
-		
+
 		/* Insert space for extra characters at the right position */
 		if( data->buff_pos < old_len )
 		{
@@ -1167,17 +1175,17 @@ static int insert_str(wchar_t *str)
 		data->buff[data->buff_len]='\0';
 
 		/* Syntax highlight */
-		
+
 		reader_super_highlight_me_plenty( data->buff,
 										  data->new_color,
 										  data->buff_pos-1,
 										  0 );
 		memcpy( data->color, data->new_color, sizeof(int) * data->buff_len );
-		
+
 		/* repaint */
 
 		repaint();
-		
+
 	}
 	return 1;
 }
@@ -1335,7 +1343,7 @@ static void completion_insert( wchar_t *val, int is_complete )
 
 	if( quote == L'\0' )
 	{
-		replaced = expand_escape( val, 1 );
+		replaced = escape( val, 1 );
 	}
 	else
 	{
@@ -1364,7 +1372,7 @@ static void completion_insert( wchar_t *val, int is_complete )
 		if( unescapable )
 		{
 			free( replaced );
-			wchar_t *tmp = expand_escape( val, 1 );
+			wchar_t *tmp = escape( val, 1 );
 			replaced = wcsdupcat( L" ", tmp );
 			free( tmp);
 			replaced[0]=quote;
@@ -1408,49 +1416,49 @@ static void run_pager( wchar_t *prefix, int is_quoted, array_list_t *comp )
 		prefix_esc = escape( prefix,1);
 
 	sb_init( &cmd );
-	sb_printf( &cmd, 
-			   L"fish_pager %d %ls", 
-			   is_quoted, 
+	sb_printf( &cmd,
+			   L"fish_pager %d %ls",
+			   is_quoted,
 			   prefix_esc );
-	
+
 	free( prefix_esc );
-	
+
 	for( i=0; i<al_get_count( comp); i++ )
 	{
-		wchar_t *el = escape( (wchar_t*)al_get( comp, i ),1);		
+		wchar_t *el = escape( (wchar_t*)al_get( comp, i ),1);
 		sb_printf( &cmd, L" %ls", el );
 		free(el);
 	}
-	
-	term_donate();	
-	
+
+	term_donate();
+
 	io_data_t *out = io_buffer_create();
-	
+
 	eval( (wchar_t *)cmd.buff, out, TOP);
-	term_steal();	
+	term_steal();
 
 	io_buffer_read( out );
-	
-	sb_destroy( &cmd );
-	
 
-	int nil=0;	
+	sb_destroy( &cmd );
+
+
+	int nil=0;
 	b_append( out->param2.out_buffer, &nil, 1 );
-	
+
 	wchar_t *tmp;
 	wchar_t *str = str2wcs((char *)out->param2.out_buffer->buff);
-	
+
 	if( str )
 	{
 		for( tmp = str + wcslen(str)-1; tmp >= str; tmp-- )
 		{
 			input_unreadch( *tmp );
-		}		
+		}
 		free( str );
 	}
-	
+
 	io_buffer_destroy( out);
-	
+
 }
 
 /**
@@ -1526,7 +1534,7 @@ static int handle_completions( array_list_t *comp )
 					   0 );
 
 			len = &data->buff[data->buff_pos]-prefix_start+1;
-			
+
 			if( len <= PREFIX_MAX_LEN )
 			{
 				prefix = malloc( sizeof(wchar_t)*(len+1) );
@@ -1541,11 +1549,11 @@ static int handle_completions( array_list_t *comp )
 						0
 					}
 				;
-				
+
 				prefix = wcsdupcat( tmp,
 									prefix_start + (len - PREFIX_MAX_LEN) );
 				prefix[PREFIX_MAX_LEN] = 0;
-				
+
 			}
 
 			{
@@ -1558,7 +1566,7 @@ static int handle_completions( array_list_t *comp )
 				writech(L'\n');
 
 				run_pager( prefix, is_quoted, comp );
-				
+
 
 				/*
 				  Try to print a list of completions. First try with five
@@ -1604,6 +1612,11 @@ static void reader_interactive_init()
 	kill_init();
 	shell_pgid = getpgrp ();
 
+	/*
+	  This should enable job control on fish, even if our parent did
+	  not enable it for us.
+	*/
+
 	/* Loop until we are in the foreground.  */
 	while (tcgetpgrp( 0 ) != shell_pgid)
 	{
@@ -1636,9 +1649,8 @@ static void reader_interactive_init()
 	al_init( &prompt_list );
 	history_init();
 
+	common_handle_winch(0);
 
-	common_handle_winch(0);	
-	
 	tcgetattr(0,&shell_modes);        /* get the current terminal modes */
 	memcpy( &saved_modes,
 			&shell_modes,
@@ -1655,7 +1667,10 @@ static void reader_interactive_init()
         exit(1);
     }
 
-	/* We need to know the parents pid so we'll know if we are a subshell */
+	/* 
+	   We need to know our own pid so we'll later know if we are a
+	   fork 
+	*/
 	original_pid = getpid();
 
 	if( atexit( &exit_func ) )
@@ -1691,274 +1706,17 @@ void reader_sanity_check()
 	}
 }
 
-void reader_current_subshell_extent( wchar_t **a, wchar_t **b )
-{
-	wchar_t *begin, *end;
-	wchar_t *pos;
-	
-	if( a )
-		*a=0;
-	if( b )
-		*b = 0;
-
-	if( !data )
-		return;
-
-	pos = data->buff;
-	
-	while( 1 )
-	{
-		int bc, ec;
-		
-		if( expand_locate_subshell( pos,
-									&begin,
-									&end,
-									1 ) <= 0)
-		{
-			begin=data->buff;
-			end = data->buff + wcslen(data->buff);
-			break;
-		}
-
-		if( !end )
-		{
-			end = data->buff + wcslen(data->buff);
-		}
-
-		bc = begin-data->buff;
-		ec = end-data->buff;
-		
-		if(( bc < data->buff_pos ) && (ec >= data->buff_pos) )
-		{
-			begin++;
-			break;
-		}
-		pos = end+1;
-	}
-	if( a )
-		*a = begin;
-	if( b )
-		*b = end;
-}
-
-/**
-   Get the beginning and dend of the job or process definition under the cursor
-*/
-static void reader_current_job_or_process_extent( wchar_t **a, 
-												  wchar_t **b, 
-												  int process )
-{
-	wchar_t *begin, *end;
-	int pos;
-	wchar_t *buffcpy;
-	int finished=0;
-	
-	tokenizer tok;
-
-	if( a )
-		*a=0;
-	if( b )
-		*b = 0;
-	
-	reader_current_subshell_extent( &begin, &end );
-	if( !end || !begin )
-		return;
-
-	pos = data->buff_pos - (begin - data->buff);
-//	fwprintf( stderr, L"Subshell extent: %d %d %d\n", begin-data->buff, end-data->buff, pos );
-
-	if( a )
-	{
-		*a = begin;
-	}
-	
-	if( b )
-	{
-		*b = end;
-	}
-
-	buffcpy = wcsndup( begin, end-begin );
-
-	if( !buffcpy )
-	{
-		die_mem();
-	}
-//	fwprintf( stderr, L"Strlen: %d\n", wcslen(buffcpy ) );
-
-	for( tok_init( &tok, buffcpy, TOK_ACCEPT_UNFINISHED );
-		 tok_has_next( &tok ) && !finished;
-		 tok_next( &tok ) )
-	{
-		int tok_begin = tok_get_pos( &tok );
-//		fwprintf( stderr, L".");
-
-		switch( tok_last_type( &tok ) )
-		{
-			case TOK_PIPE:
-				if( !process )
-					break;
-				
-			case TOK_END:
-			case TOK_BACKGROUND:
-			{
-
-//				fwprintf( stderr, L"New cmd at %d\n", tok_begin );
-				
-				if( tok_begin >= pos )
-				{
-					finished=1;					
-					if( b )
-						*b = data->buff + tok_begin;
-				}
-				else
-				{
-					if( a )
-						*a = data->buff + tok_begin+1;
-				}
-				break;
-				
-			}
-		}
-	}
-
-//	fwprintf( stderr, L"Res: %d %d\n", *a-data->buff, *b-data->buff );
-	free( buffcpy);
-	
-	tok_destroy( &tok );
-
-}
-
-void reader_current_process_extent( wchar_t **a, wchar_t **b )
-{
-	reader_current_job_or_process_extent( a, b, 1 );	
-}
-
-void reader_current_job_extent( wchar_t **a, wchar_t **b )
-{
-	reader_current_job_or_process_extent( a, b, 0 );	
-}
-
-
-void reader_current_token_extent( wchar_t **tok_begin,
-								  wchar_t **tok_end,
-								  wchar_t **prev_begin, 
-								  wchar_t **prev_end )
-{
-	wchar_t *begin, *end;
-	int pos;
-	wchar_t *buffcpy;
-
-	tokenizer tok;
-
-	wchar_t *a, *b, *pa, *pb;
-	
-
-	a = b = pa = pb = 0;
-	
-	reader_current_subshell_extent( &begin, &end );
-
-	if( !end || !begin )
-		return;
-
-	pos = data->buff_pos - (begin - data->buff);
-
-	a = data->buff + pos;
-	b = a;
-	pa = data->buff + pos;
-	pb = pa;
-
-	assert( begin >= data->buff );
-	assert( begin <= (data->buff+wcslen(data->buff) ) );
-	assert( end >= begin );
-	assert( end <= (data->buff+wcslen(data->buff) ) );
-
-	buffcpy = wcsndup( begin, end-begin );
-
-	if( !buffcpy )
-	{
-		die_mem();
-	}
-
-	for( tok_init( &tok, buffcpy, TOK_ACCEPT_UNFINISHED );
-		 tok_has_next( &tok );
-		 tok_next( &tok ) )
-	{
-		int tok_begin = tok_get_pos( &tok );
-		int tok_end=tok_begin;
-
-		/*
-		  Calculate end of token
-		*/
-		if( tok_last_type( &tok ) == TOK_STRING )
-			tok_end +=wcslen(tok_last(&tok));
-		
-		/*
-		  Cursor was before beginning of this token, means that the
-		  cursor is between two tokens, so we set it to a zero element
-		  string and break
-		*/
-		if( tok_begin > pos )
-		{
-			a = b = data->buff + pos;
-			break;
-		}
-
-		/*
-		  If cursor is inside the token, this is the token we are
-		  looking for. If so, set a and b and break
-		*/
-		if( tok_end >= pos )
-		{
-			a = begin + tok_get_pos( &tok );
-			b = a + wcslen(tok_last(&tok));
-
-//			fwprintf( stderr, L"Whee %ls\n", *a );
-
-			break;
-		}
-		
-		/*
-		  Remember previous string token
-		*/
-		if( tok_last_type( &tok ) == TOK_STRING )
-		{
-			pa = begin + tok_get_pos( &tok );
-			pb = pa + wcslen(tok_last(&tok));
-		}
-	}
-
-	free( buffcpy);
-	
-	tok_destroy( &tok );
-
-	if( tok_begin )
-		*tok_begin = a;
-	if( tok_end )
-		*tok_end = b;
-	if( prev_begin )
-		*prev_begin = pa;
-	if( prev_end )
-		*prev_end = pb;
-
-	assert( pa >= data->buff );
-	assert( pa <= (data->buff+wcslen(data->buff) ) );
-	assert( pb >= pa );
-	assert( pb <= (data->buff+wcslen(data->buff) ) );
-
-}
-
-
 void reader_replace_current_token( wchar_t *new_token )
 {
 
-	wchar_t *begin, *end;
+	const wchar_t *begin, *end;
 	string_buffer_t sb;
 	int new_pos;
 
 	/*
 	  Find current token
 	*/
-	reader_current_token_extent( &begin, &end, 0, 0 );
+	parse_util_token_extent( data->buff, data->buff_pos, &begin, &end, 0, 0 );
 
 	if( !begin || !end )
 		return;
@@ -2000,7 +1758,7 @@ static void handle_history( const wchar_t *new_str )
    Check if the specified string is contained in the list, using
    wcscmp as a comparison function
 */
-static int contains( const wchar_t *needle, 
+static int contains( const wchar_t *needle,
 					 array_list_t *haystack )
 {
 	int i;
@@ -2010,7 +1768,7 @@ static int contains( const wchar_t *needle,
 			return 1;
 	}
 	return 0;
-	
+
 }
 
 /**
@@ -2018,16 +1776,16 @@ static int contains( const wchar_t *needle,
 */
 static void reset_token_history()
 {
-	wchar_t *begin, *end;
+	const wchar_t *begin, *end;
 
-	reader_current_token_extent( &begin, &end, 0, 0 );
+	parse_util_token_extent( data->buff, data->buff_pos, &begin, &end, 0, 0 );
 	if( begin )
 	{
 		wcslcpy(data->search_buff, begin, end-begin+1);
 	}
 	else
 		data->search_buff[0]=0;
-	
+
 	data->token_history_pos = -1;
 	data->search_pos=0;
 	al_foreach( &data->search_prev, (void (*)(const void *))&free );
@@ -2054,7 +1812,7 @@ static void handle_token_history( int forward, int reset )
 		  Start a new token search using the current token
 		*/
 		reset_token_history();
-		
+
 	}
 
 
@@ -2107,13 +1865,13 @@ static void handle_token_history( int forward, int reset )
 			}
 			else
 			{
-				return;				
-			}			
+				return;
+			}
 		}
 		else
 		{
 
-			debug( 3, L"new '%ls'", data->token_history_buff );	
+			debug( 3, L"new '%ls'", data->token_history_buff );
 
 			for( tok_init( &tok, data->token_history_buff, TOK_ACCEPT_UNFINISHED );
 				 tok_has_next( &tok);
@@ -2138,7 +1896,7 @@ static void handle_token_history( int forward, int reset )
 								data->token_history_pos = tok_get_pos( &tok );
 								str = wcsdup(tok_last( &tok ));
 							}
-							
+
 						}
 					}
 				}
@@ -2146,7 +1904,7 @@ static void handle_token_history( int forward, int reset )
 
 			tok_destroy( &tok );
 		}
-		
+
 		if( str )
 		{
 			reader_replace_current_token( str );
@@ -2168,10 +1926,10 @@ static void handle_token_history( int forward, int reset )
    Move buffer position one word or erase one word. This function
    updates both the internal buffer and the screen. It is used by
    M-left, M-right and ^W to do block movement or block erase.
-   
+
    \param dir Direction to move/erase. 0 means move left, 1 means move right.
    \param erase Whether to erase the characters along the way or only move past them.
-   
+
 */
 static void move_word( int dir, int erase )
 {
@@ -2208,7 +1966,7 @@ static void move_word( int dir, int erase )
 						if( !dir )
 							end_buff_pos -= step;
 						mode++;
-					}					
+					}
 					break;
 /*
   case 2:
@@ -2241,9 +1999,9 @@ static void move_word( int dir, int erase )
 		data->buff_len -= remove_count;
 		data->buff_pos = first_char;
 		data->buff[data->buff_len]=0;
-		
+
 		reader_super_highlight_me_plenty( data->buff, data->color, data->buff_pos, 0 );
-		
+
 		repaint();
 	}
 	else
@@ -2319,7 +2077,7 @@ int reader_get_cursor_pos()
 
 void reader_run_command( wchar_t *cmd )
 {
-	
+
 	wchar_t *ft;
 
 	ft= tok_first( cmd );
@@ -2329,12 +2087,12 @@ void reader_run_command( wchar_t *cmd )
 	free(ft);
 
 	reader_write_title();
-	
+
 	term_donate();
-	
+
 	eval( cmd, 0, TOP );
 	job_reap( 1 );
-	
+
 	term_steal();
 
 	env_set( L"_", L"fish", ENV_GLOBAL );
@@ -2343,7 +2101,7 @@ void reader_run_command( wchar_t *cmd )
 	proc_update_jiffies();
 #endif
 
-	
+
 }
 
 
@@ -2417,11 +2175,11 @@ void reader_pop()
 	  Clean up after history search
 	*/
 	al_foreach( &n->search_prev, (void (*)(const void *))&free );
-	al_destroy( &n->search_prev );	
+	al_destroy( &n->search_prev );
     free( (void *)n->token_history_buff);
-	
+
 	free(n);
-	
+
 	if( data == 0 )
 	{
 		reader_interactive_destroy();
@@ -2527,9 +2285,9 @@ static int read_i()
 		  that we can handle a call to reader_set_buffer
 		  during evaluation.
 		*/
-		
+
 		tmp = wcsdup( reader_readline() );
-		
+
 		data->buff_pos=data->buff_len=0;
 		data->buff[data->buff_len]=L'\0';
 		reader_run_command( tmp );
@@ -2564,7 +2322,7 @@ static int can_read( int fd )
 {
 	struct timeval can_read_timeout = { 0, 0 };
 	fd_set fds;
-    
+
 	FD_ZERO(&fds);
     FD_SET(fd, &fds);
     return select(fd + 1, &fds, 0, 0, &can_read_timeout) == 1;
@@ -2634,13 +2392,13 @@ wchar_t *reader_readline()
 
 					wchar_t arr[READAHEAD_MAX+1];
 					int i;
-					
+
 					memset( arr, 0, sizeof( arr ) );
 					arr[0] = c;
-					
+
 					for( i=1; i<READAHEAD_MAX; i++ )
 					{
-						
+
 						if( !can_read( 0 ) )
 						{
 							c = 0;
@@ -2655,12 +2413,12 @@ wchar_t *reader_readline()
 						else
 							break;
 					}
-					
+
 					insert_str( arr );
-					
+
 				}
 			}
-			
+
 			if( c != 0 )
 				break;
 		}
@@ -2704,11 +2462,11 @@ wchar_t *reader_readline()
 				repaint();
 				break;
 			}
-			
+
 			/* complete */
 			case R_COMPLETE:
 			{
-				
+
 //					fwprintf( stderr, L"aaa\n" );
 				if( !data->complete_func )
 					break;
@@ -2718,10 +2476,10 @@ wchar_t *reader_readline()
 
  				if( comp_empty )
 				{
-					wchar_t *begin, *end;
+					const wchar_t *begin, *end;
 					wchar_t *buffcpy;
 
-					reader_current_subshell_extent( &begin, &end );
+					parse_util_cmdsubst_extent( data->buff, data->buff_pos, &begin, &end );
 
 					int len = data->buff_pos - (data->buff - begin);
 					buffcpy = wcsndup( begin, len );
@@ -2765,10 +2523,10 @@ wchar_t *reader_readline()
 				wchar_t *str = wcsndup( data->buff, data->buff_pos );
 				if( !str )
 					die_mem();
-				
+
 				kill_add( str );
 				free( str );
-				
+
 				data->buff_len = wcslen(data->buff +data->buff_pos);
 				memmove( data->buff, data->buff +data->buff_pos, sizeof(wchar_t)*data->buff_len );
 				data->buff[data->buff_len]=L'\0';
@@ -2800,7 +2558,7 @@ wchar_t *reader_readline()
 //				wcscpy(data->search_buff,data->buff);
 				break;
 			}
-			
+
 			/* rotate killring*/
 			case R_YANK_POP:
 			{
@@ -2815,16 +2573,16 @@ wchar_t *reader_readline()
 				}
 				break;
 			}
-			
+
 			/* Escape was pressed */
 			case L'\e':
 			{
 				if( *data->search_buff )
 				{
 					if( data->token_history_pos==-1 )
-					{						
+					{
 						history_reset();
-						reader_set_buffer( data->search_buff, 
+						reader_set_buffer( data->search_buff,
 										   wcslen(data->search_buff ) );
 					}
 					else
@@ -2833,26 +2591,26 @@ wchar_t *reader_readline()
 					}
 					*data->search_buff=0;
 					check_colors();
-				
+
 				}
-				
+
 				break;
 			}
-			
+
 			/* delete backward*/
 			case R_BACKWARD_DELETE_CHAR:
 			{
 				remove_backward();
 				break;
 			}
-			
+
 			/* delete forward*/
 			case R_DELETE_CHAR:
 			{
 				remove_forward();
 				break;
 			}
-			
+
 			/* exit, but only if line is empty */
 			case R_EXIT:
 			{
@@ -2863,7 +2621,7 @@ wchar_t *reader_readline()
 				}
 				break;
 			}
-			
+
 			/* Newline, evaluate*/
 			case L'\n':
 			{
@@ -2889,7 +2647,7 @@ wchar_t *reader_readline()
 					writech('\n');
 					repaint();
 				}
-				
+
 				break;
 			}
 
@@ -2897,7 +2655,10 @@ wchar_t *reader_readline()
 			case R_HISTORY_SEARCH_BACKWARD:
 			{
 				if( (last_char != R_HISTORY_SEARCH_BACKWARD) &&
-					(last_char != R_HISTORY_SEARCH_FORWARD) )
+					(last_char != R_HISTORY_SEARCH_FORWARD) &&
+					(last_char != R_FORWARD_CHAR) &&
+					(last_char != R_BACKWARD_CHAR) )
+
 				{
 					wcscpy(data->search_buff, data->buff );
 					data->search_buff[data->buff_pos]=0;
@@ -2906,12 +2667,14 @@ wchar_t *reader_readline()
 				handle_history(history_prev_match(data->search_buff));
 				break;
 			}
-			
+
 			/* History down */
 			case R_HISTORY_SEARCH_FORWARD:
 			{
 				if( (last_char != R_HISTORY_SEARCH_BACKWARD) &&
-					(last_char != R_HISTORY_SEARCH_FORWARD) )
+					(last_char != R_HISTORY_SEARCH_FORWARD) &&
+					(last_char != R_FORWARD_CHAR) &&
+					(last_char != R_BACKWARD_CHAR) )
 				{
 					wcscpy(data->search_buff, data->buff );
 					data->search_buff[data->buff_pos]=0;
@@ -2920,7 +2683,7 @@ wchar_t *reader_readline()
 				handle_history(history_next_match(data->search_buff));
 				break;
 			}
-			
+
 			/* Token search for a earlier match */
 			case R_HISTORY_TOKEN_SEARCH_BACKWARD:
 			{
@@ -2929,7 +2692,6 @@ wchar_t *reader_readline()
 					(last_char != R_HISTORY_TOKEN_SEARCH_FORWARD) )
 				{
 					reset=1;
-
 				}
 
 				handle_token_history( 0, reset );
@@ -2953,7 +2715,7 @@ wchar_t *reader_readline()
 				break;
 			}
 
-			
+
 			/* Move left*/
 			case R_BACKWARD_CHAR:
 				if( data->buff_pos > 0 )
@@ -2991,7 +2753,7 @@ wchar_t *reader_readline()
 				}
 				break;
 			}
-			
+
 			case R_DELETE_LINE:
 			{
 				data->buff[0]=0;
@@ -3000,35 +2762,35 @@ wchar_t *reader_readline()
 				repaint();
 				break;
 			}
-			
+
 			/* kill one word left */
 			case R_BACKWARD_KILL_WORD:
 			{
 				move_word(0,1);
 				break;
 			}
-			
+
 			/* kill one word right */
 			case R_KILL_WORD:
 			{
 				move_word(1,1);
 				break;
 			}
-			
+
 			/* move one word left*/
 			case R_BACKWARD_WORD:
 			{
 				move_word(0,0);
 				break;
 			}
-			
+
 			/* move one word right*/
 			case R_FORWARD_WORD:
 			{
 				move_word( 1,0);
 				break;
 			}
-			
+
 			case R_CLEAR_SCREEN:
 			{
 				writembs( clear_screen );
@@ -3064,12 +2826,13 @@ wchar_t *reader_readline()
 		if( (c != R_HISTORY_SEARCH_BACKWARD) &&
 			(c != R_HISTORY_SEARCH_FORWARD) &&
 			(c != R_HISTORY_TOKEN_SEARCH_BACKWARD) &&
-			(c != R_HISTORY_TOKEN_SEARCH_FORWARD)  )
+			(c != R_HISTORY_TOKEN_SEARCH_FORWARD) &&
+			(c != R_FORWARD_CHAR) &&
+			(c != R_BACKWARD_CHAR) )
 		{
 			data->search_buff[0]=0;
 			history_reset();
 			data->token_history_pos=-1;
-			
 		}
 
 
@@ -3101,21 +2864,21 @@ static int read_ni( int fd )
 
 	int des = fd == 0 ? dup(0) : fd;
 	int res=0;
-	
+
 	if (des == -1)
 	{
 		wperror( L"dup" );
 		return 1;
 	}
-	
+
 	b_init( &acc );
-	
+
 	in_stream = fdopen( des, "r" );
 	if( in_stream != 0 )
 	{
 		wchar_t *str;
 		int acc_used;
-		
+
 		while(!feof( in_stream ))
 		{
 			char buff[4096];
@@ -3124,7 +2887,7 @@ static int read_ni( int fd )
 			c = fread(buff, 1, 4096, in_stream);
 			if( ferror( in_stream ) )
 			{
-				debug( 1, 
+				debug( 1,
 					   _( L"Error while reading commands" ) );
 
 				/*
@@ -3133,7 +2896,7 @@ static int read_ni( int fd )
 				acc.used=0;
 				break;
 			}
-			
+
 			b_append( &acc, buff, c );
 		}
 		b_append( &acc, "\0", 1 );
@@ -3143,16 +2906,16 @@ static int read_ni( int fd )
 
 		if(	fclose( in_stream ))
 		{
-			debug( 1, 
+			debug( 1,
 				   _( L"Error while closing input stream" ) );
 			wperror( L"fclose" );
 			res = 1;
 		}
-		
+
 //		fwprintf( stderr, L"Woot is %d chars\n", wcslen( acc.buff ) );
-		
+
 		if( str )
-		{			
+		{
 			if( !parser_test( str, 1 ) )
 			{
 				//fwprintf( stderr, L"We parse it\n" );
@@ -3172,21 +2935,21 @@ static int read_ni( int fd )
 			if( acc_used > 1 )
 			{
 				debug( 1,
-					   _( L"Could not convert input. Read %d bytes." ), 
+					   _( L"Could not convert input. Read %d bytes." ),
 					   acc_used-1 );
 			}
 			else
 			{
-				debug( 1, 
+				debug( 1,
 					   _( L"Could not read input stream" ) );
 			}
-			res=1;			
-		}		
+			res=1;
+		}
 
 	}
 	else
 	{
-		debug( 1, 
+		debug( 1,
 			   _( L"Error while opening input stream" ) );
 		wperror( L"fdopen" );
 		free( buff );
@@ -3205,18 +2968,18 @@ int reader_read( int fd )
 	  original state. We also update the signal handlers.
 	*/
 	int shell_was_interactive = is_interactive;
-	
+
 	is_interactive = ((fd == 0) && isatty(STDIN_FILENO));
 	signal_set_handlers();
-	
+
 	res= is_interactive?read_i():read_ni( fd );
-	
+
 	/*
 	  If the exit command was called in a script, only exit the
 	  script, not the program
 	*/
 	end_loop = 0;
-	
+
 	is_interactive = shell_was_interactive;
 	signal_set_handlers();
 	return res;

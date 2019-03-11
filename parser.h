@@ -10,6 +10,7 @@
 #include "proc.h"
 #include "util.h"
 #include "parser.h"
+#include "event.h"
 
 /**
    event_block_t represents a block on events of the specified type
@@ -64,6 +65,8 @@ typedef struct block
 		int if_state; /**< The state of the if block */
 		wchar_t *switch_value; /**< The value to test in a switch block */
 		wchar_t *function_name; /**< The name of the function to define or the function called*/
+		const wchar_t *source_dest; /**< The name of the file to source*/
+		event_t *event; /**<The event that triggered this block */		
 	} param1;
 
 	/**
@@ -74,7 +77,7 @@ typedef struct block
 		array_list_t for_vars; /**< List of values for a for block */	
 		int switch_taken; /**< Whether a switch match has already been found */
 		wchar_t *function_description; /**< The description of the function to define */
-		array_list_t function_vars;		/**< List of arguments for a function call */
+		process_t *function_call_process;		/**< The process representing this function call */
 	} param2;
 
 	/**
@@ -83,7 +86,6 @@ typedef struct block
 	union
 	{
 		int function_is_binding; /**< Whether a function is a keybinding */
-		int function_lineno; /**< Function invocation line number */		 
 	} param3;
 
 	/**
@@ -92,8 +94,17 @@ typedef struct block
 	union
 	{
 		array_list_t *function_events;
-		wchar_t *function_filename;
 	} param4;
+
+	/**
+	   Name of file that created this block
+	*/
+	const wchar_t *src_filename;
+	
+	/**
+	   Line number where this block was created
+	*/
+	int src_lineno;
 	
 	/**
 	   Some naming confusion. This is a pointer to the first element in the list of all event blocks.
@@ -121,6 +132,8 @@ enum block_type
 	SUBST, /**< Command substitution scope */
 	TOP, /**< Outermost block */
 	BEGIN, /**< Unconditional block */
+	SOURCE, /**< Block created by the . (source) builtin */
+	EVENT, /**< Block created on event notifier invocation */
 }
 ;
 
@@ -345,6 +358,11 @@ int parser_is_help( wchar_t *s, int min_match );
    function defined in a different file than the one curently read.
 */
 const wchar_t *parser_current_filename();
+
+/**
+   Write a stack trace starting at the specified block to the specified string_buffer_t
+*/
+void parser_stack_trace( block_t *b, string_buffer_t *buff);
 
 
 #endif

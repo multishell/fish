@@ -342,7 +342,7 @@ const wchar_t *sig2wcs( int sig )
 	return L"Unknown";
 }
 
-const wchar_t *sig_description( int sig )
+const wchar_t *signal_get_desc( int sig )
 {
 	int i;
 	for( i=0; lookup[i].desc ; i++ )
@@ -405,7 +405,7 @@ void signal_reset_handlers()
 	sigemptyset( & act.sa_mask );
 	act.sa_flags=0;
 	act.sa_handler=SIG_DFL;
-
+	
 	for( i=0; lookup[i].desc ; i++ )
 	{
 		sigaction( lookup[i].signal, &act, 0);
@@ -433,7 +433,7 @@ void signal_set_handlers()
 	sigaction( SIGTTIN, &act, 0);
 	sigaction( SIGTTOU, &act, 0);
 	sigaction( SIGCHLD, &act, 0);
-
+	
 	/*
 	  Ignore sigpipe, it is generated if fishd dies, but we can
 	  recover.
@@ -448,7 +448,7 @@ void signal_set_handlers()
 		*/
 
 		act.sa_handler=SIG_IGN;
-
+		
 		sigaction( SIGINT, &act, 0);
 		sigaction( SIGQUIT, &act, 0);
 		sigaction( SIGTSTP, &act, 0);
@@ -535,28 +535,14 @@ void signal_handle( int sig, int do_handle )
 
 void signal_block()
 {
-	int i;
 	sigset_t chldset; 
-	sigemptyset( &chldset );
-	
-	for( i=0; lookup[i].desc ; i++ )
-	{
-		sigaddset( &chldset, lookup[i].signal );
-	}
-	
+	sigfillset( &chldset );
 	sigprocmask(SIG_BLOCK, &chldset, 0);	
 }
 
 void signal_unblock()
 {
-	int i;
 	sigset_t chldset; 
-	sigemptyset( &chldset );
-	
-	for( i=0; lookup[i].desc ; i++ )
-	{
-		sigaddset( &chldset, lookup[i].signal );
-	}
-	
+	sigfillset( &chldset );
 	sigprocmask(SIG_UNBLOCK, &chldset, 0);	
 }
