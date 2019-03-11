@@ -71,7 +71,7 @@ function help --description 'Show help for the fish shell'
         end
     end
 
-    if not set -q fish_browser
+    if not set -q fish_browser[1]
         printf (_ '%s: Could not find a web browser.\n') help
         printf (_ 'Please set the variable $BROWSER or fish_help_browser and try again.\n\n')
         return 1
@@ -131,7 +131,8 @@ function help --description 'Show help for the fish shell'
     # OS X /usr/bin/open swallows fragments (anchors), so use osascript
     # Eval is just a cheesy way of removing the hash escaping
     if test "$fish_browser" = osascript
-        osascript -e 'open location "'(eval echo $page_url)'"'
+        set -l opencmd 'open location "'(eval echo $page_url)'"'
+        osascript -e 'try' -e $opencmd -e 'on error' -e $opencmd -e 'end try'
         return
     end
 
