@@ -56,11 +56,7 @@
 */
 #define GETOPT_STRING "b:hvocu"
 
-#if HAVE_GETTEXT
 #define _(string) gettext(string)
-#else
-#define _(string) (string)
-#endif
 
 char *col[]=
 {
@@ -141,10 +137,8 @@ static void check_locale_init()
 	
 	is_init = 1;
 	setlocale( LC_ALL, "" );
-#if HAVE_GETTEXT
 	bindtextdomain( PACKAGE_NAME, LOCALEDIR );
 	textdomain( PACKAGE_NAME );
-#endif
 }
 
 
@@ -159,7 +153,6 @@ int main( int argc, char **argv )
 			
 	while( 1 )
 	{
-#ifdef HAVE_GETOPT_LONG
 		static struct option
 			long_options[] =
 			{
@@ -200,11 +193,7 @@ int main( int argc, char **argv )
 							   GETOPT_STRING, 
 							   long_options, 
 							   &opt_index );
-#else
-		int opt = getopt( argc,
-						  argv, 
-						  GETOPT_STRING );
-#endif
+
 		if( opt == -1 )
 			break;
 			
@@ -339,7 +328,7 @@ int main( int argc, char **argv )
 
 	if( del_curterm( cur_term ) == ERR )
 	{
-		debug( 0, _(L"Error while closing terminfo") );		
+		fprintf( stderr, _("Error while closing terminfo") );		
 	}
 
 }

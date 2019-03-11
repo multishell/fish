@@ -366,9 +366,12 @@ static void print_variables(int include_values, int esc, int scope)
 		{
 			wchar_t *value = env_get(key);
 			wchar_t *e_value;
-			e_value = esc ? expand_escape_variable(value) : wcsdup(value);
-			sb_append2(sb_out, L" ", e_value, (void *)0);
-			free(e_value);
+			if( value )
+			{
+				e_value = esc ? expand_escape_variable(value) : wcsdup(value);
+				sb_append2(sb_out, L" ", e_value, (void *)0);
+				free(e_value);
+			}
 		}
 		
 		sb_append(sb_out, L"\n");
@@ -454,6 +457,8 @@ static int builtin_set( wchar_t **argv )
 	int scope;
 	int slice=0;
 	int i;
+	
+	wchar_t *bad_char;
 	
 	
 	/* Parse options to obtain the requested operation and the modifiers */
@@ -599,6 +604,13 @@ static int builtin_set( wchar_t **argv )
 		return retcode;
 	}
 	
+	if( list ) 
+	{
+		/* Maybe we should issue an error if there are any other arguments? */
+		print_variables(0, 0, scope);
+		return 0;
+	} 
+	
 	if( woptind == argc )
 	{
 		/*
@@ -623,13 +635,6 @@ static int builtin_set( wchar_t **argv )
 		return retcode;
 	}
 
-	if( list ) 
-	{
-		/* Maybe we should issue an error if there are any other arguments? */
-		print_variables(0, 0, scope);
-		return 0;
-	} 
-
 	if( !(dest = wcsdup(argv[woptind])))
 	{
 		DIE_MEM();		
@@ -648,7 +653,15 @@ static int builtin_set( wchar_t **argv )
 		builtin_print_help( argv[0], sb_err );
 		return 1;
 	}
-
+	
+	if( (bad_char = wcsvarname( dest ) ) )
+	{
+		sb_printf( sb_err, BUILTIN_ERR_VARCHAR, argv[0], *bad_char );
+		builtin_print_help( argv[0], sb_err );
+		free( dest );
+		return 1;
+	}
+	
 	if( slice && erase && (scope != ENV_USER) )
 	{
 		free( dest );
@@ -676,9 +689,9 @@ static int builtin_set( wchar_t **argv )
 		al_init(&values);
 		al_init(&indexes);
 		al_init(&result);
-
+		
 		tokenize_variable_array( env_get(dest), &result );
-	
+		
 		for( ; woptind<argc; woptind++ )
 		{			
 			if( !parse_index( &indexes, argv[woptind], dest, al_get_count( &result ) ) )

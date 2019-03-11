@@ -2743,11 +2743,11 @@ static int builtin_return( wchar_t **argv )
 	b = current_block;
 	while( ( b->type != FUNCTION_CALL))
 	{
+		b->type = FAKE;
 		b->skip=1;
 		b = b->outer;
 	}
 	b->skip=1;
-//	proc_set_last_status( status );
 
 	return status;
 }
@@ -2778,7 +2778,7 @@ static int builtin_switch( wchar_t **argv )
 		current_block->skip=1;
 		current_block->param2.switch_taken=0;
 	}
-
+	
 	return res;
 }
 
@@ -2790,7 +2790,7 @@ static int builtin_case( wchar_t **argv )
 	int argc = builtin_count_args( argv );
 	int i;
 	wchar_t *unescaped=0;
-
+	
 	if( current_block->type != SWITCH )
 	{
 		sb_printf( sb_err,
@@ -2799,30 +2799,30 @@ static int builtin_case( wchar_t **argv )
 		builtin_print_help( argv[0], sb_err );
 		return 1;
 	}
-
+	
 	current_block->skip = 1;
-
+	
 	if( current_block->param2.switch_taken )
 	{
 		return 0;
 	}
-
+	
 	for( i=1; i<argc; i++ )
 	{
-		free( unescaped );
-
+		int match;
+		
 		unescaped = parse_util_unescape_wildcards( argv[i] );
+		match = wildcard_match( current_block->param1.switch_value, unescaped );
+		free( unescaped );
 		
-		
-		if( wildcard_match( current_block->param1.switch_value, unescaped ) )
+		if( match )
 		{
 			current_block->skip = 0;
 			current_block->param2.switch_taken = 1;
 			break;
 		}
 	}
-	free( unescaped );
-
+	
 	return 0;
 }
 

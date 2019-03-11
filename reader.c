@@ -939,13 +939,14 @@ void reader_exit( int do_exit, int forced )
 	
 }
 
-void repaint()
+void repaint( int skip_return )
 {
 	int steps;
 
 	calc_output();
 	set_color( FISH_COLOR_RESET, FISH_COLOR_RESET );
-	writech('\r');
+	if( !skip_return )
+		writech('\r');
 	writembs(clr_eol);
 	write_prompt();
 	write_cmdline();
@@ -975,7 +976,7 @@ static void check_colors()
 	{
 		memcpy( data->color, data->new_color,  sizeof(int)*data->buff_len );
 
-		repaint();
+		repaint( 0 );
 	}
 }
 
@@ -1047,7 +1048,7 @@ static void reader_check_status()
 
 	if( changed )
 	{
-		repaint();
+		repaint( 0 );
 		set_color( FISH_COLOR_RESET, FISH_COLOR_RESET );
 	}
 }
@@ -1108,7 +1109,7 @@ static void remove_backward()
 				data->new_color,
 				sizeof(int) * data->buff_len );
 
-		repaint();
+		repaint( 0 );
 	}
 }
 
@@ -1198,7 +1199,7 @@ static int insert_char( int c )
 		/* Nope, colors are off, so we repaint the entire command line */
 		memcpy( data->color, data->new_color, sizeof(int) * data->buff_len );
 
-		repaint();
+		repaint( 0 );
 	}
 //	wcscpy(data->search_buff,data->buff);
 	return 1;
@@ -1245,7 +1246,7 @@ static int insert_str(wchar_t *str)
 
 		/* repaint */
 
-		repaint();
+		repaint( 0 );
 
 	}
 	return 1;
@@ -1654,7 +1655,7 @@ static int handle_completions( array_list_t *comp )
 			}
 
 			free( prefix );
-			repaint();
+			repaint( 0 );
 
 		}
 
@@ -1800,7 +1801,7 @@ static void handle_history( const wchar_t *new_str )
 	data->buff_pos=wcslen(data->buff);
 	reader_super_highlight_me_plenty( data->buff, data->color, data->buff_pos, 0 );
 
-	repaint();
+	repaint( 0 );
 }
 
 /**
@@ -1885,7 +1886,7 @@ static void handle_token_history( int forward, int reset )
 
 		reader_replace_current_token( str );
 		reader_super_highlight_me_plenty( data->buff, data->color, data->buff_pos, 0 );
-		repaint();
+		repaint( 0 );
 	}
 	else
 	{
@@ -1958,7 +1959,7 @@ static void handle_token_history( int forward, int reset )
 		{
 			reader_replace_current_token( str );
 			reader_super_highlight_me_plenty( data->buff, data->color, data->buff_pos, 0 );
-			repaint();
+			repaint( 0 );
 			al_push( &data->search_prev, str );
 			data->search_pos = al_get_count( &data->search_prev )-1;
 		}
@@ -1983,11 +1984,25 @@ static void handle_token_history( int forward, int reset )
 static void move_word( int dir, int erase )
 {
 	int end_buff_pos=data->buff_pos;
-	int mode=0;
 	int step = dir?1:-1;
 
-	while( mode < 2 )
+	/*
+	  If we are beyond the last character and moving left, start by
+	  moving one step, since otehrwise we'll start on the \0, which
+	  should be ignored.
+	*/
+	if( !dir && (end_buff_pos == data->buff_len) )
 	{
+		if( !end_buff_pos )
+			return;
+		
+		end_buff_pos--;
+	}
+	
+	while( 1 )
+	{
+		wchar_t c;
+
 		if( !dir )
 		{
 			if( end_buff_pos == 0 )
@@ -1998,41 +2013,46 @@ static void move_word( int dir, int erase )
 			if( end_buff_pos == data->buff_len )
 				break;
 		}
-		end_buff_pos+=step;
 
-		if( end_buff_pos < data->buff_len )
+		c = data->buff[end_buff_pos];
+
+		if( !iswspace( c ) )
 		{
-			switch( mode )
-			{
-				case 0:
-					if( iswalnum(data->buff[end_buff_pos] ) )
-						mode++;
-					break;
-
-				case 1:
-					if( !iswalnum(data->buff[end_buff_pos] ) )
-					{
-						if( !dir )
-							end_buff_pos -= step;
-						mode++;
-					}
-					break;
-/*
-  case 2:
-  if( !iswspace(data->buff[end_buff_pos] ) )
-  {
-  mode++;
-  if( !dir )
-  end_buff_pos-=step;
-  }
-  break;
-*/
-			}
+			break;
+		}
+		
+		end_buff_pos+=step;
+	}
+	
+	while( 1 )
+	{
+		wchar_t c;
+		
+		if( !dir )
+		{
+			if( end_buff_pos == 0 )
+				break;
+		}
+		else
+		{
+			if( end_buff_pos == data->buff_len )
+				break;
 		}
 
-		if( mode==2)
-			break;
+		c = data->buff[end_buff_pos];
 
+		if( !iswalnum( c ) )
+		{
+			/*
+			  Don't gobble the boundary character if it was a
+			  whitespace, but do for all other non-alphabetic
+			  characters
+			*/
+			if( iswspace( c ) )
+				end_buff_pos -= step;
+			break;
+		}
+		end_buff_pos+=step;
 	}
 
 	if( erase )
@@ -2051,7 +2071,7 @@ static void move_word( int dir, int erase )
 
 		reader_super_highlight_me_plenty( data->buff, data->color, data->buff_pos, 0 );
 
-		repaint();
+		repaint( 0 );
 	}
 	else
 	{
@@ -2076,7 +2096,7 @@ static void move_word( int dir, int erase )
 			}
 		}
 
-		repaint();
+		repaint( 0 );
 //		check_colors();
 	}
 }
@@ -2430,7 +2450,7 @@ wchar_t *reader_readline()
 	data->exec_prompt=1;
 
 	reader_super_highlight_me_plenty( data->buff, data->color, data->buff_pos, 0 );
-	repaint();
+	repaint( 1 );
 
 	tcgetattr(0,&old_modes);        /* get the current terminal modes */
 	if( tcsetattr(0,TCSANOW,&shell_modes))      /* set the new modes */
@@ -2515,7 +2535,7 @@ wchar_t *reader_readline()
 			{
 				data->buff_pos = 0;
 
-				repaint();
+				repaint( 0 );
 				break;
 			}
 
@@ -2524,14 +2544,14 @@ wchar_t *reader_readline()
 			{
 				data->buff_pos = data->buff_len;
 
-				repaint();
+				repaint( 0 );
 				break;
 			}
 
 			case R_NULL:
 			{
 				data->exec_prompt=1;
-				repaint();
+				repaint( 0 );
 				break;
 			}
 
@@ -2600,7 +2620,7 @@ wchar_t *reader_readline()
 				data->buff[data->buff_len]=L'\0';
 
 
-				repaint();
+				repaint( 0 );
 				break;
 			}
 
@@ -2619,7 +2639,7 @@ wchar_t *reader_readline()
 				data->buff_pos=0;
 				reader_super_highlight_me_plenty( data->buff, data->color, data->buff_pos, 0 );
 
-				repaint();
+				repaint( 0 );
 				break;
 			}
 
@@ -2630,7 +2650,7 @@ wchar_t *reader_readline()
 				data->buff[data->buff_len]=L'\0';
 				reader_super_highlight_me_plenty( data->buff, data->color, data->buff_pos, 0 );
 
-				repaint();
+				repaint( 0 );
 				break;
 			}
 
@@ -2728,7 +2748,7 @@ wchar_t *reader_readline()
 					writech('\r');
 					writembs(clr_eol);
 					writech('\n');
-					repaint();
+					repaint( 0 );
 				}
 
 				break;
@@ -2812,7 +2832,7 @@ wchar_t *reader_readline()
 					}
 					else
 					{
-						repaint();
+						repaint( 0 );
 					}
 				}
 				break;
@@ -2833,7 +2853,7 @@ wchar_t *reader_readline()
 					{
 						data->buff_pos++;
 
-						repaint();
+						repaint( 0 );
 					}
 				}
 				break;
@@ -2844,7 +2864,7 @@ wchar_t *reader_readline()
 				data->buff[0]=0;
 				data->buff_len=0;
 				data->buff_pos=0;
-				repaint();
+				repaint( 0 );
 				break;
 			}
 
@@ -2880,7 +2900,7 @@ wchar_t *reader_readline()
 			{
 				if( clear_screen )
 					writembs( clear_screen );
-				repaint();
+				repaint( 0 );
 				break;
 			}
 

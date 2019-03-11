@@ -9,6 +9,8 @@
 #include <wchar.h>
 #include <limits.h>
 #include <sys/time.h>
+#include <sys/types.h>
+#include <signal.h>
 
 #ifndef WCHAR_MAX
 /**
@@ -45,6 +47,10 @@ typedef char tputs_arg_t;
 
 #ifndef SIGIO
 #define SIGIO SIGUSR1
+#endif
+
+#ifndef SIGWINCH
+#define SIGIO SIGUSR2
 #endif
 
 #ifndef HAVE_WINSIZE
@@ -304,7 +310,7 @@ size_t wcslcpy( wchar_t *dst, const wchar_t *src, size_t siz );
 /**
    BSD del_curterm seems to do a double-free. We redefine it as a no-op
 */
-#define del_curterm(oterm) 1
+#define del_curterm(oterm) OK
 #endif
 
 #ifndef HAVE_LRAND48_R
@@ -383,6 +389,38 @@ extern int _nl_msg_cat_cntr;
 
 #ifndef HAVE_KILLPG
 int killpg( int pgr, int sig );
+#endif
+
+
+#ifndef HAVE_WORKING_GETOPT_LONG
+
+struct option 
+{
+	const char *name;
+	int has_arg;
+	int *flag;
+	int val;	
+}
+	;
+
+#ifndef no_argument
+#define	no_argument 0
+#endif
+
+#ifndef required_argument
+#define	required_argument 1
+#endif
+
+#ifndef optional_argument
+#define	optional_argument 2
+#endif
+
+int getopt_long(int argc, 
+				char * const argv[],
+				const char *optstring,
+				const struct option *longopts, 
+				int *longindex);
+
 #endif
 
 #endif

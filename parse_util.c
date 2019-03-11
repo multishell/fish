@@ -580,34 +580,46 @@ int parse_util_unload( const wchar_t *cmd,
 	return !!val;
 }
 
+static int path_util_load_internal( const wchar_t *cmd,
+									void (*on_load)(const wchar_t *cmd),
+									int reload,
+									autoload_t *loaded,
+									array_list_t *path_list );
+
+
 int parse_util_load( const wchar_t *cmd,
 					 const wchar_t *path_var_name,
 					 void (*on_load)(const wchar_t *cmd),
 					 int reload )
 {
-	static array_list_t *path_list=0;
-	static string_buffer_t *path=0;
+	array_list_t *path_list=0;
 
-	int i;
-	time_t *tm;
-	int reloaded = 0;
 	autoload_t *loaded;
 
 	wchar_t *path_var;
 
+	int res;
+	int c, c2;
+	
 	CHECK( path_var_name, 0 );
 	CHECK( cmd, 0 );
 	
+//	debug( 0, L"Autoload %ls in %ls", cmd, path_var_name );
+
 	path_var = env_get( path_var_name );	
 	
 	/*
-	  Do we know where to look
+	  Do we know where to look?
 	*/
 	if( !path_var )
 	{
+//		debug( 0, L"Path null" );
 		return 0;
 	}
-	
+
+	/**
+	   Init if this is the first time we try to autoload anything
+	*/
 	if( !all_loaded )
 	{
 		all_loaded = malloc( sizeof( hash_table_t ) );		
@@ -623,9 +635,14 @@ int parse_util_load( const wchar_t *cmd,
 
 	if( loaded )
 	{
+		/**
+		   Warn and fail on infinite recursion
+		*/
 		if( hash_get( &loaded->is_loading, cmd ) )
 		{
-			debug( 0, _(L"Could not autoload item %ls, it is already being autoloaded. This is a circular dependency in the autoloading scripts, please remove it."), cmd );
+			debug( 0, 
+				   _(L"Could not autoload item '%ls', it is already being autoloaded. This is a circular dependency in the autoloading scripts, please remove it."), 
+				   cmd );
 			return 1;
 		}
 		
@@ -637,35 +654,86 @@ int parse_util_load( const wchar_t *cmd,
 		{
 			parse_util_load_reset( path_var_name, on_load);
 			reload = parse_util_load( cmd, path_var_name, on_load, reload );
+//			debug( 0, L"Reload" );
 			return reload;
 		}
 	}
 	else
 	{
 		/*
-		  We have never tried to autoload using this name before, set up initial data
+		  We have never tried to autoload using this path name before,
+		  set up initial data
 		*/
- 		loaded = malloc( sizeof( autoload_t ) );
+		loaded = malloc( sizeof( autoload_t ) );
 		if( !loaded )
 		{
 			DIE_MEM();
 		}
 		hash_init( &loaded->load_time, &hash_wcs_func, &hash_wcs_cmp );
 		hash_put( all_loaded, wcsdup(path_var_name), loaded );
-
+		
 		hash_init( &loaded->is_loading, &hash_wcs_func, &hash_wcs_cmp );
 
 		loaded->old_path = wcsdup( path_var );
 	}
 
-	hash_put( &loaded->is_loading, cmd, cmd );
+
+	path_list = al_new( global_context);
 	
+	tokenize_variable_array( path_var, path_list );
+	
+	c = al_get_count( path_list );
+	
+	hash_put( &loaded->is_loading, cmd, cmd );
+
+	/*
+	  Do the actual work in the internal helper function
+	*/
+
+	res = path_util_load_internal( cmd, on_load, reload, loaded, path_list );
+
+	/**
+	   Cleanup
+	*/
+	hash_remove( &loaded->is_loading, cmd, 0, 0 );
+
+	c2 = al_get_count( path_list );
+
+	al_foreach( path_list, &free );
+	al_destroy( path_list );
+	free( path_list );
+
+	/**
+	   Make sure we didn't 'drop' something
+	*/
+	
+	assert( c == c2 );
+	
+	return res;
+}
+
+/**
+   This internal helper function does all the real work. By using two
+   functions, the internal function can return on various places in
+   the code, and the caller can take care of various cleanup work.
+*/
+
+static int path_util_load_internal( const wchar_t *cmd,
+									void (*on_load)(const wchar_t *cmd),
+									int reload,
+									autoload_t *loaded,
+									array_list_t *path_list )
+{
+	static string_buffer_t *path=0;
+	time_t *tm;
+	int i;
+	int reloaded = 0;
 
 	/*
 	  Get modification time of file
 	*/
 	tm = (time_t *)hash_get( &loaded->load_time, cmd );
-
+	
 	/*
 	  Did we just check this?
 	*/
@@ -673,7 +741,7 @@ int parse_util_load( const wchar_t *cmd,
 	{
 		if(time(0)-tm[1]<=1)
 		{
-			hash_remove( &loaded->is_loading, cmd, 0, 0 );
+//			debug( 0, L"Cached" );
 			return 0;
 		}
 	}
@@ -683,19 +751,15 @@ int parse_util_load( const wchar_t *cmd,
 	*/
 	if( !reload && tm )
 	{
-		hash_remove( &loaded->is_loading, cmd, 0, 0 );
+//		debug( 0, L"Weak check" );
+
 		return 0;
 	}
-	
-	if( !path_list )
-		path_list = al_halloc( global_context);
 	
 	if( !path )
 		path = sb_halloc( global_context );
 	else
 		sb_clear( path );
-	
-	tokenize_variable_array( path_var, path_list );
 	
 	/*
 	  Iterate over path searching for suitable completion files
@@ -706,6 +770,7 @@ int parse_util_load( const wchar_t *cmd,
 		wchar_t *next = (wchar_t *)al_get( path_list, i );
 		sb_clear( path );
 		sb_append2( path, next, L"/", cmd, L".fish", (void *)0 );
+
 		if( (wstat( (wchar_t *)path->buff, &buf )== 0) &&
 			(waccess( (wchar_t *)path->buff, R_OK ) == 0) )
 		{
@@ -713,6 +778,7 @@ int parse_util_load( const wchar_t *cmd,
 			{
 				wchar_t *esc = escape( (wchar_t *)path->buff, 1 );
 				wchar_t *src_cmd = wcsdupcat( L". ", esc );
+				free( esc );
 				
 				if( !tm )
 				{
@@ -727,7 +793,6 @@ int parse_util_load( const wchar_t *cmd,
 						  intern( cmd ),
 						  tm );
 
-				free( esc );
 
 				if( on_load )
 					on_load(cmd );
@@ -738,8 +803,8 @@ int parse_util_load( const wchar_t *cmd,
 				exec_subshell( src_cmd, 0 );
 				free(src_cmd);
 				reloaded = 1;
-				break;
 			}
+			break;
 		}
 	}
 
@@ -759,10 +824,8 @@ int parse_util_load( const wchar_t *cmd,
 		hash_put( &loaded->load_time, intern( cmd ), tm );
 	}
 
-	al_foreach( path_list, &free );
-	al_truncate( path_list, 0 );
-	
-	hash_remove( &loaded->is_loading, cmd, 0, 0 );
+//	debug( 0, L"Regular return" );
+
 	return reloaded;	
 }
 

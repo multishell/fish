@@ -1072,7 +1072,22 @@ int _nl_msg_cat_cntr=0;
 #ifndef HAVE_KILLPG
 int killpg( int pgr, int sig )
 {
-	assert( pgr > 0 );
+	assert( pgr > 1 );
 	return kill( -pgr, sig );
 }
 #endif
+
+#ifndef HAVE_WORKING_GETOPT_LONG
+
+int getopt_long( int argc, 
+				 char * const argv[],
+				 const char *optstring,
+				 const struct option *longopts, 
+				 int *longindex )
+{
+	return getopt( argc, argv, optstring );
+}
+
+
+#endif
+
