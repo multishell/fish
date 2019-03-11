@@ -41,6 +41,10 @@ if status --is-login
 	if not set -q LANG >/dev/null
 		set -gx LANG en_US.UTF-8
 	end
+
+	if test -f /etc/sysconfig/i18n
+		eval (cat /etc/sysconfig/i18n |sed -ne 's/^\([a-zA-Z]*\)=\(.*\)$/set -gx \1 \2;/p')
+	end
 end
 
 
@@ -49,7 +53,7 @@ end
 # situation as well?
 #
 
-if expr match "$LANG" ".*UTF" >/dev/null
+if expr "$LANG" : ".*UTF" >/dev/null
 	if test linux = "$TERM"
 		unicode_start ^/dev/null
 	end
@@ -65,6 +69,10 @@ for i in DISPLAY
 	if set -q $i
 		set -- $i (printf ":%s" $$i|cut -c 2-)
 	end
+end
+
+function _ -d "Alias for the gettext command"
+	gettext fish $argv
 end
 
 #

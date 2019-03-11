@@ -48,6 +48,7 @@ Some of the code in this file is based on code from the Glibc manual.
 #include "parser.h"
 #include "signal.h"
 #include "event.h"
+#include "translate.h"
 
 /**
    Size of message buffer 
@@ -59,10 +60,14 @@ Some of the code in this file is based on code from the Glibc manual.
 */
 #define BUFFER_SIZE 4096
 
-/** Status of last process to exit */
+/** 
+	Status of last process to exit 
+*/
 static int last_status=0;
 
-/** Signal flag */
+/**
+   Signal flag 
+*/
 static sig_atomic_t got_signal=0;
 
 job_t *first_job=0;
@@ -84,6 +89,7 @@ static event_t event;
   Stringbuffer used to create arguments when firing events
 */
 static string_buffer_t event_pid;
+
 /**
   Stringbuffer used to create arguments when firing events
 */
@@ -126,8 +132,9 @@ static void free_process( process_t *p )
 	free( p );
 }
 
-/** Remove job from list of jobs */
-
+/**
+   Remove job from list of jobs 
+*/
 static int job_remove( job_t *j )
 {
 	job_t *prev=0, *curr=first_job;
@@ -139,7 +146,7 @@ static int job_remove( job_t *j )
 
 	if( j != curr )
 	{
-		debug( 1, L"Job inconsistency" );
+		debug( 1, _( L"Job inconsistency" ) );
 		sanity_lose();
 		return 0;
 	}
@@ -257,6 +264,8 @@ job_t *job_get_from_pid( int pid )
 
 /* 
    Return true if all processes in the job have stopped or completed.  
+
+   \param j the job to test
 */
 int job_is_stopped( const job_t *j )
 {
@@ -275,6 +284,8 @@ int job_is_stopped( const job_t *j )
 
 /* 
    Return true if all processes in the job have completed.  
+
+   \param j the job to test
 */
 int job_is_completed( const job_t *j )
 {
@@ -293,6 +304,8 @@ int job_is_completed( const job_t *j )
 
 /**
    Return true if all processes in the job have completed.  
+
+   \param j the job to test
 */
 static int job_last_is_completed( const job_t *j )
 {
@@ -338,7 +351,11 @@ static void mark_process_status( job_t *j,
 
 /**
    Handle status update for child \c pid. This function is called by
-   the signal handler, so it mustn't use malloc or any such nonsense.
+   the signal handler, so it mustn't use malloc or any such hitech
+   nonsense.
+
+   \param pid the pid of the process whose status changes
+   \param status the status as returned by wait
 */
 static void handle_child_status( pid_t pid, int status )
 {
@@ -474,10 +491,14 @@ void job_handle_signal ( int signal, siginfo_t *info, void *con )
 
 /** 
 	Format information about job status for the user to look at.  
+
+	\param j the job to test
+	\param status a string description of the job exit type
 */
 static void format_job_info( const job_t *j, const wchar_t *status )
 {
-	fwprintf (stdout, L"\rJob %d, \'%ls\' has %ls", j->job_id, j->command, status);
+	fwprintf (stdout, L"\r" );
+	fwprintf (stdout, _( L"Job %d, \'%ls\' has %ls" ), j->job_id, j->command, status);
 	fflush( stdout );
 	tputs(clr_eol,1,&writeb);
 	fwprintf (stdout, L"\n" );
@@ -520,7 +541,7 @@ int job_reap( int interactive )
 		process_t *p;
 		jnext = j->next;
 		
-		if( (!j->skip_notification) && (!interactive) )
+		if( (!j->skip_notification) && (!interactive) && (!j->fg))
 		{
 			continue;
 		}
@@ -553,14 +574,16 @@ int job_reap( int interactive )
 					{
 						if( proc_is_job )
 							fwprintf( stdout,
-									  L"fish: Job %d, \'%ls\' terminated by signal %ls (%ls)",
+									  _( L"%ls: Job %d, \'%ls\' terminated by signal %ls (%ls)" ),
+									  program_name,
 									  j->job_id, 
 									  j->command,
 									  sig2wcs(WTERMSIG(p->status)),
 									  sig_description( WTERMSIG(p->status) ) );
 						else
 							fwprintf( stdout,
-									  L"fish: Process %d, \'%ls\' from job %d, \'%ls\' terminated by signal %ls (%ls)",
+									  _( L"%ls: Process %d, \'%ls\' from job %d, \'%ls\' terminated by signal %ls (%ls)" ),
+									  program_name,
 									  p->pid,
 									  p->argv[0],
 									  j->job_id,
@@ -590,7 +613,7 @@ int job_reap( int interactive )
 			{
 				if( !j->skip_notification )
 				{
-					format_job_info( j, L"ended" );
+					format_job_info( j, _( L"ended" ) );
 					found=1;
 				}
 			}
@@ -606,7 +629,7 @@ int job_reap( int interactive )
 			*/
 			if( !j->skip_notification )
 			{
-				format_job_info( j, L"stopped" );
+				format_job_info( j, _( L"stopped" ) );
 				found=1;
 			}			
 			j->notified = 1;
@@ -729,6 +752,8 @@ void proc_update_jiffies()
    Check if there are buffers associated with the job, and select on
    them for a while if available. 
    
+   \param j the job to test
+
    \return 1 if buffers were avaialble, zero otherwise
 */
 static int select_try( job_t *j )
@@ -768,6 +793,8 @@ static int select_try( job_t *j )
 
 /**
    Read from descriptors until they are empty. 
+
+   \param j the job to test
 */
 static void read_try( job_t *j )
 {
@@ -805,7 +832,7 @@ static void read_try( job_t *j )
 				if( errno != EAGAIN )
 				{
 					debug( 1, 
-						   L"An error occured while reading output from code block" );
+						   _( L"An error occured while reading output from code block" ) );
 					wperror( L"read_try" );			
 				}				
 				break;
@@ -818,6 +845,23 @@ static void read_try( job_t *j )
 		}
 	}
 }
+
+/**
+   Test if a specified job contains external commands
+
+   \param j the job to test
+*/
+static int job_is_external( job_t *j )
+{
+	process_t *p;
+	for( p=j->first_process; p; p=p->next )
+	{
+		if( p->type == EXTERNAL )
+			return 1;
+	}
+	return 0;
+}
+
 
 void job_continue (job_t *j, int cont)
 {
@@ -838,7 +882,7 @@ void job_continue (job_t *j, int cont)
 
 	if( !job_is_completed( j ) )
 	{
-		if( !is_subshell && is_interactive && !is_block)
+		if( is_interactive  && job_is_external( j ) )
 		{
 							
 			/* Put the job into the foreground.  */
@@ -848,7 +892,7 @@ void job_continue (job_t *j, int cont)
 				if( tcsetpgrp (0, j->pgid) )
 				{
 					debug( 1, 
-						   L"Could not send job %d ('%ls') to foreground", 
+						   _( L"Could not send job %d ('%ls') to foreground" ), 
 						   j->job_id, 
 						   j->command );
 					wperror( L"tcsetpgrp" );
@@ -860,7 +904,7 @@ void job_continue (job_t *j, int cont)
 					if( tcsetattr (0, TCSADRAIN, &j->tmodes))
 					{
 						debug( 1,
-							   L"Could not send job %d ('%ls') to foreground",
+							   _( L"Could not send job %d ('%ls') to foreground" ),
 							   j->job_id,
 							   j->command );
 						wperror( L"tcsetattr" );
@@ -938,8 +982,7 @@ void job_continue (job_t *j, int cont)
 					}
 				}					
 			}
-		}
-	
+		}	
 	}
 			
 	if( j->fg )
@@ -967,12 +1010,12 @@ void job_continue (job_t *j, int cont)
 		/* 
 		   Put the shell back in the foreground.  
 		*/
-		if( !is_subshell && is_interactive && !is_block)
+		if( is_interactive  && job_is_external( j ) )
 		{
 			signal_block();
 			if( tcsetpgrp (0, getpid()) )
 			{
-				debug( 1, L"Could not return shell to foreground" );
+				debug( 1, _( L"Could not return shell to foreground" ) );
 				wperror( L"tcsetpgrp" );
 				return;
 			}
@@ -982,7 +1025,7 @@ void job_continue (job_t *j, int cont)
 			*/
 			if( tcgetattr (0, &j->tmodes) )
 			{
-				debug( 1, L"Could not return shell to foreground" );
+				debug( 1, _( L"Could not return shell to foreground" ) );
 				wperror( L"tcgetattr" );
 				return;
 			}
@@ -992,7 +1035,7 @@ void job_continue (job_t *j, int cont)
 			*/
 			if( tcsetattr (0, TCSADRAIN, &shell_modes))
 			{
-				debug( 1, L"Could not return shell to foreground" );
+				debug( 1, _( L"Could not return shell to foreground" ) );
 				wperror( L"tcsetattr" );
 				return;
 			}
@@ -1015,17 +1058,15 @@ void proc_sanity_check()
 		
 		
 		validate_pointer( j->command, 
-						  L"Job command", 
+						  _( L"Job command" ), 
 						  0 );
 		validate_pointer( j->first_process,
-						  L"Process list pointer",
+						  _( L"Process list pointer" ),
 						  0 );
 		validate_pointer( j->next, 
-						  L"Job list pointer",
+						  _( L"Job list pointer" ),
 						  1 );
-		validate_pointer( j->command, 
-						  L"Job command",
-						  0 );
+
 		/*
 		  More than one foreground job?
 		*/
@@ -1034,8 +1075,7 @@ void proc_sanity_check()
 			if( fg_job != 0 )
 			{
 				debug( 0, 
-					   L"More than one job in foreground:\n"
-					   L"job 1: %ls\njob 2: %ls",
+					   _( L"More than one job in foreground: job 1: '%ls' job 2: '%ls'"),
 					   fg_job->command,
 					   j->command );
 				sanity_lose();
@@ -1046,16 +1086,15 @@ void proc_sanity_check()
    		p = j->first_process;
 		while( p )
 		{			
-			validate_pointer( p->argv, L"Process argument list", 0 );
-			validate_pointer( p->argv[0], L"Process name", 0 );
-			validate_pointer( p->next, L"Process list pointer", 1 );
-			validate_pointer( p->actual_cmd, L"Process command", 1 );
+			validate_pointer( p->argv, _( L"Process argument list" ), 0 );
+			validate_pointer( p->argv[0], _( L"Process name" ), 0 );
+			validate_pointer( p->next, _( L"Process list pointer" ), 1 );
+			validate_pointer( p->actual_cmd, _( L"Process command" ), 1 );
 			
 			if ( (p->stopped & (~0x00000001)) != 0 )
 			{
 				debug( 0,
-					   L"Job %ls, process %ls "
-					   L"has inconsistent state \'stopped\'=%d",
+					   _( L"Job '%ls', process '%ls' has inconsistent state \'stopped\'=%d" ),
 					   j->command, 
 					   p->argv[0],
 					   p->stopped );
@@ -1065,8 +1104,7 @@ void proc_sanity_check()
 			if ( (p->completed & (~0x00000001)) != 0 )
 			{
 				debug( 0,
-					   L"Job %ls, process %ls "
-					   L"has inconsistent state \'completed\'=%d",
+					   _( L"Job '%ls', process '%ls' has inconsistent state \'completed\'=%d" ),
 					   j->command, 
 					   p->argv[0],
 					   p->completed );

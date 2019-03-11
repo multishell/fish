@@ -104,8 +104,17 @@ static struct winsize termsize;
 */
 static int block_count=0;
 
+static string_buffer_t *setlocale_buff=0;
+
+
 void common_destroy()
 {
+	if( setlocale_buff )
+	{
+		sb_destroy( setlocale_buff );
+		free( setlocale_buff );
+	}
+	
 	debug( 3, L"Calls: wcsdupcat %d, wcsdupcat2 %d, wcsndup %d, str2wcs %d, wcs2str %d", c1, c2, c3, c4, c5 );
 }
 
@@ -253,7 +262,6 @@ wchar_t *str2wcs( const char *in )
 	if( !res )
 	{
 		die_mem();
-		
 	}
 	
 	if( (size_t)-1 == mbstowcs( res, in, sizeof(wchar_t)*(strlen(in)) +1) )
@@ -720,26 +728,33 @@ wchar_t *quote_end( const wchar_t *in )
 }
 
 
-void fish_setlocale(int category, const wchar_t *locale)
+const wchar_t *wsetlocale(int category, const wchar_t *locale)
 {
-	char *lang = wcs2str( locale );
-	setlocale(category,lang);
+
+	char *lang = locale?wcs2str( locale ):0;
+	char * res = setlocale(category,lang);
+	
 	free( lang );
+
 	/*
 	  Use ellipsis if on known unicode system, otherwise use $
 	*/
-	if( wcslen( locale ) )
+	char *ctype = setlocale( LC_CTYPE, (void *)0 );
+	ellipsis_char = (strstr( ctype, ".UTF")||strstr( ctype, ".utf") )?L'\u2026':L'$';	
+		
+	if( !res )
+		return 0;
+	
+	if( !setlocale_buff )
 	{
-		ellipsis_char = wcsstr( locale, L".UTF")?L'\u2026':L'$';	
+		setlocale_buff = malloc( sizeof(string_buffer_t) );
+		sb_init( setlocale_buff);
 	}
-	else
-	{
-		char *lang = getenv( "LANG" );
-		if( lang )
-			ellipsis_char = strstr( lang, ".UTF")?L'\u2026':L'$';	
-		else
-			ellipsis_char = L'$';
-	}
+	
+	sb_clear( setlocale_buff );
+	sb_printf( setlocale_buff, L"%s", res );
+	
+	return (wchar_t *)setlocale_buff->buff;	
 }
 
 int contains_str( const wchar_t *a, ... )
@@ -784,18 +799,19 @@ int writeb( tputs_arg_t b )
 
 void die_mem()
 {
-	debug( 0, L"Out of memory, shutting down fish." );
+	/*
+	  Do not translate this message, and do not send it through the
+	  usual channels. This increases the odds that the message gets
+	  through correctly, even if we are out of memory.
+	*/
+	fwprintf( stderr, L"Out of memory, shutting down fish.\n" );
 	exit(1);
 }
 
-void debug( int level, wchar_t *msg, ... )
+void debug( int level, const wchar_t *msg, ... )
 {
 	va_list va;
 	string_buffer_t sb;
-	wchar_t *start, *pos;
-	int line_width = 0;
-	int tok_width = 0;
-	int screen_width = common_get_width();
 	
 	if( level > debug_level )
 		return;
@@ -806,10 +822,22 @@ void debug( int level, wchar_t *msg, ... )
 	sb_printf( &sb, L"%ls: ", program_name );
 	sb_vprintf( &sb, msg, va );
 	va_end( va );	
+
+	write_screen( (wchar_t *)sb.buff );
+
+	sb_destroy( &sb );	
+}
+
+void write_screen( const wchar_t *msg )
+{
+	const wchar_t *start, *pos;
+	int line_width = 0;
+	int tok_width = 0;
+	int screen_width = common_get_width();
 	
 	if( screen_width )
 	{
-		start = pos = (wchar_t *)sb.buff;
+		start = pos = msg;
 		while( 1 )
 		{
 			int overflow = 0;
@@ -881,11 +909,9 @@ void debug( int level, wchar_t *msg, ... )
 	}
 	else
 	{
-		fwprintf( stderr, L"%ls", sb.buff );
-		
+		fwprintf( stderr, L"%ls", msg );
 	}
 	putwc( L'\n', stderr );
-	sb_destroy( &sb );
 }
 
 wchar_t *escape( const wchar_t *in, 

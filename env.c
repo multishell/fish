@@ -41,6 +41,8 @@
 #include "env_universal.h"
 #include "input_common.h"
 #include "event.h"
+#include "translate.h"
+#include "complete.h"
 
 /**
    Command used to start fishd
@@ -190,7 +192,7 @@ static void start_fishd()
 	
 	if( !pw )
 	{
-		debug( 0, L"Could not get user information" );
+		debug( 0, _( L"Could not get user information" ) );
 		return;
 	}
 	
@@ -214,6 +216,87 @@ static mode_t get_umask()
 }
 
 /**
+   List of all locale variable names
+*/
+static const wchar_t *locale_variable[] =
+{
+	L"LANG", L"LC_ALL", L"LC_COLLATE", L"LC_CTYPE", L"LC_MESSAGES", L"LC_MONETARY", L"LC_NUMERIC", L"LC_TIME", (void *)0
+}
+	;
+
+/**
+   Checks if the specified variable is a locale variable
+*/
+static int is_locale( const wchar_t *key )
+{
+	int i;
+	for( i=0; locale_variable[i]; i++ )
+		if( wcscmp(locale_variable[i], key ) == 0 )
+			return 1;
+	return 0;
+}
+
+/**
+  Properly sets all locale information
+*/
+static void handle_locale()
+{
+	const wchar_t *lc_all = env_get( L"LC_ALL" );
+	const wchar_t *lang;
+	int i;
+	wchar_t *old = wcsdup(wsetlocale( LC_MESSAGES, (void *)0 ));
+
+	/*
+	  Array of locale constants corresponding to the local variable names defined in locale_variable
+	*/
+	static const int cat[] = 
+		{
+			0, LC_ALL, LC_COLLATE, LC_CTYPE, LC_MESSAGES, LC_MONETARY, LC_NUMERIC, LC_TIME
+		}
+	;
+	
+	if( lc_all )
+	{
+		wsetlocale( LC_ALL, lc_all );
+	}
+	else
+	{
+		lang = env_get( L"LANG" );
+		if( lang )
+		{
+			wsetlocale( LC_ALL, lang );
+		}
+		
+		for( i=2; locale_variable[i]; i++ )
+		{
+			const wchar_t *val = env_get( locale_variable[i] );
+			if( val )
+				wsetlocale(  cat[i], val );
+		}
+	}
+	
+	if( wcscmp( wsetlocale( LC_MESSAGES, (void *)0 ), old ) != 0 )
+	{
+		/* Make change known to gettext.  */
+		{
+			extern int  _nl_msg_cat_cntr;
+			++_nl_msg_cat_cntr;
+		}			
+		
+		if( is_interactive )
+		{
+			complete_destroy();
+			complete_init();
+			
+			debug( 0, _(L"Changing language to english") );
+		}
+	}
+	free( old );
+		
+}
+
+
+/**
    Universal variable callback function. This function makes sure the
    proper events are triggered when an event occurs.
 */
@@ -222,6 +305,9 @@ static void universal_callback( int type,
 								const wchar_t *val )
 {
 	wchar_t *str=0;
+	
+	if( is_locale( name ) )
+		handle_locale();
 	
 	switch( type )
 	{
@@ -417,7 +503,7 @@ void env_init()
 		free( uname );
 	}
 	
-	env_universal_init( env_get( L"FISHD_SOKET_DIR"), 
+	env_universal_init( env_get( L"FISHD_SOCKET_DIR"), 
 						env_get( L"USER" ),
 						&start_fishd,
 						&universal_callback );
@@ -474,7 +560,7 @@ static env_node_t *env_get_node( const wchar_t *key )
 	
 	return 0;
 }
-	
+
 void env_set( const wchar_t *key, 
 			  const wchar_t *val, 
 			  int var_mode )
@@ -489,18 +575,13 @@ void env_set( const wchar_t *key,
 
 	event_t ev;
 	int is_universal = 0;	
-	
+
 	if( (var_mode & ENV_USER ) && 
 		hash_get( &env_read_only, key ) )
 	{
 		return;
 	}
 	
-	if( wcscmp(key, L"LANG" )==0 )
-	{
-		fish_setlocale(LC_ALL,val);
-	}
-
 	if( wcscmp( key, L"umask" ) == 0)
 	{
 		wchar_t *end;
@@ -524,7 +605,6 @@ void env_set( const wchar_t *key,
 		*/
 		return;
 	}
-	
 
 	/*
 	  Zero element arrays are internaly not coded as null but as this placeholder string
@@ -676,8 +756,16 @@ void env_set( const wchar_t *key,
 //	debug( 1, L"env_set: return from event firing" );	
 		al_destroy( &ev.arguments );	
 	}
-	
+
+	if( is_locale( key ) )
+	{
+		handle_locale();
+	}
+		
 }
+
+
+
 
 /**
    Attempt to remove/free the specified key/value pair from the
@@ -726,6 +814,10 @@ void env_remove( const wchar_t *key, int var_mode )
 	{
 		env_universal_remove( key );
 	}
+
+	if( is_locale( key ) )
+		handle_locale();
+			
 }
 
 
@@ -754,7 +846,7 @@ wchar_t *env_get( const wchar_t *key )
 			wchar_t *next = history_get( i-add_current );
 			if( !next )
 			{
-				debug( 1, L"No history at idx %d\n", i );
+				debug( 1, _( L"No history item at index %d\n" ), i );
 				break;
 			}
 			
@@ -898,7 +990,19 @@ void env_pop()
 {
 	if( &top->env != global )
 	{
+		int i;
+		int locale_changed = 0;
+		
 		env_node_t *killme = top;
+
+		for( i=0; locale_variable[i]; i++ )
+		{
+			if( hash_get( &killme->env, locale_variable[i] ) )
+			{
+				locale_changed = 1;
+				break;
+			}
+		}
 
 		if( killme->new_scope )
 		{
@@ -909,12 +1013,15 @@ void env_pop()
 		hash_foreach( &killme->env, &clear_hash_entry );
 		hash_destroy( &killme->env );
 		free( killme );
+
+		if( locale_changed )
+			handle_locale();
 		
 	}
 	else
 	{
 		debug( 0,
-			   L"Tried to pop empty environment stack." );
+			   _( L"Tried to pop empty environment stack." ) );
 		sanity_lose();
 	}	
 }

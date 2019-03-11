@@ -50,6 +50,7 @@ implementation in fish is as of yet incomplete.
 #include "env.h"
 #include "expand.h"
 #include "event.h"
+#include "translate.h"
 
 static void input_read_inputrc( wchar_t *fn );
 
@@ -223,6 +224,7 @@ wchar_t input_get_code( wchar_t *name )
 /**
    Returns the function name for the given function code.
 */
+/*
 static const wchar_t *input_get_name( wchar_t c )
 {
 
@@ -236,10 +238,11 @@ static const wchar_t *input_get_name( wchar_t c )
 	}
 	return 0;		
 }
-
+*/
 /**
    Returns the function description for the given function code.
 */
+/*
 static const wchar_t *input_get_desc( wchar_t c )
 {
 
@@ -253,7 +256,7 @@ static const wchar_t *input_get_desc( wchar_t c )
 	}
 	return 0;		
 }
-
+*/
 void input_set_mode( wchar_t *name )
 {
 	current_mode_mappings = (array_list_t *)hash_get( &all_mappings, name );	
@@ -326,6 +329,7 @@ void add_mapping( const wchar_t *mode,
    Compare sort order for two keyboard mappings. This function is made
    to be suitable for use with the qsort method. 
 */
+/*
 static int mapping_compare( const void *a, const void *b )
 {
 	mapping *c = *(mapping **)a;
@@ -336,7 +340,7 @@ static int mapping_compare( const void *a, const void *b )
 	return wcscmp( c->seq_desc, d->seq_desc );
 	
 }
-
+*/
 
 
 /**
@@ -402,7 +406,7 @@ static wchar_t *input_symbolic_sequence( const wchar_t *in )
 		in++;		
 		if( c < L'a' || c > L'z' )
 		{
-			debug( 1, L"Invalid Control sequence" );
+			debug( 1, _( L"Invalid Control sequence" ) );
 			return 0;			
 		}
 		if( has_meta )
@@ -514,7 +518,7 @@ static wchar_t *input_symbolic_sequence( const wchar_t *in )
 	}
 	if( !res )
 	{
-		debug( 1, L"Could not parse sequence %ls", in );
+		debug( 1, _( L"Could not parse sequence '%ls'" ), in );
 		return 0;
 	}
 	if( !*in || *in == L'\n')
@@ -673,30 +677,44 @@ static wchar_t *input_expand_sequence( const wchar_t *in )
 					*/
 					case L'C':
 					{
+						int has_escape = 0;
+						
 						in++;
 						/* Make sure next key is a dash*/
 						if( *in != L'-' )
 						{
 							error=1;
-							debug( 1, L"Invalid sequence - no dash after control\n" );
+							debug( 1, _( L"Invalid sequence - no dash after control\n" ) );
 							break;
 						}
 						in++;
+
+						if( (*in == L'\\') && (*(in+1)==L'e') )
+						{
+							has_escape = 1;
+							in += 2;
+							
+						}
+						
 						
 						if( (*in >= L'a') && 
-							(*in <= L'z') )
+							(*in < L'a'+32) )
 						{
+							if( has_escape )
+								*(out++)=L'\e';							
 							*(out++)=*in-L'a'+1;
 							break;
 						}
 						
 						if( (*in >= L'A') && 
-							(*in <= L'Z') )
+							(*in < L'A'+32) )
 						{
+							if( has_escape )
+								*(out++)=L'\e';							
 							*(out++)=*in-L'A'+1;
 							break;
 						}
-						debug( 1, L"Invalid sequence - Control-nothing?\n" );
+						debug( 1, _( L"Invalid sequence - Control-nothing?\n" ) );
 						error = 1;
 												
 						break;
@@ -711,12 +729,12 @@ static wchar_t *input_expand_sequence( const wchar_t *in )
 						if( *in != L'-' )
 						{
 							error=1;
-							debug( 1, L"Invalid sequence - no dash after meta\n" );
+							debug( 1, _( L"Invalid sequence - no dash after meta\n" ) );
 							break;
 						}
 						if( !*(in+1) )
 						{
-							debug( 1, L"Invalid sequence - Meta-nothing?" );
+							debug( 1, _( L"Invalid sequence - Meta-nothing?" ) );
 							error=1;
 							break;
 						}
@@ -761,7 +779,7 @@ static wchar_t *input_expand_sequence( const wchar_t *in )
 	{
 		if( wcslen( res ) == 0 )
 		{
-			debug( 1, L"Invalid sequence - '%ls' expanded to zero characters", in_orig );
+			debug( 1, _( L"Invalid sequence - '%ls' expanded to zero characters" ), in_orig );
 			error =1;
 			res = 0;
 		}
@@ -825,7 +843,7 @@ void input_parse_inputrc_line( wchar_t *cmd )
 			{
 				inputrc_error = 1;
 				debug( 1, 
-					   L"Mismatched $endif in inputrc file" );
+					   _( L"Mismatched $endif in inputrc file" ) );
 			}
 		}					
 		return;
@@ -877,7 +895,7 @@ void input_parse_inputrc_line( wchar_t *cmd )
 			if( !*cmd )
 			{
 				debug( 1, 
-					   L"Mismatched quote" );
+					   _( L"Mismatched quote" ) );
 				inputrc_error = 1;
 				return;
 			}
@@ -891,7 +909,7 @@ void input_parse_inputrc_line( wchar_t *cmd )
 		if( *cmd != L':' )
 		{
 			debug( 1, 
-				   L"Expected a \':\'" );
+				   _( L"Expected a \':\'" ) );
 			inputrc_error = 1;
 			return;
 		}
@@ -936,16 +954,16 @@ void input_parse_inputrc_line( wchar_t *cmd )
 
 		if( wcscmp( set, L"set" ) != 0 )
 		{
-			debug( 1, L"I don\'t know what %ls means", set );	
+			debug( 1, _( L"I don\'t know what '%ls' means" ), set );	
 		}
 		else if( end )
 		{
-			debug( 1, L"Expected end of line, got '%ls'", end );
+			debug( 1, _( L"Expected end of line, got '%ls'" ), end );
 			
 		}
 		else if( (!key) || (!value) )
 		{
-			debug( 1, L"Syntax: set KEY VALUE" );
+			debug( 1, _( L"Syntax: set KEY VALUE" ) );
 		}
 		else 
 		{
@@ -1011,7 +1029,7 @@ void input_parse_inputrc_line( wchar_t *cmd )
 		if( !cmd )
 		{
 				debug( 1, 
-					   L"Unable to parse binding" );
+					   _( L"Unable to parse key binding" ) );
 				inputrc_error = 1;
 				return;
 		}
@@ -1037,7 +1055,7 @@ void input_parse_inputrc_line( wchar_t *cmd )
 		
 	}
 	
-	debug( 1, L"I don\'t know what %ls means", cmd );	
+	debug( 1, _( L"I don\'t know what %ls means" ), cmd );	
 }
 
 /**
@@ -1063,7 +1081,7 @@ static void input_read_inputrc( wchar_t *fn )
 				case -1:
 				{
 					debug( 1, 
-						   L"Error while reading input information from file: %s",
+						   _( L"Error while reading input information from file '%ls'" ),
 						   fn );
 						
 					wperror( L"fgetws2 (read_ni)" );
@@ -1168,6 +1186,8 @@ static void add_common_bindings()
 		add_terminfo_mapping( name[i], (key_backspace), L"Backspace", L"backward-delete-char" );
 		add_mapping( name[i], L"\x7f", L"Backspace", L"backward-delete-char" );
 		
+		add_mapping( name[i], L"\e[H", L"Home", L"beginning-of-line" );
+		add_mapping( name[i], L"\e[F", L"End", L"end-of-line" );
 		add_terminfo_mapping( name[i], (key_home), L"Home", L"beginning-of-line" );
 		add_terminfo_mapping( name[i], (key_end), L"End", L"end-of-line" );
 
@@ -1224,6 +1244,7 @@ static void add_emacs_bindings()
 	add_escaped_mapping( L"emacs", (L"\\C-h"), L"Control-h", L"backward-delete-char" );
 	add_escaped_mapping( L"emacs", (L"\\C-e"), L"Control-e", L"end-of-line" );
 	add_escaped_mapping( L"emacs", (L"\\C-w"), L"Control-w", L"backward-kill-word" );
+	add_escaped_mapping( L"emacs", (L"\e\x7f"), L"Alt-backspace", L"backward-kill-word" );
 	add_terminfo_mapping( L"emacs", (key_ppage), L"Page Up", L"beginning-of-history" );
 	add_terminfo_mapping( L"emacs", (key_npage), L"Page Down", L"end-of-history" );
 }
@@ -1288,7 +1309,7 @@ int input_init()
 	
 	if( setupterm( 0, STDOUT_FILENO, 0) == ERR )
 	{
-		debug( 0, L"Could not set up terminal" );
+		debug( 0, _( L"Could not set up terminal" ) );
 		exit(1);
 	}
 	hash_init( &all_mappings, &hash_wcs_func, &hash_wcs_cmp );

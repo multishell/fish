@@ -74,10 +74,11 @@ commence.
 #include "function.h"
 #include "output.h"
 #include "signal.h"
+#include "translate.h"
 
 /**
-	Maximum length of prefix string when printing completion
-	list. Longer prefixes will be ellipsized.
+   Maximum length of prefix string when printing completion
+   list. Longer prefixes will be ellipsized.
 */
 #define PREFIX_MAX_LEN 8
 
@@ -128,7 +129,7 @@ typedef struct reader_data
 	*/
 	wchar_t *search_buff;
 	/**
-		Saved position used by token history search
+	   Saved position used by token history search
 	*/
 	int token_history_pos;
 
@@ -160,12 +161,12 @@ typedef struct reader_data
 	size_t buff_len;
 
 	/**
-		The current position of the cursor in buff.
+	   The current position of the cursor in buff.
 	*/
 	size_t buff_pos;
 
 	/**
-		The current position of the cursor in output buffer.
+	   The current position of the cursor in output buffer.
 	*/
 	size_t output_pos;
 
@@ -219,7 +220,7 @@ typedef struct reader_data
 	int (*test_func)( wchar_t * );
 
 	/**
-		When this is true, the reader will exit
+	   When this is true, the reader will exit
 	*/
 	int end_loop;
 
@@ -237,7 +238,7 @@ static reader_data_t *data=0;
 
 
 /**
-	Flag for ending non-interactive shell
+   Flag for ending non-interactive shell
 */
 static int end_loop = 0;
 
@@ -295,7 +296,7 @@ static void term_donate()
 		{
 			if( errno != EINTR )
 			{
-				debug( 1, L"Could not set terminal mode for new job" );
+				debug( 1, _( L"Could not set terminal mode for new job" ) );
 				wperror( L"tcsetattr" );
 				break;
 			}
@@ -316,7 +317,7 @@ static void term_steal()
 		{
 			if( errno != EINTR )
 			{
-				debug( 1, L"Could not set terminal mode for shell" );
+				debug( 1, _( L"Could not set terminal mode for shell" ) );
 				wperror( L"tcsetattr" );
 				break;
 			}
@@ -327,11 +328,11 @@ static void term_steal()
 
 	common_handle_winch(0 );	
 
-    if( tcsetattr(0,TCSANOW,&old_modes))      /* return to previous mode */
-    {
-        wperror(L"tcsetattr");
-        exit(1);
-    }
+	if( tcsetattr(0,TCSANOW,&old_modes))/* return to previous mode */
+	{
+		wperror(L"tcsetattr");
+		exit(1);
+	}
 
 }
 
@@ -672,27 +673,27 @@ static int calc_prompt_width( array_list_t *arr )
 				  Test these color escapes with parameter value 0..7
 				*/
 				char * esc[] = 
-				{
-					set_a_foreground,
-					set_a_background,
-					set_foreground,
-					set_background,
-				}
+					{
+						set_a_foreground,
+						set_a_background,
+						set_foreground,
+						set_background,
+					}
 				;
 
 				/*
 				  Test these regular escapes without any parameter values
 				*/
 				char *esc2[] =
-				{
-					enter_bold_mode,
-					exit_attribute_mode,
-					enter_underline_mode,
-					exit_underline_mode,
-					enter_standout_mode,
-					exit_standout_mode,
-					flash_screen
-				}
+					{
+						enter_bold_mode,
+						exit_attribute_mode,
+						enter_underline_mode,
+						exit_underline_mode,
+						enter_standout_mode,
+						exit_standout_mode,
+						flash_screen
+					}
 				;
 				
 				for( l=0; l < (sizeof(esc)/sizeof(char *)) && !found; l++ )
@@ -903,24 +904,29 @@ static void check_colors()
 static void reader_save_status()
 {
 
-#if (defined(__FreeBSD__) || defined(__NetBSD__))
+#ifdef HAVE_FUTIMES
 	/*
 	  This futimes call tries to trick the system into using st_mtime
 	  as a tampering flag. This of course only works on systems where
 	  futimes is defined, but it should make the status saving stuff
 	  failsafe.
 	*/
-	struct timeval t=
+	struct timeval t[]=
 		{
-			time(0)-1,
-			0
+			{
+				time(0)-1,
+				0
+			}
+			,
+			{
+				time(0)-1,
+				0
+			}
 		}
 	;
 
-	if( futimes( 1, &t ) || futimes( 2, &t ) )
-	{
-		wperror( L"futimes" );
-	}
+	futimes( 1, t );
+	futimes( 2, t );
 #endif
 
 	fstat( 1, &prev_buff_1 );
@@ -1080,8 +1086,8 @@ static int insert_char( int c )
 		  enter_insert_mode) )
 	{
 		/*
-		   Colors look ok, so we set the right color and insert a
-		   character
+		  Colors look ok, so we set the right color and insert a
+		  character
 		*/
 		set_color_translated( data->color[data->buff_pos-1] );
 		if( data->buff_pos < data->buff_len )
@@ -1488,8 +1494,8 @@ static int handle_completions( array_list_t *comp )
 		else
 		{
 			/*
-			   There is no common prefix in the completions, and show_list
-			   is true, so we print the list
+			  There is no common prefix in the completions, and show_list
+			  is true, so we print the list
 			*/
 			int len;
 			wchar_t * prefix;
@@ -1512,10 +1518,10 @@ static int handle_completions( array_list_t *comp )
 			else
 			{
 				wchar_t tmp[2]=
-				{
-					ellipsis_char,
-					0
-				}
+					{
+						ellipsis_char,
+						0
+					}
 				;
 				
 				prefix = wcsdupcat( tmp,
@@ -1542,11 +1548,10 @@ static int handle_completions( array_list_t *comp )
 				  succeeds with one column.
 				*/
 /*
-*/
+ */
 			}
 
 			free( prefix );
-
 			repaint();
 
 		}
@@ -1594,7 +1599,7 @@ static void reader_interactive_init()
 		if (setpgid (shell_pgid, shell_pgid) < 0)
 		{
 			debug( 1,
-				   L"Couldn't put the shell in its own process group");
+				   _( L"Couldn't put the shell in its own process group" ));
 			wperror( L"setpgid" );
 			exit (1);
 		}
@@ -1604,7 +1609,7 @@ static void reader_interactive_init()
 	if( tcsetpgrp (STDIN_FILENO, shell_pgid) )
 	{
 		debug( 1,
-			   L"Couldn't grab control of terminal" );
+			   _( L"Couldn't grab control of terminal" ) );
 		wperror( L"tcsetpgrp" );
 		exit(1);
 	}
@@ -1636,7 +1641,7 @@ static void reader_interactive_init()
 	original_pid = getpid();
 
 	if( atexit( &exit_func ) )
-		debug( 1, L"Could not set exit function" );
+		debug( 1, _( L"Could not set exit function" ) );
 
 	env_set( L"_", L"fish", ENV_GLOBAL );
 }
@@ -2182,14 +2187,14 @@ static void move_word( int dir, int erase )
 					}					
 					break;
 /*
-				case 2:
-					if( !iswspace(data->buff[end_buff_pos] ) )
-					{
-						mode++;
-						if( !dir )
-							end_buff_pos-=step;
-					}
-					break;
+  case 2:
+  if( !iswspace(data->buff[end_buff_pos] ) )
+  {
+  mode++;
+  if( !dir )
+  end_buff_pos-=step;
+  }
+  break;
 */
 			}
 		}
@@ -2368,7 +2373,7 @@ void reader_pop()
 
 	if( data == 0 )
 	{
-		debug( 0, L"Pop null reader block" );
+		debug( 0, _( L"Pop null reader block" ) );
 		sanity_lose();
 		return;
 	}
@@ -2449,7 +2454,7 @@ static void reader_super_highlight_me_plenty( wchar_t * buff, int *color, int po
 			for( i=0; i<count; i++ )
 			{
 				/*
-				   Do not overwrite previous highlighting color
+				  Do not overwrite previous highlighting color
 				*/
 				if( color[start+i]>>8 == 0 )
 				{
@@ -2510,7 +2515,7 @@ static int read_i()
 		{
 			if( !prev_end_loop && first_job != 0 )
 			{
-				writestr(L"There are stopped jobs\n");
+				writestr(_( L"There are stopped jobs\n" ));
 				write_prompt();
 				data->end_loop = 0;
 				prev_end_loop=1;
@@ -2574,8 +2579,8 @@ wchar_t *reader_readline()
 	repaint();
 
 	tcgetattr(0,&old_modes);        /* get the current terminal modes */
-    if( tcsetattr(0,TCSANOW,&shell_modes))      /* set the new modes */
-    {
+	if( tcsetattr(0,TCSANOW,&shell_modes))      /* set the new modes */
+	{
         wperror(L"tcsetattr");
         exit(1);
     }
@@ -2765,14 +2770,16 @@ wchar_t *reader_readline()
 
 			/* yank*/
 			case R_YANK:
-				yank_str = kill_yank();
+			{	yank_str = kill_yank();
 				insert_str( yank_str );
 				yank = wcslen( yank_str );
 //				wcscpy(data->search_buff,data->buff);
 				break;
-
-				/* rotate killring*/
+			}
+			
+			/* rotate killring*/
 			case R_YANK_POP:
+			{
 				if( yank )
 				{
 					for( i=0; i<yank; i++ )
@@ -2783,9 +2790,11 @@ wchar_t *reader_readline()
 					yank = wcslen(yank_str);
 				}
 				break;
-
-				/* Escape was pressed */
+			}
+			
+			/* Escape was pressed */
 			case L'\e':
+			{
 				if( *data->search_buff )
 				{
 					if( data->token_history_pos==-1 )
@@ -2804,28 +2813,34 @@ wchar_t *reader_readline()
 				}
 				
 				break;
-
-				/* delete backward*/
+			}
+			
+			/* delete backward*/
 			case R_BACKWARD_DELETE_CHAR:
+			{
 				remove_backward();
 				break;
-
-				/* delete forward*/
+			}
+			
+			/* delete forward*/
 			case R_DELETE_CHAR:
+			{
 				remove_forward();
 				break;
-
-				/* exit, but only if line is empty */
+			}
+			
+			/* exit, but only if line is empty or the previous keypress was also an exit call */
 			case R_EXIT:
-
+			{
 				if( data->buff_len == 0 )
 				{
 					writestr( L"\n" );
 					data->end_loop=1;
 				}
 				break;
-
-				/* Newline, evaluate*/
+			}
+			
+			/* Newline, evaluate*/
 			case L'\n':
 			{
 				data->buff[data->buff_len]=L'\0';
@@ -2844,14 +2859,19 @@ wchar_t *reader_readline()
 					writestr( L"\n" );
 				}
 				else
+				{
+					writech('\r');
+					writembs(clr_eol);
+					writech('\n');
 					repaint();
-
+				}
+				
 				break;
 			}
 
-			/* History up*/
+			/* History up */
 			case R_HISTORY_SEARCH_BACKWARD:
-//					fwprintf( stderr, L"Search history for \'%ls\' %d long\n", data->search_buff, wcslen(data->search_buff) );
+			{
 				if( (last_char != R_HISTORY_SEARCH_BACKWARD) &&
 					(last_char != R_HISTORY_SEARCH_FORWARD) )
 				{
@@ -2861,9 +2881,11 @@ wchar_t *reader_readline()
 
 				handle_history(history_prev_match(data->search_buff));
 				break;
-
-				/* History down*/
+			}
+			
+			/* History down */
 			case R_HISTORY_SEARCH_FORWARD:
+			{
 				if( (last_char != R_HISTORY_SEARCH_BACKWARD) &&
 					(last_char != R_HISTORY_SEARCH_FORWARD) )
 				{
@@ -2873,7 +2895,9 @@ wchar_t *reader_readline()
 
 				handle_history(history_next_match(data->search_buff));
 				break;
-
+			}
+			
+			/* Token search for a earlier match */
 			case R_HISTORY_TOKEN_SEARCH_BACKWARD:
 			{
 				int reset=0;
@@ -2889,6 +2913,7 @@ wchar_t *reader_readline()
 				break;
 			}
 
+			/* Token search for a later match */
 			case R_HISTORY_TOKEN_SEARCH_FORWARD:
 			{
 				int reset=0;
@@ -2904,7 +2929,6 @@ wchar_t *reader_readline()
 				break;
 			}
 
-			
 			
 			/* Move left*/
 			case R_BACKWARD_CHAR:
@@ -2925,6 +2949,7 @@ wchar_t *reader_readline()
 
 				/* Move right*/
 			case R_FORWARD_CHAR:
+			{
 				if( data->buff_pos < data->buff_len )
 				{
 					if( !force_repaint() )
@@ -2941,33 +2966,45 @@ wchar_t *reader_readline()
 					}
 				}
 				break;
-
+			}
+			
 			case R_DELETE_LINE:
+			{
 				data->buff[0]=0;
 				data->buff_len=0;
 				data->buff_pos=0;
 				repaint();
-
-				/* kill one word left */
+				break;
+			}
+			
+			/* kill one word left */
 			case R_BACKWARD_KILL_WORD:
+			{
 				move_word(0,1);
 				break;
-
-				/* kill one word right */
+			}
+			
+			/* kill one word right */
 			case R_KILL_WORD:
+			{
 				move_word(1,1);
 				break;
-
-				/* move one word left*/
+			}
+			
+			/* move one word left*/
 			case R_BACKWARD_WORD:
+			{
 				move_word(0,0);
 				break;
-
-				/* move one word right*/
+			}
+			
+			/* move one word right*/
 			case R_FORWARD_WORD:
+			{
 				move_word( 1,0);
 				break;
-
+			}
+			
 			case R_CLEAR_SCREEN:
 			{
 				writembs( clear_screen );
@@ -2985,7 +3022,6 @@ wchar_t *reader_readline()
 			case R_END_OF_HISTORY:
 			{
 				history_reset();
-
 				break;
 			}
 
@@ -2995,7 +3031,7 @@ wchar_t *reader_readline()
 				if( (!wchar_private(c)) && (c>31) && (c != 127) )
 					insert_char( c );
 				else
-					debug( 0, L"Unknown keybinding %d", c );
+					debug( 0, _( L"Unknown keybinding %d" ), c );
 				break;
 			}
 
@@ -3065,7 +3101,7 @@ static int read_ni( int fd )
 			if( ferror( in_stream ) )
 			{
 				debug( 1, 
-					   L"Error while reading commands" );
+					   _( L"Error while reading commands" ) );
 
 				/*
 				  Reset buffer. We won't evaluate incomplete files.
@@ -3084,7 +3120,7 @@ static int read_ni( int fd )
 		if(	fclose( in_stream ))
 		{
 			debug( 1, 
-				   L"Error while closing input" );
+				   _( L"Error while closing input stream" ) );
 			wperror( L"fclose" );
 			res = 1;
 		}
@@ -3112,13 +3148,13 @@ static int read_ni( int fd )
 			if( acc_used > 1 )
 			{
 				debug( 1,
-					   L"Could not convert input. Read %d bytes.", 
+					   _( L"Could not convert input. Read %d bytes." ), 
 					   acc_used-1 );
 			}
 			else
 			{
 				debug( 1, 
-					   L"Could not read input stream" );
+					   _( L"Could not read input stream" ) );
 			}
 			res=1;			
 		}		
@@ -3127,7 +3163,7 @@ static int read_ni( int fd )
 	else
 	{
 		debug( 1, 
-			   L"Error while opening input" );
+			   _( L"Error while opening input stream" ) );
 		wperror( L"fdopen" );
 		free( buff );
 		res=1;
@@ -3140,13 +3176,13 @@ int reader_read( int fd )
 {
 	int res;
 	/*
-	   If reader_read is called recursively through the '.' builtin,
-	   we need to preserve is_interactive, so we save the
-	   original state. We also update the signal handlers.
+	  If reader_read is called recursively through the '.' builtin,
+	  we need to preserve is_interactive, so we save the
+	  original state. We also update the signal handlers.
 	*/
 	int shell_was_interactive = is_interactive;
 	
-	is_interactive = (fd == 0) && isatty(STDIN_FILENO);
+	is_interactive = ((fd == 0) && isatty(STDIN_FILENO));
 	signal_set_handlers();
 	
 	res= is_interactive?read_i():read_ni( fd );

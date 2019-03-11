@@ -115,8 +115,6 @@ enum block_type
 	SUBST, /**< Command substitution scope */
 	TOP, /**< Outermost block */
 	BEGIN, /**< Unconditional block */
-	AND, /**< And block */
-	OR, /**< Or block */
 }
 ;
 
@@ -283,7 +281,7 @@ void parser_pop_block();
 /**
    Return a description of the given blocktype
 */
-wchar_t *parser_get_block_desc( int block );
+const wchar_t *parser_get_block_desc( int block );
 
 
 /**

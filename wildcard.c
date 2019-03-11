@@ -1,8 +1,8 @@
 /** \file wildcard.c
 
-    Fish needs it's own globbing implementation to support
-	tab-expansion of globbed parameters. Also provides recursive
-	wildcards using **.
+Fish needs it's own globbing implementation to support
+tab-expansion of globbed parameters. Also provides recursive
+wildcards using **.
 
 */
 
@@ -26,6 +26,7 @@
 #include "complete.h"
 #include "reader.h"
 #include "expand.h"
+#include "translate.h"
 
 /**
    This flag is set in the flags parameter of wildcard_expand if the
@@ -130,7 +131,7 @@ static int wildcard_complete_internal( const wchar_t *orig,
 									   const wchar_t *(*desc_func)(const wchar_t *),
 									   array_list_t *out )
 {
-	if( *wc == 0 && 
+	if( *wc == 0 &&
 		( ( *str != L'.') || (!is_first)) )
 	{
 		if( !out )
@@ -147,22 +148,37 @@ static int wildcard_complete_internal( const wchar_t *orig,
 				
 			new = wcsdup( str );
 			sep = wcschr(new, PROG_COMPLETE_SEP );
-			*sep = COMPLETE_SEP;
-		}
-		else if( desc_func )
-		{
-			/*
-			  A descripton generating function is specified, use it
-			*/
-			new = wcsdupcat2( str, COMPLETE_SEP_STR, desc_func( orig ), 0);			
+			*sep = COMPLETE_SEP;			
 		}
 		else
 		{
+			const wchar_t *this_desc = desc;
+			
+			if( desc_func )
+			{
+				/*
+				  A descripton generating function is specified, call
+				  it. If it returns something, use that as the
+				  description.
+				*/
+				const wchar_t *func_desc = desc_func( orig );
+				if( func_desc )
+					this_desc = func_desc;
+			}
+			
 			/*
-			  Append generic description to item, if the description exists
+			  Append description to item, if a description exists
 			*/
-			if( desc && wcslen(desc)>1 )
-				new = wcsdupcat( str, desc );
+			if( this_desc && wcslen(this_desc) )
+			{
+				/*
+				  Check if the description already contains a separator character, if not, prepend it
+				*/
+				if( wcschr( this_desc, COMPLETE_SEP ) )
+					new = wcsdupcat2( str, this_desc, (void *)0 );
+				else
+					new = wcsdupcat2( str, COMPLETE_SEP_STR, this_desc, (void *)0 );
+			}
 			else
 				new = wcsdup( str );
 		}
@@ -272,11 +288,11 @@ void get_desc( wchar_t *fn, string_buffer_t *sb, int is_cmd )
 		sb_append2( sb, desc, L", ", (void *)0 );
 		if( sz < 0 )
 		{
-			sb_append( sb, L"unknown" );
+			sb_append( sb, _(L"unknown") );
 		}
 		else if( sz < 1 )
 		{
-			sb_append( sb, L"empty" );
+			sb_append( sb, _( L"empty" ) );
 		}
 		else if( sz < 1024 )
 		{
@@ -319,7 +335,7 @@ static int test_flags( wchar_t *filename,
 	struct stat buf;
 	if( wstat( filename, &buf ) == -1 )
 	{
-		return 1;
+		return 0;
 	}
 		
 	if( S_IFDIR & buf.st_mode )

@@ -19,6 +19,7 @@
 #include "common.h"
 #include "event.h"
 #include "signal.h"
+#include "translate.h"
 
 /**
    Number of signals that can be queued before an overflow occurs
@@ -324,7 +325,7 @@ static void event_fire_internal( event_t *event )
 	array_list_t *fire=0;
 
 	int was_subshell = is_subshell;
-	int was_interactive = is_interactive;
+//	int was_interactive = is_interactive;
 	
 	/*
 	  First we free all events that have been removed
@@ -401,7 +402,7 @@ static void event_fire_internal( event_t *event )
 		  they are marked as non-interactive and as a subshell
 		*/
 		is_subshell=1;
-		is_interactive=0;		
+//		is_interactive=0;		
 		eval( (wchar_t *)b->buff, 0, TOP );
 		
 	}
@@ -410,7 +411,7 @@ static void event_fire_internal( event_t *event )
 	  Restore interactivity flags
 	*/
 	is_subshell = was_subshell;
-	is_interactive = was_interactive;
+//	is_interactive = was_interactive;
 
 	if( b )
 	{
@@ -486,7 +487,7 @@ static void event_fire_delayed()
 		
 		if( lst->overflow )
 		{
-			debug( 0, L"Signal list overflow. Signals have been ignored" );
+			debug( 0, _( L"Signal list overflow. Signals have been ignored." ) );
 		}
 		
 		/*

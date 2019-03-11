@@ -36,6 +36,7 @@
 #include "expand.h"
 #include "signal.h"
 #include "env_universal.h"
+#include "translate.h"
 
 /**
    Prototype for the getpgid library function. The prototype for this
@@ -48,15 +49,15 @@ pid_t getpgid( pid_t pid );
 /**
    file descriptor redirection error message
 */
-#define FD_ERROR   L"An error occurred while redirecting file descriptor %d"
+#define FD_ERROR   _( L"An error occurred while redirecting file descriptor %d" )
 /**
    file redirection error message
 */
-#define FILE_ERROR L"An error occurred while redirecting file '%ls'"
+#define FILE_ERROR _( L"An error occurred while redirecting file '%ls'" )
 /**
    fork error message
 */
-#define FORK_ERROR L"Could not create child process - exiting"
+#define FORK_ERROR _( L"Could not create child process - exiting" )
 
 
 /**
@@ -235,14 +236,14 @@ void free_fd( io_data_t *io, int fd )
    redirections described by \c io.
 
    \param io the list of IO redirections for the child
+   \param exit_on_error whether to call exit() on errors
+
+   \return 1 on sucess, 0 on failiure
 */
-static void handle_child_io( io_data_t *io )
+static int handle_child_io( io_data_t *io, int exit_on_error )
 {
 
 	close_unused_internal_pipes( io );
-	
-	if( env_universal_server.fd >= 0 )
-		exec_close( env_universal_server.fd );
 
 	for( ; io; io=io->next )
 	{
@@ -276,7 +277,14 @@ static void handle_child_io( io_data_t *io )
 						   io->param1.filename );
 					
 					wperror( L"open" );
-					exit(1);
+					if( exit_on_error )
+					{
+						exit(1);
+					}
+					else
+					{
+						return 0;
+					}					
 				}				
 				else if( tmp != io->fd)
 				{
@@ -288,7 +296,14 @@ static void handle_child_io( io_data_t *io )
 							   FD_ERROR,
 							   io->fd );
 						wperror( L"dup2" );
-						exit(1);
+						if( exit_on_error )
+						{
+							exit(1);
+						}
+						else
+						{
+							return 0;
+						}
 					}
 					exec_close( tmp );
 				}				
@@ -298,19 +313,21 @@ static void handle_child_io( io_data_t *io )
 			case IO_FD:
 			{
 				close(io->fd);
-/*				debug( 3, L"Redirect fd %d in process %ls (%d) from fd %d",
-  io->fd,
-  p->actual_cmd,
-  p->pid,
-  io->old_fd );
-*/			
+
 				if( dup2( io->param1.old_fd, io->fd ) == -1 )
 				{
 					debug( 1, 
 						   FD_ERROR,
 						   io->fd );
 					wperror( L"dup2" );
-					exit(1);					
+					if( exit_on_error )
+					{
+						exit(1);
+					}
+					else
+					{
+						return 0;
+					}
 				}
 				break;
 			}
@@ -318,21 +335,23 @@ static void handle_child_io( io_data_t *io )
 			case IO_BUFFER:
 			case IO_PIPE:
 			{
-				close(io->fd);
-				
-/*				debug( 3, L"Pipe fd %d in process %ls (%d) (Through fd %d)", 
-  io->fd, 
-  p->actual_cmd,
-  p->pid,
-  io->pipe_fd[io->fd] );
-*/
 				int fd_to_dup = io->fd;
+
+				close(io->fd);
 				
 				if( dup2( io->param1.pipe_fd[fd_to_dup?1:0], io->fd ) == -1 )
 				{
 					debug( 1, PIPE_ERROR );
 					wperror( L"dup2" );
-					exit(1);
+					if( exit_on_error )
+					{
+						exit(1);
+					}
+					else
+					{
+						return 0;
+					}					
+
 				}
 
 				if( fd_to_dup != 0 )
@@ -341,28 +360,21 @@ static void handle_child_io( io_data_t *io )
 					exec_close( io->param1.pipe_fd[1]);
 				}
 				else
+				{
 					exec_close( io->param1.pipe_fd[0] );
+				}
 				
-/*				
-  if( close( io[i].pipe_fd[ io->fd ] ) == -1 )
-  {
-  wperror( L"close" );
-  exit(1);
-  }
-*/			
-/*				if( close( io[i].pipe_fd[1] ) == -1 )
-  {
-  wperror( L"close" );
-  exit(1);
-  }
-*/
-		
-/*		    fprintf( stderr, "fd %d points to fd %d\n", i, io[i].fd[i>0?1:0] );*/
 				break;
 			}
 			
 		}
 	}
+
+	if( env_universal_server.fd >= 0 )
+		exec_close( env_universal_server.fd );
+
+	return 1;
+	
 }
 
 /**
@@ -371,10 +383,17 @@ static void handle_child_io( io_data_t *io )
    process is put in the jobs group, all signal handlers are reset,
    SIGCHLD is unblocked (the exec call blocks blocks SIGCHLD), and all
    IO redirections and other file descriptor actions are performed.
+
+   \param j the job to set up the IO for
+   \param exit_on_error whether to call exit() on errors
+
+   \return 1 on sucess, 0 on failiure
 */
-static void setup_child_process( job_t *j )
+static int setup_child_process( job_t *j, process_t *p )
 {
-	if( is_interactive && !is_subshell && !is_block)
+	int res;
+	
+	if( is_interactive  && p->type==EXTERNAL )
     {
 		pid_t pid;
 		/* 
@@ -399,13 +418,18 @@ static void setup_child_process( job_t *j )
 		}
 	}
 	
+	res = handle_child_io( j->io, (p==0) );
+
 	/* Set the handling for job control signals back to the default.  */
-	signal_reset_handlers();
-
-	handle_child_io( j->io );
-
+	if( res )
+	{
+		signal_reset_handlers();
+	}
+	
 	/* Remove all signal blocks */
 	signal_unblock();	
+	
+	return res;
 	
 }
 								 
@@ -421,7 +445,7 @@ static void launch_process( process_t *p )
 		
 	execve (wcs2str(p->actual_cmd), wcsv2strv( (const wchar_t **) p->argv), env_export_arr( 0 ) );
 	debug( 0, 
-		   L"Failed to execute process %ls",
+		   _( L"Failed to execute process '%ls'" ),
 		   p->actual_cmd );
 	wperror( L"execve" );
 	exit(1);
@@ -439,10 +463,32 @@ static int has_fd( io_data_t *d, int fd )
 
 
 /**
+   Free a transmogrified io chain. Only the chain itself and resources
+   used by a transmogrified IO_FILE redirection are freed, since the
+   original chain may still be needed.
+*/
+static void io_untransmogrify( io_data_t * in, io_data_t *out )
+{
+	if( !out )
+		return;
+	io_untransmogrify( in->next, out->next );
+	switch( in->io_mode )
+	{
+		case IO_FILE:
+			exec_close( out->param1.old_fd );
+			break;
+	}	
+	free(out);
+}
+
+
+/**
    Make a copy of the specified io redirection chain, but change file
    redirection into fd redirection. This makes the redirection chain
    suitable for use as block-level io, since the file won't be
    repeatedly reopened for every command in the block.
+
+   \return the transmogrified chain on sucess, or 0 on failiure
 */
 static io_data_t *io_transmogrify( io_data_t * in )
 {
@@ -458,7 +504,8 @@ static io_data_t *io_transmogrify( io_data_t * in )
 	out->fd = in->fd;
 	out->io_mode = IO_FD;
 	out->param2.close_old = 1;
-	
+	out->next=0;
+		
 	switch( in->io_mode )
 	{
 		/*
@@ -487,7 +534,8 @@ static io_data_t *io_transmogrify( io_data_t * in )
 					   in->param1.filename );
 								
 				wperror( L"open" );
-				exit(1);
+				free( out );
+				return 0;
 			}	
 
 			out->param1.old_fd = fd;
@@ -495,30 +543,18 @@ static io_data_t *io_transmogrify( io_data_t * in )
 		}
 	}
 	
-	out->next = io_transmogrify( in->next );
+	if( in->next)
+	{
+		out->next = io_transmogrify( in->next );
+		if( !out->next )
+		{
+			io_untransmogrify( in, out );
+			return 0;
+		}
+	}
 	
 	return out;
 }
-
-/**
-   Free a transmogrified io chain. Only the chain itself and resources
-   used by a transmogrified IO_FILE redirection are freed, since the
-   original chain may still be needed.
-*/
-static void io_untransmogrify( io_data_t * in, io_data_t *out )
-{
-	if( !in )
-		return;
-	io_untransmogrify( in->next, out->next );
-	switch( in->io_mode )
-	{
-		case IO_FILE:
-			exec_close( out->param1.old_fd );
-			break;
-	}	
-	free(out);
-}
-
 
 /**
    Morph an io redirection chain into redirections suitable for
@@ -529,32 +565,32 @@ static void io_untransmogrify( io_data_t * in, io_data_t *out )
    \param io the io redirections to be performed on this block
 */
 
-static int internal_exec_helper( const wchar_t *def, 
+static void internal_exec_helper( const wchar_t *def, 
 								 int block_type,
 								 io_data_t *io )
 {
-	int res=0;
 	io_data_t *io_internal = io_transmogrify( io );
 	int is_block_old=is_block;
 	is_block=1;
 
-	signal_unblock();
+	/*
+	  Did the transmogrification fail - if so, set error status and return
+	*/
+	if( io && !io_internal )
+	{
+		proc_set_last_status( 1 );
+		return;
+	}
 	
+	signal_unblock();
+		
 	eval( def, io_internal, block_type );		
-
+	
 	signal_block();
-
-/*
-	io_data_t *buff = io_get( io, 1 );
-	if( buff && buff->io_mode == IO_BUFFER )
-	fwprintf( stderr, L"block %ls produced %d bytes of output\n", 
-	def,
-	buff->out_buffer->used );
-*/
+	
 	io_untransmogrify( io, io_internal );
 	job_reap( 0 );
 	is_block=is_block_old;
-	return res;
 }
 
 /**
@@ -565,7 +601,7 @@ static int internal_exec_helper( const wchar_t *def,
 static int handle_new_child( job_t *j, process_t *p )
 {
 	
-	if(is_interactive  && !is_subshell && !is_block)
+	if( is_interactive  && p->type==EXTERNAL )
 	{
 		int new_pgid=0;
 		
@@ -580,7 +616,7 @@ static int handle_new_child( job_t *j, process_t *p )
 			if( getpgid( p->pid) != j->pgid )
 			{
 				debug( 1, 
-					   L"Could not send process %d from group %d to group %d",
+					   _( L"Could not send process %d from group %d to group %d" ),
 					   p->pid, 
 					   getpgid( p->pid),
 					   j->pgid );
@@ -592,7 +628,7 @@ static int handle_new_child( job_t *j, process_t *p )
 		{
 			if( tcsetpgrp (0, j->pgid) )
 			{
-				debug( 1, L"Could not send job %d ('%ls')to foreground", 
+				debug( 1, _( L"Could not send job %d ('%ls') to foreground" ), 
 					   j->job_id, 
 					   j->command );
 				wperror( L"tcsetpgrp" );
@@ -604,7 +640,7 @@ static int handle_new_child( job_t *j, process_t *p )
 		{
 			if( tcsetpgrp (0, j->pgid) )
 			{
-				debug( 1, L"Could not send job %d ('%ls')to foreground", 
+				debug( 1, _( L"Could not send job %d ('%ls') to foreground" ), 
 					   j->job_id, 
 					   j->command );
 				wperror( L"tcsetpgrp" );
@@ -654,11 +690,20 @@ void exec( job_t *j )
 		/*
 		  setup_child_process make sure signals are propelry set up
 		*/
-		setup_child_process( j );
-		launch_process( j->first_process );
-		/*
-		  launch_process _never_ returns...
-		*/
+		if( setup_child_process( j, 0 ) )
+		{
+			/*
+			  launch_process never returns
+			*/
+			launch_process( j->first_process );
+		}
+		else
+		{
+			j->constructed=1;
+			j->first_process->completed=1;
+			return;
+		}
+		
 	}
 	
 
@@ -766,7 +811,7 @@ void exec( job_t *j )
 //			fwprintf( stderr, L"run function %ls\n", argv[0] );
 				if( def == 0 )
 				{
-					debug( 0, L"Unknown function %ls", p->argv[0] );
+					debug( 0, _( L"Unknown function '%ls'" ), p->argv[0] );
 					break;
 				}
 				parser_push_block( FUNCTION_CALL );
@@ -874,7 +919,7 @@ void exec( job_t *j )
 							{
 								builtin_stdin=-1;
 								debug( 1, 
-									   L"Unknown input redirection type %d",
+									   _( L"Unknown input redirection type %d" ),
 									   in->io_mode);
 								break;
 							}
@@ -975,7 +1020,7 @@ void exec( job_t *j )
 						  This is the child process. Write out the contents of the pipeline.
 						*/
 						p->pid = getpid();
-						setup_child_process( j );
+						setup_child_process( j, p );
 						write( io_buffer->fd, 
 							   io_buffer->param2.out_buffer->buff, 
 							   io_buffer->param2.out_buffer->used );
@@ -1063,7 +1108,7 @@ void exec( job_t *j )
 					  This is the child process. 
 					*/
 					p->pid = getpid();
-					setup_child_process( j );
+					setup_child_process( j, p );
 					if( sb_out->used )
 						fwprintf( stdout, L"%ls", sb_out->buff );
 					if( sb_err->used )
@@ -1105,7 +1150,7 @@ void exec( job_t *j )
 					  This is the child process. 
 					*/
 					p->pid = getpid();
-					setup_child_process( j );
+					setup_child_process( j, p );
 					launch_process( p );
 
 					/*
@@ -1201,7 +1246,7 @@ int exec_subshell( const wchar_t *cmd,
 	if( !cmd )
 	{
 		debug( 1, 
-			   L"Sent null command to subshell. This is a fish bug. If it can be reproduced, please send a bug report to %s", 
+			   _( L"Sent null command to subshell. This is a fish bug. If it can be reproduced, please send a bug report to %s." ), 
 			   PACKAGE_BUGREPORT );		
 		return 0;		
 	}
@@ -1247,7 +1292,14 @@ int exec_subshell( const wchar_t *cmd,
 					wchar_t *el;
 					*end=0;
 					el = str2wcs( begin );				
-					al_push( l, el );
+					if( !el )
+					{
+						debug( 0, _( L"Subshell '%ls' returned illegal string, discarded one entry" ), cmd );
+					}
+					else
+					{
+						al_push( l, el );
+					}
 					begin = end+1;
 					break;
 				}

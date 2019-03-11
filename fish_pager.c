@@ -422,9 +422,10 @@ static void printed_length( wchar_t *str,
 				case L'^':
 				case L'<':
 				case L'>':
-				case L'@':
 				case L'(':
 				case L')':
+				case L'[':
+				case L']':
 				case L'{':
 				case L'}':
 				case L'?':
@@ -432,6 +433,11 @@ static void printed_length( wchar_t *str,
 				case L'|':
 				case L';':
 				case L':':
+				case L'\'':
+				case L'"':
+				case L'%':
+				case L'~':
+					
 					if( has_description )
 						desc_len++;
 					else
@@ -839,8 +845,7 @@ static void init()
 {
 	struct sigaction act;
 	program_name = L"fish_pager";
-	fish_setlocale( LC_ALL, L"" );
-	
+	wsetlocale( LC_ALL, L"" );
 	
 	int out = dup( 1 );
 	close(1);

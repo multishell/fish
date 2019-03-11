@@ -51,14 +51,12 @@ fi
 %_mandir/man1/xsel.1x*
 %_mandir/man1/mimedb.1*
 %_mandir/man1/set_color.1*
-%_mandir/man1/tokenize.1*
 %_mandir/man1/count.1*
 %attr(0755,root,root) %_bindir/fish
 %attr(0755,root,root) %_bindir/fishd
 %attr(0755,root,root) %_bindir/fish_pager
 %attr(0755,root,root) %_bindir/xsel
 %attr(0755,root,root) %_bindir/set_color
-%attr(0755,root,root) %_bindir/tokenize
 %attr(0755,root,root) %_bindir/mimedb
 %attr(0755,root,root) %_bindir/count
 %config %_sysconfdir/fish
@@ -67,6 +65,7 @@ fi
 %config %_sysconfdir/fish.d/fish_*.fish
 %dir %_sysconfdir/fish.d/completions
 %config %_sysconfdir/fish.d/completions/*.fish
+%_datadir/locale/*/LC_MESSAGES/fish.mo
 
 %changelog
 * Tue Nov 29 2005 Axel Liljencrantz <axel@liljencrantz.se> 1.17.0-0

@@ -35,6 +35,7 @@
 #include "reader.h"
 #include "history.h"
 #include "intern.h"
+#include "translate.h"
 
 #include "wutil.h"
 
@@ -48,63 +49,67 @@
 /**
    Description for ~USER completion
 */
-#define COMPLETE_USER_DESC COMPLETE_SEP_STR L"User home"
+#define COMPLETE_USER_DESC _( L"User home" )
 
 /**
    Description for short variables. The value is concatenated to this description
 */
-#define COMPLETE_VAR_DESC_VAL COMPLETE_SEP_STR L"Variable: "
+#define COMPLETE_VAR_DESC_VAL _( L"Variable: " )
 
 /**
    Description for generic executable
 */
-#define COMPLETE_EXEC_DESC COMPLETE_SEP_STR L"Executable"
+#define COMPLETE_EXEC_DESC _( L"Executable" )
 /**
    Description for link to executable
 */
-#define COMPLETE_EXEC_LINK_DESC COMPLETE_SEP_STR L"Executable link"
+#define COMPLETE_EXEC_LINK_DESC _( L"Executable link" )
 
 /**
    Description for regular file
 */
-#define COMPLETE_FILE_DESC COMPLETE_SEP_STR L"File"
+#define COMPLETE_FILE_DESC _( L"File" )
 /**
    Description for character device
 */
-#define COMPLETE_CHAR_DESC COMPLETE_SEP_STR L"Character device"
+#define COMPLETE_CHAR_DESC _( L"Character device" )
 /**
    Description for block device
 */
-#define COMPLETE_BLOCK_DESC COMPLETE_SEP_STR L"Block device"
+#define COMPLETE_BLOCK_DESC _( L"Block device" )
 /**
    Description for fifo buffer
 */
-#define COMPLETE_FIFO_DESC COMPLETE_SEP_STR L"Fifo"
+#define COMPLETE_FIFO_DESC _( L"Fifo" )
 /**
    Description for symlink
 */
-#define COMPLETE_SYMLINK_DESC COMPLETE_SEP_STR L"Symbolic link"
+#define COMPLETE_SYMLINK_DESC _( L"Symbolic link" )
 /**
    Description for Rotten symlink
 */
-#define COMPLETE_ROTTEN_SYMLINK_DESC COMPLETE_SEP_STR L"Rotten symbolic link"
+#define COMPLETE_ROTTEN_SYMLINK_DESC _( L"Rotten symbolic link" )
+/**
+   Description for symlink loop
+*/
+#define COMPLETE_LOOP_SYMLINK_DESC _( L"Symbolic link loop" )
 /**
    Description for socket
 */
-#define COMPLETE_SOCKET_DESC COMPLETE_SEP_STR L"Socket"
+#define COMPLETE_SOCKET_DESC _( L"Socket" )
 /**
    Description for directory
 */
-#define COMPLETE_DIRECTORY_DESC COMPLETE_SEP_STR L"Directory"
+#define COMPLETE_DIRECTORY_DESC _( L"Directory" )
 
 /**
    Description for function
 */
-#define COMPLETE_FUNCTION_DESC COMPLETE_SEP_STR L"Function"
+#define COMPLETE_FUNCTION_DESC _( L"Function" )
 /**
    Description for builtin command
 */
-#define COMPLETE_BUILTIN_DESC COMPLETE_SEP_STR L"Builtin"
+#define COMPLETE_BUILTIN_DESC _( L"Builtin" )
 
 /**
    The command to run to get a description from a file suffix
@@ -203,6 +208,9 @@ static hash_table_t *condition_cache=0;
    Set of commands for which completions have already been loaded
 */
 static hash_table_t *loaded_completions=0;
+
+static string_buffer_t *get_desc_buff=0;
+
 
 void complete_init()
 {
@@ -321,18 +329,21 @@ static void clear_hash_value( const void *key, const void *data )
 void complete_destroy()
 {
 	complete_entry *i=first_entry, *prev;
+
 	while( i )
 	{
 		prev = i;
 		i=i->next;
 		complete_free_entry( prev );
 	}
-
+	first_entry = 0;
+	
 	if( suffix_hash )
 	{
 		hash_foreach( suffix_hash, &clear_hash_entry );
 		hash_destroy( suffix_hash );
 		free( suffix_hash );		
+		suffix_hash=0;
 	}
 	
 	if( loaded_completions )
@@ -341,8 +352,16 @@ void complete_destroy()
 					  &clear_hash_value );
 		hash_destroy( loaded_completions );
 		free( loaded_completions );
+		loaded_completions = 0;
 	}
-	
+
+	if( get_desc_buff )
+	{
+		sb_destroy( get_desc_buff );
+		free( get_desc_buff );
+		get_desc_buff = 0;
+	}
+
 }
 
 /**
@@ -376,8 +395,6 @@ void complete_add( const wchar_t *cmd,
 	complete_entry *c =
 		complete_find_exact_entry( cmd, cmd_type );
 	complete_entry_opt *opt;
-	wchar_t *tmp;
-
 
 	if( c == 0 )
 	{
@@ -424,9 +441,7 @@ void complete_add( const wchar_t *cmd,
 
 	if( desc && wcslen( desc ) )
 	{
-		tmp = wcsdupcat( COMPLETE_SEP_STR, desc );
-		opt->desc = intern( tmp );
-		free( tmp );
+		opt->desc = intern( desc );
 	}
 	else
 		opt->desc = L"";
@@ -746,7 +761,7 @@ int complete_is_valid_option( const wchar_t *str,
 						str[0] = opt[j];
 						str[1]=0;
 						al_push( errors,
-								 wcsdupcat2(L"Unknown option \'", str, L"\'", 0) );
+								 wcsdupcat2(_( L"Unknown option: " ), L"'", str, L"'", 0) );
 					}
 
 					opt_found = 0;
@@ -765,12 +780,12 @@ int complete_is_valid_option( const wchar_t *str,
 				if( hash_get_count( &gnu_match_hash )==0)
 				{
 					al_push( errors,
-							 wcsdupcat2(L"Unknown option \'", opt, L"\'", 0) );
+							 wcsdupcat2( _(L"Unknown option: "), L"'", opt, L"\'", 0) );
 				}
 				else
 				{
 					al_push( errors,
-							 wcsdupcat2(L"Multiple matches for option \'", opt, L"\'", 0) );
+							 wcsdupcat2( _(L"Multiple matches for option: "), L"'", opt, L"\'", 0) );
 				}
 			}
 		}
@@ -847,13 +862,13 @@ static const wchar_t *complete_get_desc_suffix( const wchar_t *suff_orig )
 				wchar_t *ln = (wchar_t *)al_get(&l, 0 );
 				if( wcscmp( ln, L"unknown" ) != 0 )
 				{
-					desc = wcsdupcat( COMPLETE_SEP_STR, ln);
+					desc = wcsdup( ln);
 					/*
 					  I have decided I prefer to have the description
 					  begin in uppercase and the whole universe will just
 					  have to accept it. Hah!
 					*/
-					desc[1]=towupper(desc[1]);
+					desc[0]=towupper(desc[0]);
 				}
 			}
 
@@ -880,87 +895,100 @@ static const wchar_t *complete_get_desc_suffix( const wchar_t *suff_orig )
 const wchar_t *complete_get_desc( const wchar_t *filename )
 {
 	struct stat buf;
-	const wchar_t *desc = COMPLETE_FILE_DESC;
-
+	if( !get_desc_buff )
+	{
+		get_desc_buff = malloc(sizeof(string_buffer_t) );
+		sb_init( get_desc_buff );
+	}
+	else
+	{
+		sb_clear( get_desc_buff );
+	}
 	
 	if( lwstat( filename, &buf )==0)
-	{
-		if( waccess( filename, X_OK ) == 0 )
-		{
-			desc = COMPLETE_EXEC_DESC;
-		}
-		
+	{		
 		if( S_ISCHR(buf.st_mode) )
-			desc= COMPLETE_CHAR_DESC;
+		{
+			sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_CHAR_DESC );				
+		}
 		else if( S_ISBLK(buf.st_mode) )
-			desc = COMPLETE_BLOCK_DESC;
+			sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_BLOCK_DESC );				
 		else if( S_ISFIFO(buf.st_mode) )
-			desc = COMPLETE_FIFO_DESC;
+			sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_FIFO_DESC );				
 		else if( S_ISLNK(buf.st_mode))
 		{
 			struct stat buf2;
-			desc = COMPLETE_SYMLINK_DESC;
-
-			if( waccess( filename, X_OK ) == 0 )
-				desc = COMPLETE_EXEC_LINK_DESC;
 
 			if( wstat( filename, &buf2 ) == 0 )
 			{
 				if( S_ISDIR(buf2.st_mode) )
 				{
-					desc = L"/" COMPLETE_SYMLINK_DESC;
+					sb_printf( get_desc_buff, L"/%lc%ls", COMPLETE_SEP, COMPLETE_SYMLINK_DESC );
 				}
+				else if( waccess( filename, X_OK ) == 0 )
+					sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_EXEC_LINK_DESC );				
+				else
+					sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_SYMLINK_DESC );
 			}
 			else
 			{
 				switch( errno )
 				{
 					case ENOENT:
-						desc = COMPLETE_ROTTEN_SYMLINK_DESC;
+						sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_ROTTEN_SYMLINK_DESC );
 						break;
 
 					case EACCES:
 						break;
 
 					default:
-						wperror( L"stat" );
+						if( errno == ELOOP )
+						{
+							sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_LOOP_SYMLINK_DESC );
+						}
+						
+						/*
+						  Some kind of broken symlink. We ignore it
+						  here, and it will get a 'file' description,
+						  or one based on suffix.
+						*/
 						break;
 				}
 			}
+
 		}
 		else if( S_ISSOCK(buf.st_mode))
-			desc= COMPLETE_SOCKET_DESC;
+			sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_SOCKET_DESC );
 		else if( S_ISDIR(buf.st_mode) )
-			desc= L"/" COMPLETE_DIRECTORY_DESC;
+			sb_printf( get_desc_buff, L"/%lc%ls", COMPLETE_SEP, COMPLETE_DIRECTORY_DESC );
+		else if( waccess( filename, X_OK ) == 0 )
+		{
+			sb_printf( get_desc_buff, L"%lc%ls", COMPLETE_SEP, COMPLETE_EXEC_DESC );
+		}
+
 	}
-/*	else
-  {
 
-  switch( errno )
-  {
-  case EACCES:
-  break;
-
-  default:
-  fprintf( stderr, L"The following error happened on file %ls\n", filename );
-  wperror( L"lstat" );
-  break;
-  }
-  }
-*/
-	if( desc == COMPLETE_FILE_DESC )
+	if( wcslen((wchar_t *)get_desc_buff->buff) == 0 )
 	{
 		wchar_t *suffix = wcsrchr( filename, L'.' );
 		if( suffix != 0 )
 		{
 			if( !wcsrchr( suffix, L'/' ) )
 			{
-				desc = complete_get_desc_suffix( suffix );
+				sb_printf( get_desc_buff,
+						   L"%lc%ls",
+						   COMPLETE_SEP,
+						   complete_get_desc_suffix( suffix ) );			
 			}
 		}
+		else
+			sb_printf( get_desc_buff,
+					   L"%lc%ls", 
+					   COMPLETE_SEP, 
+					   COMPLETE_FILE_DESC );			
 	}
 
-	return desc;
+	return (wchar_t *)get_desc_buff->buff;
 }
 
 /**
@@ -976,7 +1004,7 @@ const wchar_t *complete_get_desc( const wchar_t *filename )
 
    \param comp_out the destination list
    \param wc_escaped the prefix, possibly containing wildcards. The wildcard should not have been unescaped, i.e. '*' should be used for any string, not the ANY_STRING character.
-   \param desc the default description, used for completions with no embedded description
+   \param desc the default description, used for completions with no embedded description. The description _may_ contain a COMPLETE_SEP character, if not, one will be prefixed to it
    \param desc_func the function that generates a description for those completions witout an embedded description
    \param possible_comp the list of possible completions to iterate over
 */
@@ -1006,6 +1034,7 @@ static void copy_strings_with_prefix( array_list_t *comp_out,
 
 		wildcard_complete( next_str, wc, desc, desc_func, comp_out );
 	}
+
 	free( wc );
 
 }
@@ -1028,8 +1057,11 @@ static void complete_cmd_desc( const wchar_t *cmd, array_list_t *comp )
 	if( !cmd )
 		return;
 
-	cmd_start=wcschr(cmd, L'/');
-	if( !cmd_start )
+	cmd_start=wcsrchr(cmd, L'/');
+
+	if( cmd_start )
+		cmd_start++;
+	else
 		cmd_start = cmd;
 	
 	cmd_len = wcslen(cmd_start);
@@ -1049,131 +1081,127 @@ static void complete_cmd_desc( const wchar_t *cmd, array_list_t *comp )
 	
 	esc = expand_escape( cmd_start, 1 );		
 	
-	if( esc )
+	if( whatis_path )
 	{
+		apropos_cmd =wcsdupcat2( L"grep ^/dev/null -F <", whatis_path, L" ", esc, 0 );
+	}
+	else
+	{
+		apropos_cmd = wcsdupcat( L"apropos ^/dev/null ", esc );
+	}
+	free(esc);		
 	
-		if( whatis_path )
+	al_init( &list );
+	hash_init( &lookup, &hash_wcs_func, &hash_wcs_cmp );
+
+	/*
+	  First locate a list of possible descriptions using a single
+	  call to apropos or a direct search if we know the location
+	  of the whatis database. This can take some time on slower
+	  systems with a large set of manuals, but it should be ok
+	  since apropos is only called once.
+	*/
+	exec_subshell( apropos_cmd, &list );
+	/*
+	  Then discard anything that is not a possible completion and put
+	  the result into a hashtable with the completion as key and the
+	  description as value.
+	  
+	  Should be reasonably fast, since no memory allocations are needed.
+	*/
+	for( i=0; i<al_get_count( &list); i++ )
+	{
+		wchar_t *el = (wchar_t *)al_get( &list, i );
+		wchar_t *key, *key_end, *val_begin;
+		
+		if( !el )
+			continue;
+		
+		//fwprintf( stderr, L"%ls\n", el );
+		if( wcsncmp( el, cmd_start, cmd_len ) != 0 )
+			continue;
+		//fwprintf( stderr, L"%ls\n", el );
+		key = el + cmd_len;
+		
+		key_end = wcschr( el, L' ' );
+		if( !key_end )
 		{
-			apropos_cmd =wcsdupcat2( L"grep ^/dev/null -F <", whatis_path, L" ", esc, 0 );
+			key_end = wcschr( el, L'\t' );
+			if( !key_end )
+			{
+				continue;
+			}
+		}
+		
+		*key_end = 0;
+		val_begin=key_end+1;
+		
+		//fwprintf( stderr, L"Key %ls\n", el );
+		
+		while( *val_begin != L'-' && *val_begin)
+		{
+			val_begin++;
+		}
+		
+		if( !val_begin )
+		{
+			continue;
+		}
+		
+		val_begin++;
+		
+		while( *val_begin == L' ' || *val_begin == L'\t' )
+		{
+			val_begin++;
+		}
+		
+		if( !*val_begin )
+		{
+			continue;
+		}
+		
+		/*
+		  And once again I make sure the first character is uppercased
+		  because I like it that way, and I get to decide these
+		  things.
+		*/
+		val_begin[0]=towupper(val_begin[0]);
+		hash_put( &lookup, key, val_begin );				
+	}
+
+	/*
+	  Then do a lookup on every completion and if a match is found,
+	  change to the new description. 
+	  
+	  This needs to do a reallocation for every description added, but
+	  there shouldn't be that many completions, so it should be ok.
+	*/
+	for( i=0; i<al_get_count(comp); i++ )
+	{
+		wchar_t *el = (wchar_t *)al_get( comp, i );
+		wchar_t *cmd_end = wcschr( el, 
+								   COMPLETE_SEP );
+		wchar_t *new_desc;
+		
+		if( cmd_end )
+			*cmd_end = 0;
+
+		new_desc = (wchar_t *)hash_get( &lookup,
+										el );
+		
+		if( new_desc )
+		{
+			wchar_t *new_el = wcsdupcat2( el,
+										  COMPLETE_SEP_STR,
+										  new_desc, 
+										  0 );
+			al_set( comp, i, new_el );
+			free( el );			
 		}
 		else
 		{
-			apropos_cmd = wcsdupcat( L"apropos ^/dev/null ", esc );
-		}
-		free(esc);		
-
-		al_init( &list );
-		hash_init( &lookup, &hash_wcs_func, &hash_wcs_cmp );
-
-		/*
-		  First locate a list of possible descriptions using a single
-		  call to apropos or a direct search if we know the location
-		  of the whatis database. This can take some time on slower
-		  systems with a large set of manuals, but it should be ok
-		  since apropos is only called once.
-		*/
-		exec_subshell( apropos_cmd, &list );
-		/*
-		  Then discard anything that is not a possible completion and put
-		  the result into a hashtable with the completion as key and the
-		  description as value.
-
-		  Should be reasonably fast, since no memory allocations are needed.
-		*/
-		for( i=0; i<al_get_count( &list); i++ )
-		{
-			wchar_t *el = (wchar_t *)al_get( &list, i );
-			wchar_t *key, *key_end, *val_begin;
-			
-			if( !el )
-				continue;
-			
-			//fwprintf( stderr, L"%ls\n", el );
-			if( wcsncmp( el, cmd_start, cmd_len ) != 0 )
-				continue;
-			//fwprintf( stderr, L"%ls\n", el );
-			key = el + cmd_len;
-
-			key_end = wcschr( el, L' ' );
-			if( !key_end )
-			{
-				key_end = wcschr( el, L'\t' );
-				if( !key_end )
-				{
-					continue;
-				}
-			}
-			
-			*key_end = 0;
-			val_begin=key_end+1;
-
-			//fwprintf( stderr, L"Key %ls\n", el );
-
-			while( *val_begin != L'-' && *val_begin)
-			{
-				val_begin++;
-			}
-			
-			if( !val_begin )
-			{
-				continue;
-			}
-			
-			val_begin++;
-				
-			while( *val_begin == L' ' || *val_begin == L'\t' )
-			{
-				val_begin++;
-			}
-			
-			if( !*val_begin )
-			{
-				continue;
-			}
-			
-			/*
-			  And once again I make sure the first character is uppercased
-			  because I like it that way, and I get to decide these
-			  things.
-			*/
-			val_begin[0]=towupper(val_begin[0]);
-			hash_put( &lookup, key, val_begin );				
-		}
-
-		/*
-		  Then do a lookup on every completion and if a match is found,
-		  change to the new description. 
-
-		  This needs to do a reallocation for every description added, but
-		  there shouldn't be that many completions, so it should be ok.
-		*/
-		for( i=0; i<al_get_count(comp); i++ )
-		{
-			wchar_t *el = (wchar_t *)al_get( comp, i );
-			wchar_t *cmd_end = wcschr( el, 
-									   COMPLETE_SEP );
-			wchar_t *new_desc;
-		
 			if( cmd_end )
-				*cmd_end = 0;
-
-			new_desc = (wchar_t *)hash_get( &lookup,
-											el );
-		
-			if( new_desc )
-			{
-				wchar_t *new_el = wcsdupcat2( el,
-											  COMPLETE_SEP_STR,
-											  new_desc, 
-											  0 );
-				al_set( comp, i, new_el );
-				free( el );			
-			}
-			else
-			{
-				if( cmd_end )
-					*cmd_end = COMPLETE_SEP;
-			}
+				*cmd_end = COMPLETE_SEP;
 		}
 	}
 	
@@ -1303,15 +1331,18 @@ static void complete_cmd( const wchar_t *cmd,
 				wchar_t *nxt = (wchar_t *)al_get( &tmp, i );
 				
 				wchar_t *desc = wcsrchr( nxt, COMPLETE_SEP );
-				int is_valid = (desc && (wcscmp(desc, 
-												COMPLETE_DIRECTORY_DESC)==0));
-				if( is_valid )
+				if( desc )
 				{
-					al_push( comp, nxt );
-				}
-				else
-				{
-					free(nxt);
+					int is_valid = desc && (wcscmp(desc+1, 
+												   COMPLETE_DIRECTORY_DESC)==0);
+					if( is_valid )
+					{
+						al_push( comp, nxt );
+					}
+					else
+					{
+						free(nxt);
+					}
 				}
 			}
 		}
@@ -1325,10 +1356,10 @@ static void complete_cmd( const wchar_t *cmd,
 
 /**
    Evaluate the argument list (as supplied by complete -a) and insert
-   any return matching completions. Matching is done using\c
+   any return matching completions. Matching is done using \c
    copy_strings_with_prefix, meaning the completion may contain
    wildcards. Logically, this is not always the right thing to do, but
-   I have yet to come up with a case where one would not want this.
+   I have yet to come up with a case where this matters.
    
    \param str The string to complete.
    \param args The list of option arguments to be evaluated.
@@ -1340,12 +1371,24 @@ static void complete_from_args( const wchar_t *str,
 								const wchar_t *desc,
 								array_list_t *comp_out )
 {
+	int was_interactive = is_interactive;
+	
 	array_list_t possible_comp;
+	int i;
+	
 	al_init( &possible_comp );
 
+	is_interactive=0;
 	eval_args( args, &possible_comp );
-
-	debug( 3, L"desc is '%ls', %d long\n", desc, wcslen(desc) );
+	is_interactive=was_interactive;
+	
+	/* We need to unescape these strings before matching them */
+	for( i=0; i< al_get_count( &possible_comp ); i++ )
+	{
+		wchar_t *next = (wchar_t *)al_get( &possible_comp, i );
+		al_set( &possible_comp , i, unescape( next, 0 ) );
+		free( next );
+	}
 
 	copy_strings_with_prefix( comp_out, str, desc, 0, &possible_comp );
 
@@ -1488,7 +1531,6 @@ void complete_load( wchar_t *cmd,
 	sb_init( &path );
 	
 	expand_variable_array( path_var, &path_list );
-
 
 	/*
 	  Iterate over path searching for suitable completion files
@@ -1700,12 +1742,13 @@ static int complete_param( wchar_t *cmd_orig,
 						short_ok( str, o->short_opt, i->short_opt_str ) )
 					{
 						wchar_t *next_opt =
-							malloc( sizeof(wchar_t)*(2 + wcslen(o->desc)));
+							malloc( sizeof(wchar_t)*(3 + wcslen(o->desc)));
 						if( !next_opt )
 							die_mem();
 						
 						next_opt[0]=o->short_opt;
-						next_opt[1]=L'\0';
+						next_opt[1]=COMPLETE_SEP;						
+						next_opt[2]=L'\0';			
 						wcscat( next_opt, o->desc );
 						al_push( comp_out, next_opt );
 					}
@@ -1732,14 +1775,14 @@ static int complete_param( wchar_t *cmd_orig,
 							if( o->old_mode || !(o->result_mode & NO_COMMON ) )
 							{
 								al_push( comp_out,
-										 wcsdupcat(&((wchar_t *)whole_opt.buff)[wcslen(str)], o->desc) );
+										 wcsdupcat2(&((wchar_t *)whole_opt.buff)[wcslen(str)], COMPLETE_SEP_STR, o->desc, (void *)0) );
 //								fwprintf( stderr, L"Add without param %ls\n", o->long_opt );
 							}
 							
 							if( !o->old_mode && ( wcslen(o->comp) || (o->result_mode & NO_COMMON ) ) )
 							{
 								al_push( comp_out,
-										 wcsdupcat2(&((wchar_t *)whole_opt.buff)[wcslen(str)], L"=", o->desc, 0) );
+										 wcsdupcat2(&((wchar_t *)whole_opt.buff)[wcslen(str)], L"=", COMPLETE_SEP_STR, o->desc, (void *)0) );
 //								fwprintf( stderr, L"Add with param %ls\n", o->long_opt );
 							}
 							
@@ -1809,7 +1852,7 @@ static int complete_variable( const wchar_t *var,
 			/*
 			  Variable description is 'Variable: VALUE
 			*/
-			blarg = wcsdupcat2( &name[varlen], COMPLETE_VAR_DESC_VAL, value, 0 );
+			blarg = wcsdupcat2( &name[varlen], COMPLETE_SEP_STR, COMPLETE_VAR_DESC_VAL, value, 0 );
 
 			if( blarg )
 			{
@@ -1936,6 +1979,7 @@ static int try_complete_user( const wchar_t *cmd,
 						{
 							wchar_t *blarg = wcsdupcat2( &pw_name[name_len], 
 														 L"/", 
+														 COMPLETE_SEP_STR,
 														 COMPLETE_USER_DESC,
 														 0 );
 							if( blarg != 0 )

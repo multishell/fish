@@ -23,7 +23,7 @@ Example:
 calls the \c echo command. \c echo is a command which will write its
 arguments to the screen. In the example above, the output will be
 'hello world'. Everything in fish is done with commands. There are
-commands for performing a set of command multiple times, commands for
+commands for performing a set of commands multiple times, commands for
 assigning variables, commands for treating a group of commands as a
 single command, etc.. And every single command follows the same simple
 syntax.
@@ -38,7 +38,7 @@ topic. There are manual pages for almost every command on most
 computers. There are also manual pages for many other things, such as
 system libraries and important files.
 
-Every program on a computer can be used as a command in \c fish. If
+Every program on your computer can be used as a command in \c fish. If
 the program file is located in one of the directories in the <a
 href="#variables-special">PATH</a>, it is sufficient to type the name
 of the program to use it. Otherwise the whole filename, including the
@@ -78,7 +78,11 @@ Example:
 
 <tt>rm "cumbersome filename.txt"</tt>
 
-Will remove the file 'cumbersome filename.txt'.
+Will remove the file 'cumbersome filename.txt', while
+
+<tt>rm cumbersome filename.txt</tt>
+
+would remove the two files 'cumbersome' and 'filenmae.txt'.
 
 \subsection escapes Escaping characters
 
@@ -138,8 +142,8 @@ which directs the output of the echo command to the file error.txt.
 <tt>DESTINATION</tt> can be one of the following: 
 
 - A filename. The output will be written to the specified file.
-- An ampersand (\&) followed by the number of a file descriptor. The file descriptor will be a duplicate of the specified file descriptor.
-- A minus sign (-). The FD will be closed.
+- An ampersand (\&) followed by the number of another file descriptor. The file descriptor will be a duplicate of the specified file descriptor.
+- A minus sign (-). The file descriptor will be closed.
 
 Example:
 
@@ -239,15 +243,16 @@ type <tt>fg -h</tt> or <tt>help fg</tt>.
 
 Tab completion is one of the most time saving features of any modern
 shell. By tapping the tab key, the user asks \c fish to guess the rest
-of the command or parameter that the user is currently typing. If
-there is only one possible completion, \c fish will write it out. If
-there is more than one completion, \c fish will write out the longest
-common prefix that all completions have in common. If all completions
-differ on the first character, a list of all possible completions is
-printed. The list features descriptions of the completions and if the
-list doesn't fit the screen, it is scrollable by using the arrow keys,
-the page up/page down keys or the space bar. Press any other key will
-exit the list and insert the pressed key into the command line.
+of the command or parameter that the user is currently typing. If \c
+fish can only find one possible completion, \c fish will write it
+out. If there is more than one completion, \c fish will write out the
+longest common prefix that all completions have in common. If all
+completions differ on the first character, a list of all possible
+completions is printed. The list features descriptions of the
+completions and if the list doesn't fit the screen, it is scrollable
+by using the arrow keys, the page up/page down keys or the space
+bar. Press any other key will exit the list and insert the pressed key
+into the command line.
 
 These are the general purpose tab completions that \c fish provides:
 
@@ -261,20 +266,20 @@ These are the general purpose tab completions that \c fish provides:
 of these completions are simple options like the \c -l option for \c
 ls, but some are more advanced. The latter include:
 
-- The programs 'man' and 'whatis' complete using all installed 
-manual pages.
-- The 'make' program complete using all targets in the Makefile in 
-the current directory.
-- The 'mount' command complete using all mount points specified in fstab.
-- The 'ssh' command complete using all hosts in that are stored 
-in the known_hosts file. (see the ssh documentation for more information) 
-- The 'su' command complete using all users on the system
-- The \c apt-get, \c rpm and \c tym commands complete using all installed packages.
+- The programs 'man' and 'whatis' show all installed 
+manual pages as completions.
+- The 'make' program uses all targets in the Makefile in 
+the current directory as completions.
+- The 'mount' command uses all mount points specified in fstab as completions.
+- The 'ssh' command uses all hosts in that are stored 
+in the known_hosts file as completions. (see the ssh documentation for more information) 
+- The 'su' command uses all users on the system as completions.
+- The \c apt-get, \c rpm and \c yum commands use all installed packages as completions.
 
 \subsection completion-own Writing your own completions
 
 Specifying your own completions is not complicated. To specify a
-completion, one simply uses the \c complete command. \c complete takes
+completion, use the \c complete command. \c complete takes
 as a parameter the name of the command to specify a completion
 for. For example, to add a completion for the program \c myprog, one
 would start the completion command with <tt>complete -c myprog
@@ -361,7 +366,7 @@ PNG format.
 
 \subsection expand-brace Brace expansion
 
-A comma separated list of characters enclosed en curly braces will be
+A comma separated list of characters enclosed in curly braces will be
 expanded so each element of the list becomes a new parameter.
 
 Example:
@@ -403,8 +408,9 @@ there once along the way was a '}' in there somewhere, and } is not a
 valid character in a variable name.  So anything after the otherwise
 pointless bracket expansion becomes NOT a part of the variable name,
 even if it happens to be a legal variable name character. That's why
-'{$USER}san' works. A case of one syntax just lending itself so nicely
-to solving an unrelated problem in it's spare time.
+'{$USER}san' looks for the variable '$USER' and not for the variable
+'$USERsan'. It's a case of one syntax lending itself nicely to
+solving an unrelated problem in it's spare time.
 
 Variable expansion is the only type of expansion performed on double
 quoted strings. There is, however, an important difference in how
@@ -637,7 +643,7 @@ echo $smurf
 \subsection variables-special Special variables
 
 The user can change the settings of \c fish by changing the values of
-certain environment variables. 
+certain environment variables.
 
 - \c BROWSER, which is the users preferred web browser. If this variable is set, fish will use the specified browser instead of the system default browser to display the fish documentation.
 - \c CDPATH, which is an array of directories in which to search for the new directory for the \c cd builtin.
@@ -655,6 +661,7 @@ values of these variables. They are:
 - \c PWD, which is the current working directory. 
 - \c status, which is the exit status of the last foreground job to exit. If a job contains pipelines, the status of the last command in the pipeline is the status for the job.
 - \c USER, which is the username. This variable can only be changed by the root user.
+- \c LANG, \c LC_ALL, \c LC_COLLATE, \c LC_CTYPE, \c LC_MESSAGES, \c LC_MONETARY, \c LC_NUMERIC and \c LC_TIME set the language option for the shell and subprograms. See the section <a href='#variables-locale'>Locale variables</a> for more information.
 
 Variables whose name are in uppercase are exported to the commands
 started by fish. This rule is not enforced by fish, but it is good
@@ -662,6 +669,22 @@ coding practice to use casing to distinguish between exported and
 unexported variables. \c fish also uses several variables
 internally. Such variables are prefixed with the string __FISH or
 __fish. These should be ignored by the user.
+
+\subsection variables-locale Locale variables
+
+The most common way to set the locale to use a command like 'set -x
+LANG en_GB.utf8', which sets the current locale to be the english
+language, as used in Great Britain, using the UTF-8 character set. For
+a list of available locales, use 'locale -a'.
+
+\c LANG, \c LC_ALL, \c LC_COLLATE, \c LC_CTYPE, \c LC_MESSAGES, \c
+LC_MONETARY, \c LC_NUMERIC and LC_TIME set the language option for the
+shell and subprograms. These variables work as follows: \c LC_ALL
+forces all the aspects of the locale to the specified value. If LC_ALL
+is set, all other locale variables will be ignored. The other LC_
+variables set the specified aspect of the locale information. LANG
+is a fallback value, it will be used if none of the LC_ variables are
+specified.
 
 \section builtin-overview Builtins 
 
@@ -678,6 +701,7 @@ The following commands are distributed with fish. Many of them are
 builtins or shellscript functions, and can only be used inside fish.
 
 - <a href="builtins.html#source">.</a>, read and execute the commands in a file 
+- <a href="builtins.html#and">and</a>, execute command if previous command suceeded
 - <a href="builtins.html#bg">bg</a>, set a command to the background
 - <a href="builtins.html#begin">begin</a>, execute a block of commands
 - <a href="builtins.html#bind">bind</a>, change keyboard bindings
@@ -709,6 +733,7 @@ builtins or shellscript functions, and can only be used inside fish.
 - <a href="commands.html#mimedb">mimedb</a>, view mimedata about a file
 - <a href="commands.html#nextd">nextd</a>, move forward in the directory history
 - <a href="builtins.html#not">not</a>, negates the exit status of any command
+- <a href="builtins.html#or">or</a>, execute a command if previous command failed
 - <a href="commands.html#popd">popd</a>, move to the topmost directory on the directory stack
 - <a href="commands.html#prevd">prevd</a>, move backwards in the direcotry stack
 - <a href="commands.html#pushd">pushd</a>, push the surrent directory onto the directory stack
@@ -720,7 +745,7 @@ builtins or shellscript functions, and can only be used inside fish.
 - <a href="builtins.html#switch">switch</a>, conditionally execute a block of commands
 - <a href="commands.html#tokenize">tokenize</a>, split a string up into multiple tokens
 - <a href="builtins.html#ulimit">ulimit</a>, set or get the shells resurce usage limits
-- <a href="commandss.html#umask">umask</a>, set or get the file creation mask
+- <a href="commands.html#umask">umask</a>, set or get the file creation mask
 - <a href="builtins.html#while">while</a>, perform a block of commands while a condition is met
 
 For more information about these commands, use the <tt>--help</tt>
@@ -750,7 +775,7 @@ Here are some of the commands available in the editor:
 - Alt-d move next word to the <a href="#killring">killring</a>
 - Alt-w prints a short description of the command under the cursor 
 - Alt-l lists the contents of the current directory, unless the cursor is over a directory argument, in which case the contents of that directory will be listed 
-- Alt-p adds the string '| less;' to the end of the job under the cursor. The result is that the output of the command will be paged.aadddddssss
+- Alt-p adds the string '| less;' to the end of the job under the cursor. The result is that the output of the command will be paged.
 
 You can change these key bindings by making an inputrc file. To do
 this, copy the file /etc/fish_inputrc to your home directory and
@@ -922,6 +947,9 @@ function fish_prompt -d "Write out the prompt"
 	printf '\%s\@\%s\%s\%s\%s> ' (whoami) (hostname|cut -d . -f 1) (set_color \$fish_color_cwd) (prompt_pwd) (set_color normal)
 end
 </pre>
+
+where \c prompt_pwd is a shellscript function that displays a condensed version of the current working direcotry.
+
 </p>
 
 
@@ -975,7 +1003,68 @@ it's initalization files to function properly. To solve this
 problem, either copy the initialization files to each fish users home
 directory, or install them in /etc.
 
+\section i18n Translating fish to other languages
 
+Fish uses the GNU gettext library to implement translation to multiple
+languages. If fish is not available in your language, please consider
+making a translation. Currently, only the shell itself can be
+translated, a future version of fish should also include translated
+manuals.
+
+To make a translation of fish, you will first need the sourcecode,
+available from the <a href='http://roo.no-ip.org/fish'>fish
+homepage</a>. Download the latest version, and then extract it using a
+command like <code>tar -zxf fish-VERSION.tar.gz</code>.
+
+Next, cd into the newly created fish directory using <code>cd
+fish-VERSION</code>.
+
+You will now need to configure the sourcecode using the command
+<code>./configure</code>. This step might take a while.
+
+Before you continue, you will need to know the ISO 639 language code
+of the language you are translating to. These codes can be found <a
+href='http://www.w3.org/WAI/ER/IG/ert/iso639.htm'>here</a>. For
+example, the language code for Uighur is ug.
+
+Now you have the sourcecode and it is properly configured. Lets start
+translating. To do this, first create an empty translation table for
+the language you wish to translate to by writing <code>make
+po/[LANGUAGE CODE].po</code> in the fish terminal. For example, if you
+are translating to Uighur, you should write <code>make
+po/ug.po</code>. This should create the file po/ug.po, a template
+translation table containing all the strings that need to be
+translated.
+
+Now you are all set up to translate fish to a new language. Open the
+newly created .po file in your editor of choice, and start
+translating. The .po file format is rather simple. It contains pairs
+of string in a format like:
+
+<pre>
+msgid "%ls: No suitable job\n"
+msgstr ""
+</pre>
+
+The first line is the english string to translate, the second line
+should contain your translation. For example, in swedish the above
+might become:
+
+<pre>
+msgid "%ls: No suitable job\n"
+msgstr "%ls: Inget jobb matchar\n"
+</pre>
+
+%s, %ls, %d and other tokens beginning with a '%' are
+placeholders. These will be replaced by a value by fish at
+runtime. You must always take care to use exactly the same
+placeholders in the same order in your translation. (Actually, there
+are ways to avoid this, but they are to complicated for this short
+introduction. See the full manual for the printf C function for more
+information.)
+
+Once you have provided a translation for fish, please send it to <a
+href='fish-users@lists.sf.net'>fish-users@lists.sf.net</a>.
 
 \section todo Missing features and bugs
 
@@ -1022,10 +1111,10 @@ g++, javac, java, gcj, lpr, doxygen, whois, find)
 \subsection bugs Known bugs
 
 - Completion for gcc -\#\#\# option doesn't work.
-- Many completions are made specifically for the GNU 
-version of a POSIX command
+- Many completions are made specifically for the GNU version of a POSIX command
 - Yanking weird characters from clipboard prints Unicode escapes
 - Suspending and then resuming pipelines containing a builtin seems to be broken.
+- Interactive input seems broken inside blocks. Is local echo and other terminal values not restored when in an interactive block?
 
 If you think you have found a bug not described here, please send a
 report to <a href="mailto:axel@liljencrantz.se"> axel@liljencrantz.se
