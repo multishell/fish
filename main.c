@@ -63,6 +63,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "halloc_util.h"
 #include "history.h"
 
+/**
+   The string describing the single-character options accepted by the main fish binary
+*/
+#define GETOPT_STRING "hilnvc:p:d:"
 
 /**
    Parse init files
@@ -80,9 +84,9 @@ static int read_init()
 
 	env_set( L"__fish_help_dir", DOCDIR, 0);	
 
-	eval( L"builtin cd " DATADIR L"/fish 2>/dev/null; . fish 2>/dev/null", 0, TOP );
-	eval( L"builtin cd " SYSCONFDIR L" 2>/dev/null; . fish 2>/dev/null", 0, TOP );
-	eval( L"builtin cd 2>/dev/null;. .fish 2>/dev/null", 0, TOP );
+	eval( L"builtin cd " DATADIR L"/fish 2>/dev/null; and . fish 2>/dev/null", 0, TOP );
+	eval( L"builtin cd " SYSCONFDIR L" 2>/dev/null; and . fish 2>/dev/null", 0, TOP );
+	eval( L"builtin cd 2>/dev/null; and . .fish 2>/dev/null", 0, TOP );
 
 	if( chdir( cwd ) == -1 )
 	{
@@ -165,14 +169,14 @@ int main( int argc, char **argv )
 		
 		int opt = getopt_long( argc,
 							   argv, 
-							   "hilnvc:p:d:", 
+							   GETOPT_STRING,
 							   long_options, 
 							   &opt_index );
 		
 #else	
 		int opt = getopt( argc,
 						  argv, 
-						  "hilnvc:p:d:" );
+						  GETOPT_STRING );
 #endif
 		if( opt == -1 )
 			break;
@@ -259,7 +263,6 @@ int main( int argc, char **argv )
 
 	proc_init();	
 	event_init();	
-	exec_init();	
 	wutil_init();
 	parser_init();
 	builtin_init();
@@ -276,7 +279,7 @@ int main( int argc, char **argv )
 			wchar_t *cmd_wcs = str2wcs( cmd );
 			res = eval( cmd_wcs, 0, TOP );
 			free(cmd_wcs);
-			reader_exit(0);
+			reader_exit(0, 0);
 		}
 		else
 		{
@@ -338,7 +341,7 @@ int main( int argc, char **argv )
 	}
 
 	proc_fire_event( L"PROCESS_EXIT", EVENT_EXIT, getpid(), res );
-
+	
 	history_destroy();
 	complete_destroy();
 	proc_destroy();
@@ -348,12 +351,12 @@ int main( int argc, char **argv )
 	reader_destroy();
 	parser_destroy();
 	wutil_destroy();
-	exec_destroy();	
 	event_destroy();
 
 	common_destroy();
 	halloc_util_destroy();
 	intern_free_all();
+
 
 	return res;	
 }

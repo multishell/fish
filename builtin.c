@@ -497,27 +497,24 @@ static int builtin_builtin(  wchar_t **argv )
 	if( list )
 	{
 		array_list_t names;
-		wchar_t **names_arr;
 		int i;
 
 		al_init( &names );
 		builtin_get_names( &names );
-		names_arr = list_to_char_arr( &names );
-		qsort( names_arr,
-			   al_get_count( &names ),
-			   sizeof(wchar_t *),
-			   (int (*)(const void *, const void *))&wcsfilecmp );
+		sort_list( &names );
+		
 		for( i=0; i<al_get_count( &names ); i++ )
 		{
-			if( wcscmp( names_arr[i], L"count" ) == 0 )
+			wchar_t *el = (wchar_t *)al_get( &names, i );
+			
+			if( wcscmp( el, L"count" ) == 0 )
 				continue;
 
 			sb_append2( sb_out,
-						names_arr[i],
+						el,
 						L"\n",
 						(void *)0 );
 		}
-		free( names_arr );
 		al_destroy( &names );
 	}
 	return 0;
@@ -677,7 +674,6 @@ static int builtin_functions( wchar_t **argv )
 	wchar_t *desc=0;
 
 	array_list_t names;
-	wchar_t **names_arr;
 
 	int argc=builtin_count_args( argv );
 	int list=0;
@@ -820,11 +816,7 @@ static int builtin_functions( wchar_t **argv )
 
 		al_init( &names );
 		function_get_names( &names, show_hidden );
-		names_arr = list_to_char_arr( &names );
-		qsort( names_arr,
-			   al_get_count( &names ),
-			   sizeof(wchar_t *),
-			   (int (*)(const void *, const void *))&wcsfilecmp );
+		sort_list( &names );
 		if( is_screen )
 		{
 			string_buffer_t buff;
@@ -833,12 +825,12 @@ static int builtin_functions( wchar_t **argv )
 			for( i=0; i<al_get_count( &names ); i++ )
 			{
 				sb_append2( &buff,
-							names_arr[i],
+							al_get(&names, i),
 							L", ",
 							(void *)0 );
 			}
 
-			write_screen( (wchar_t *)buff.buff );
+			write_screen( (wchar_t *)buff.buff, sb_out );
 			sb_destroy( &buff );
 		}
 		else
@@ -846,13 +838,12 @@ static int builtin_functions( wchar_t **argv )
 			for( i=0; i<al_get_count( &names ); i++ )
 			{
 				sb_append2( sb_out,
-							names_arr[i],
+							al_get(&names, i),
 							L"\n",
 							(void *)0 );
 			}
 		}
 
-		free( names_arr );
 		al_destroy( &names );
 		return 0;
 	}
@@ -865,16 +856,13 @@ static int builtin_functions( wchar_t **argv )
 			sb_append( sb_out, _( L"Current function definitions are:\n\n" ) );
 			al_init( &names );
 			function_get_names( &names, show_hidden );
-			names_arr = list_to_char_arr( &names );
-			qsort( names_arr,
-				   al_get_count( &names ),
-				   sizeof(wchar_t *),
-				   (int (*)(const void *, const void *))&wcsfilecmp );
+			sort_list( &names );
+			
 			for( i=0; i<al_get_count( &names ); i++ )
 			{
-				functions_def( names_arr[i] );
+				functions_def( (wchar_t *)al_get( &names, i ) );
 			}
-			free( names_arr );
+			
 			al_destroy( &names );
 			break;
 		}
@@ -1170,7 +1158,6 @@ static int builtin_function( wchar_t **argv )
 	{
 		int i;
 		array_list_t names;
-		wchar_t **names_arr;
 		int chars=0;
 
 //		builtin_print_help( argv[0], sb_err );
@@ -1180,14 +1167,11 @@ static int builtin_function( wchar_t **argv )
 
 		al_init( &names );
 		function_get_names( &names, 0 );
-		names_arr = list_to_char_arr( &names );
-		qsort( names_arr,
-			   al_get_count( &names ),
-			   sizeof(wchar_t *),
-			   (int (*)(const void *, const void *))&wcsfilecmp );
+		sort_list( &names );
+
 		for( i=0; i<al_get_count( &names ); i++ )
 		{
-			wchar_t *nxt = names_arr[i];
+			wchar_t *nxt = (wchar_t *)al_get( &names, i );
 			int l = wcslen( nxt + 2 );
 			if( chars+l > common_get_width() )
 			{
@@ -1198,7 +1182,6 @@ static int builtin_function( wchar_t **argv )
 			sb_append2( sb_err,
 						nxt, L"  ", (void *)0 );
 		}
-		free( names_arr );
 		al_destroy( &names );
 		sb_append( sb_err, L"\n" );
 
@@ -1351,7 +1334,7 @@ static int builtin_read( wchar_t **argv )
 	int exit_res=0;
 	
 	woptind=0;
-
+	
 	while( 1 )
 	{
 		const static struct woption
@@ -1438,7 +1421,6 @@ static int builtin_read( wchar_t **argv )
 
 			case L'?':
 				builtin_print_help( argv[0], sb_err );
-
 
 				return 1;
 		}
@@ -1874,7 +1856,7 @@ static int builtin_exit( wchar_t **argv )
 			return 1;
 
 	}
-	reader_exit( 1 );
+	reader_exit( 1, 0 );
 	return ec;
 }
 
@@ -2077,7 +2059,7 @@ static void make_first( job_t *j )
 */
 static int builtin_fg( wchar_t **argv )
 {
-	job_t *j;
+	job_t *j=0;
 
 	if( argv[1] == 0 )
 	{
@@ -2127,27 +2109,40 @@ static int builtin_fg( wchar_t **argv )
 	}
 	else
 	{
-		int pid = abs(wcstol( argv[1], 0, 10 ));
-		j = job_get_from_pid( pid );
-		if( !j )
+		wchar_t *end;		
+		int pid = abs(wcstol( argv[1], &end, 10 ));
+		
+		if( *end )
 		{
-			sb_printf( sb_err,
-					   _( L"%ls: No suitable job: %d\n" ),
-					   argv[0],
-					   pid );
-			builtin_print_help( argv[0], sb_err );
+				sb_printf( sb_err,
+						   _( L"%ls: Argument must be a number: %ls\n" ),
+						   argv[0],
+						   argv[1] );
+				builtin_print_help( argv[0], sb_err );
 		}
-		if( !j->job_control )
+		else
 		{
-			sb_printf( sb_err,
-					   _( L"%ls: Can't put job %d, '%ls' to foreground because it is not under job control\n" ),
-					   argv[0],
-					   pid,
-					   j->command );
-			builtin_print_help( argv[0], sb_err );
-			j=0;
+			j = job_get_from_pid( pid );
+			if( !j || !j->constructed || job_is_completed( j ))
+			{
+				sb_printf( sb_err,
+						   _( L"%ls: No suitable job: %d\n" ),
+						   argv[0],
+						   pid );
+				builtin_print_help( argv[0], sb_err );
+				j=0;
+			}
+			else if( !j->job_control )
+			{
+				sb_printf( sb_err,
+						   _( L"%ls: Can't put job %d, '%ls' to foreground because it is not under job control\n" ),
+						   argv[0],
+						   pid,
+						   j->command );
+				builtin_print_help( argv[0], sb_err );
+				j=0;
+			}
 		}
-
 	}
 
 	if( j )

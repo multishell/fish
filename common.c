@@ -62,15 +62,25 @@ parts of fish.
 #include "parser.h"
 
 /**
-   The maximum number of minor errors to report. Further errors will be omitted.
-*/
-#define ERROR_MAX_COUNT 1
-
-/**
    The number of milliseconds to wait between polls when attempting to acquire 
    a lockfile
 */
 #define LOCKPOLLINTERVAL 10
+
+/**
+  Highest legal ascii value
+*/
+#define ASCII_MAX 127u
+
+/**
+  Highest legal 16-bit unicode value
+*/
+#define UCS2_MAX 0xffffu
+
+/**
+  Highest legal byte value
+*/
+#define BYTE_MAX 0xffu
 
 struct termios shell_modes;      
 
@@ -495,6 +505,12 @@ int contains_str( const wchar_t *a, ... )
 	wchar_t *arg;
 	va_list va;
 	int res = 0;
+
+	if( !a )
+	{
+		debug( 1, L"Warning: Called contains_str with null argument. This is a bug." );		
+		return 0;
+	}
 	
 	va_start( va, a );
 	while( (arg=va_arg(va, wchar_t *) )!= 0 ) 
@@ -539,23 +555,27 @@ void debug( int level, const wchar_t *msg, ... )
 {
 	va_list va;
 	string_buffer_t sb;
+	string_buffer_t sb2;
 	
 	if( level > debug_level )
 		return;
 
 	sb_init( &sb );
+	sb_init( &sb2 );
 	va_start( va, msg );
 	
 	sb_printf( &sb, L"%ls: ", program_name );
 	sb_vprintf( &sb, msg, va );
 	va_end( va );	
 
-	write_screen( (wchar_t *)sb.buff );
+	write_screen( (wchar_t *)sb.buff, &sb2 );
+	fwprintf( stderr, L"%ls", sb2.buff );	
 
 	sb_destroy( &sb );	
+	sb_destroy( &sb2 );	
 }
 
-void write_screen( const wchar_t *msg )
+void write_screen( const wchar_t *msg, string_buffer_t *buff )
 {
 	const wchar_t *start, *pos;
 	int line_width = 0;
@@ -605,8 +625,8 @@ void write_screen( const wchar_t *msg )
 				*/
 				wchar_t *token = wcsndup( start, pos-start );
 				if( line_width != 0 )
-					putwc( L'\n', stderr );			
-				fwprintf( stderr, L"%ls-\n", token );
+					sb_append_char( buff, L'\n' );
+				sb_printf( buff, L"%ls-\n", token );
 				free( token );
 				line_width=0;
 			}
@@ -618,10 +638,10 @@ void write_screen( const wchar_t *msg )
 				wchar_t *token = wcsndup( start, pos-start );
 				if( (line_width + (line_width!=0?1:0) + tok_width) > screen_width )
 				{
-					putwc( L'\n', stderr );
+					sb_append_char( buff, L'\n' );
 					line_width=0;
 				}
-				fwprintf( stderr, L"%ls%ls", line_width?L" ":L"", token );
+				sb_printf( buff, L"%ls%ls", line_width?L" ":L"", token );
 				free( token );
 				line_width += (line_width!=0?1:0) + tok_width;
 			}
@@ -636,9 +656,9 @@ void write_screen( const wchar_t *msg )
 	}
 	else
 	{
-		fwprintf( stderr, L"%ls", msg );
+		sb_printf( buff, L"%ls", msg );
 	}
-	putwc( L'\n', stderr );
+	sb_append_char( buff, L'\n' );
 }
 
 wchar_t *escape( const wchar_t *in, 
@@ -832,14 +852,14 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 							int base=16;
 							
 							int byte = 0;
-							int max_val = 127;
+							wchar_t max_val = ASCII_MAX;
 							
 							switch( in[in_pos] )
 							{
 								case L'u':
 								{
 									chars=4;
-									max_val = 35535;
+									max_val = UCS2_MAX;
 									break;
 								}
 								
@@ -858,7 +878,7 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 								case L'X':
 								{
 									byte=1;
-									max_val = 255;
+									max_val = BYTE_MAX;
 									break;
 								}
 								
@@ -884,7 +904,7 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 								res=(res*base)|d;
 							}
 
-							if( (res > 0) && (res <= max_val) )
+							if( (res <= max_val) )
 							{
 								in[out_pos] = (byte?ENCODE_DIRECT_BASE:0)+res;
 							}

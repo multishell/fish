@@ -126,7 +126,7 @@ int exec_pipe( int fd[2])
 	
 	if( open_fds == 0 )
 	{
-		open_fds = al_new();
+		open_fds = al_halloc( global_context );
 	}
 	
 	al_push( open_fds, (void *)(long)fd[0] );
@@ -164,7 +164,8 @@ static int use_fd_in_pipe( int fd, io_data_t *io )
    the redirection list io. This should make sure that there are no
    stray opened file descriptors in the child.
    
-   \param io the list of io redirections for this job. Pipes mentioned here should not be closed.
+   \param io the list of io redirections for this job. Pipes mentioned
+   here should not be closed.
 */
 static void close_unused_internal_pipes( io_data_t *io )
 {
@@ -184,20 +185,6 @@ static void close_unused_internal_pipes( io_data_t *io )
 		}
 	}
 }
-
-void exec_init()
-{
-}
-
-void exec_destroy()
-{
-	if( open_fds )
-	{
-		al_destroy( open_fds );
-		free( open_fds );
-	}
-}
-
 
 /**
    Make sure the fd used by this redirection is not used by i.e. a pipe. 
@@ -564,7 +551,7 @@ static void internal_exec_helper( const wchar_t *def,
 	io_data_t *io_internal = io_transmogrify( io );
 	int is_block_old=is_block;
 	is_block=1;
-
+	
 	/*
 	  Did the transmogrification fail - if so, set error status and return
 	*/
@@ -575,7 +562,7 @@ static void internal_exec_helper( const wchar_t *def,
 	}
 	
 	signal_unblock();
-		
+	
 	eval( def, io_internal, block_type );		
 	
 	signal_block();
@@ -837,7 +824,7 @@ void exec( job_t *j )
 					io_buffer = io_buffer_create();					
 					j->io = io_add( j->io, io_buffer );
 				}
-				
+								
 				internal_exec_helper( p->argv[0], TOP, j->io );			
 				break;
 				
@@ -852,6 +839,7 @@ void exec( job_t *j )
 				if( p == j->first_process )
 				{
 					io_data_t *in = io_get( j->io, 0 );
+					
 					if( in )
 					{
 						switch( in->io_mode )

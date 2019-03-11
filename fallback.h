@@ -3,10 +3,18 @@
 #define FISH_FALLBACK_H
 
 #include <stdio.h>
+#include <stdint.h>
 #include <stdarg.h>
 #include <wctype.h>
 #include <wchar.h>
-#include "common.h"
+#include <limits.h>
+
+#ifndef WCHAR_MAX
+/**
+   This _should_ be defined by wchar.h, but e.g. OpenBSD doesn't.
+*/
+#define WCHAR_MAX INT_MAX
+#endif
 
 /**
    Under curses, tputs expects an int (*func)(char) as its last
@@ -213,7 +221,8 @@ wchar_t *wcsndup( const wchar_t *in, int c );
 
 /**
    Converts from wide char to digit in the specified base. If d is not
-   a valid digit in the specified base, return -1.
+   a valid digit in the specified base, return -1. This is a helper
+   function for wcstol, but it is useful itself, so it is exported.
 */
 long convert_digit( wchar_t d, int base );
 
@@ -260,6 +269,14 @@ size_t wcslcat( wchar_t *dst, const wchar_t *src, size_t siz );
 */
 size_t wcslcpy( wchar_t *dst, const wchar_t *src, size_t siz );
 
+#endif
+
+#ifdef HAVE_BROKEN_DEL_CURTERM
+
+/**
+   BSD del_curterm seems to do a double-free. We redefine it as a no-op
+*/
+int del_curterm(TERMINAL *oterm);
 #endif
 
 #endif

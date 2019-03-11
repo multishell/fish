@@ -181,9 +181,11 @@ void error_reset();
 const wchar_t *wsetlocale( int category, const wchar_t *locale );
 
 /**
-   Checks if \c needle is included in the list of strings specified
+   Checks if \c needle is included in the list of strings specified. A warning is printed if needle is zero.
 
    \param needle the string to search for in the list 
+
+   \return zero is needle is not found, of if needle is null, non-zero otherwise
 */
 int contains_str( const wchar_t *needle, ... );
 
@@ -285,10 +287,10 @@ int common_get_height();
 void common_handle_winch( int signal );
 
 /**
-   Write paragraph of output to screen. Ignore newlines in message and
-   perform internal line-breaking.
+   Write paragraph of output to the specified stringbuffer, and redo
+   the linebreaks to fit the current screen.
 */
-void write_screen( const wchar_t *msg );
+void write_screen( const wchar_t *msg, string_buffer_t *buff );
 
 
 #endif

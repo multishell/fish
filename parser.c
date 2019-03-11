@@ -944,7 +944,7 @@ int eval_args( const wchar_t *line, array_list_t *args )
 	int do_loop=1;
 
 	proc_push_interactive(0);	
-
+	current_tokenizer = &tok;
 	current_tokenizer_pos = 0;
 	
 	tok_init( &tok, line, 0 );
@@ -1173,9 +1173,9 @@ wchar_t *parser_current_line()
 {
 	int lineno=1;
 
-	const wchar_t *file = parser_current_filename();
-	wchar_t *whole_str = tok_string( current_tokenizer );
-	wchar_t *line = whole_str;
+	const wchar_t *file;
+	wchar_t *whole_str;
+	wchar_t *line;
 	wchar_t *line_end;
 	int i;
 	int offset;
@@ -1183,6 +1183,14 @@ wchar_t *parser_current_line()
 	const wchar_t *function_name=0;
 	int current_line_start=0;
 
+	if( !current_tokenizer )
+	{
+		return L"";
+	}
+
+	file = parser_current_filename();
+	whole_str = tok_string( current_tokenizer );
+	line = whole_str;
 
 	if( !line )
 		return L"";
@@ -1870,6 +1878,7 @@ static int parse_job( process_t *p,
 
 			consumed=1;
 			is_new_block=1;
+
 		}
 		else if( wcscmp( L"if", nxt ) ==0 )
 		{
@@ -1929,7 +1938,7 @@ static int parse_job( process_t *p,
 				builtin_exists( (wchar_t *)al_get( args, 0 ) ) )
 			{
 				p->type = INTERNAL_BUILTIN;
-				is_new_block = parser_is_block( (wchar_t *)al_get( args, 0 ) );
+				is_new_block |= parser_is_block( (wchar_t *)al_get( args, 0 ) );
 			}
 		}
 
@@ -2067,6 +2076,7 @@ static int parse_job( process_t *p,
 
 		if( !make_sub_block )
 		{
+
 			tok_init( &subtok, end, 0 );
 			switch( tok_last_type( &subtok ) )
 			{
@@ -2092,17 +2102,18 @@ static int parse_job( process_t *p,
 			}
 			tok_destroy( &subtok );
 		}
-
+		
 		if( make_sub_block )
 		{
-
+			
 			int end_pos = end-tok_string( tok );
-			wchar_t *sub_block= wcsndup( tok_string( tok ) + current_tokenizer_pos,
-										 end_pos - current_tokenizer_pos);
-
+			wchar_t *sub_block= halloc_wcsndup( j,
+												tok_string( tok ) + current_tokenizer_pos,
+												end_pos - current_tokenizer_pos);
+			
 			p->type = INTERNAL_BLOCK;
 			al_set( args, 0, sub_block );
-
+			
 			tok_set_pos( tok,
 						 end_pos );
 

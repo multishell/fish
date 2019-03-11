@@ -5,6 +5,29 @@
 #
 
 #
+# Assign a temporary value here for performance reasons. The real value should be set in /etc/fish.
+#
+
+set -g fish_function_path $PWD/functions/
+
+#
+# Make sure there are no invalid entries in the PATH
+#
+
+set -l erase_idx
+for idx in (seq (count $PATH))
+   set i $PATH[$idx]
+   if not test -d $i
+       set erase_idx $erase_idx $idx
+       printf (_ '%s: Warning: The directory %s has been removed from your PATH, because it does not exist\n') fish $i
+   end
+end
+
+if count $erase_idx >/dev/null
+   set -e PATH[(echo $erase_idx)]
+end
+
+#
 # Add a few common directories to path, if they exists. Note that pure
 # console programs like makedep sometimes live in /usr/X11R6/bin, so we
 # want this even for text-only terminals.
@@ -17,19 +40,16 @@ if test "$USER" = root
 	set path_list $path_list /sbin /usr/sbin /usr/local/sbin
 end
 
-for i in $path_list
-	if not expr "$PATH" : "$i/*" >/dev/null
-		if test -d $i
-			set PATH $PATH $i
-		end
+# Make a regular expressin that matches any component in the PATH. A
+# trailing slash is ok. The sed call is to remove the last '\|'.  
+
+set -l path_regexp \\\((printf "^%s\\(\\|/\\)\$\\|" $PATH | sed -e "s/..\$//")\\\)
+
+for i in (printf "%s\n" $path_list|grep -v $path_regexp)
+	if test -d $i
+		set PATH $PATH $i
 	end
 end
-
-#
-# Assign a temporary value here for performance reasons. The real value should be set in /etc/fish.
-#
-
-set -g fish_function_path $PWD/functions/
 
 #
 # Don't need completions in non-interactive mode

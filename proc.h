@@ -261,7 +261,7 @@ job_t *job_create();
 
 /**
   Return the job with the specified job id.
-  If id is -1, return the last job used.
+  If id is 0 or less, return the last job used.
 */
 job_t *job_get(int id);
 
@@ -328,7 +328,8 @@ void proc_update_jiffies();
 void proc_sanity_check();
 
 /**
-   Send of an process/job exit event notification. This function is a conveniance wrapper around event_fire().
+   Send a process/job exit event notification. This function is a
+   conveniance wrapper around event_fire().
 */
 void proc_fire_event( const wchar_t *msg, int type, pid_t pid, int status );
 
