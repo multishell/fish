@@ -132,19 +132,18 @@ static struct config_paths_t determine_config_directory_paths(const char *argv0)
     if (get_realpath(exec_path))
     {
 #if __APPLE__
-
-        /* On OS X, maybe we're an app bundle, and should use the bundle's files. Since we don't link CF, use this lame approach to test it: see if the resolved path ends with /Contents/MacOS/fish, case insensitive since HFS+ usually is.
-         */
-        if (! done)
-        {
-            const char *suffix = "/Contents/MacOS/fish";
+        // On OS X, maybe we're an app bundle, and should use the bundle's files. Since we don't
+        // link CF, use this lame approach to test it: see if the resolved path ends with
+        // /Contents/MacOS/fish, case insensitive since HFS+ usually is.
+        if (!done) {
+            const char *suffix = "Contents/Resources/base/bin/fish";
             const size_t suffixlen = strlen(suffix);
             if (has_suffix(exec_path, suffix, true))
             {
                 /* Looks like we're a bundle. Cut the string at the / prefixing /Contents... and then the rest */
                 wcstring wide_resolved_path = str2wcstring(exec_path);
                 wide_resolved_path.resize(exec_path.size() - suffixlen);
-                wide_resolved_path.append(L"/Contents/Resources/");
+                wide_resolved_path.append(L"Contents/Resources/base/");
 
                 /* Append share, etc, doc */
                 paths.data = wide_resolved_path + L"share/fish";
@@ -468,6 +467,36 @@ static int fish_parse_opt(int argc, char **argv, std::vector<std::string> *cmds)
     return optind;
 }
 
+/// Various things we need to initialize at run-time that don't really fit any of the other init
+/// routines.
+static void misc_init() {
+#ifdef OS_IS_CYGWIN
+    // MS Windows tty devices do not have either a read or write timestamp. Those respective fields
+    // of `struct stat` are always the current time. Which means we can't use them. So we assume no
+    // external program has written to the terminal behind our back. This makes multiline prompts
+    // usable. See issue #2859.
+    has_working_tty_timestamps = false;
+#else
+    // This covers Windows Subsystem for Linux (WSL).
+    int fd = open("/proc/sys/kernel/osrelease", O_RDONLY);
+    if (fd != -1) {
+        const char *magic_suffix = "Microsoft";
+        int len_magic_suffix = strlen(magic_suffix);
+        char osrelease[128] = {0};
+        int len_osrelease = read(fd, osrelease, sizeof(osrelease) - 1);
+        if (osrelease[len_osrelease - 1] == '\n') {
+            osrelease[len_osrelease - 1] = '\0';
+            len_osrelease--;
+        }
+        if (len_osrelease >= len_magic_suffix &&
+            strcmp(magic_suffix, osrelease + len_osrelease - len_magic_suffix) == 0) {
+            has_working_tty_timestamps = false;
+        }
+        close(fd);
+    }
+#endif  // OS_IS_MS_WINDOWS
+}
+
 int main(int argc, char **argv)
 {
     int res=1;
@@ -481,11 +510,12 @@ int main(int argc, char **argv)
     assert(R_SENTINAL >= INPUT_COMMON_BASE &&
            R_SENTINAL <= INPUT_COMMON_END);
 
+    program_name = L"fish";
     set_main_thread();
     setup_fork_guards();
 
-    wsetlocale(LC_ALL, L"");
-    program_name=L"fish";
+    setlocale(LC_ALL, "");
+    fish_setlocale();
 
     //struct stat tmp;
     //stat("----------FISH_HIT_MAIN----------", &tmp);
@@ -519,6 +549,7 @@ int main(int argc, char **argv)
     history_init();
     /* For setcolor to support term256 in config.fish (#1022) */
     update_fish_color_support();
+    misc_init();
 
     parser_t &parser = parser_t::principal_parser();
 

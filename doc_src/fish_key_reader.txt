@@ -1,0 +1,26 @@
+\section fish_key_reader fish_key_reader - explore what characters keyboard keys send
+
+\subsection fish_key_reader-synopsis Synopsis
+\fish{synopsis}
+fish_key_reader [-c] [-d LEVEL]
+\endfish
+
+\subsection fish_key_reader-description Description
+
+`fish_key_reader` is used to study input received from the terminal and can help with key binds. The program is interactive and works on standard input. Individual characters themselves and their hexadecimal values are displayed. 
+
+The tool will output an example `bind` command matching the character sequence captured. If the character sequence matches a special key name (see `bind --key-names`),  both `bind CHARS ...` and `bind -k KEYNAME ...` usage will be shown.
+
+The following parameters are available:
+
+- `-c` or `--continuous` begins a session where multiple key sequences can be inspected. By default the program exits after capturing a single key sequence. 
+
+- `-d` or `--debug-level=DEBUG_LEVEL` enables debug output and specifies a verbosity level (like `fish -d`). Defaults to 0.
+
+In continuous mode (`-c`), the delay in milliseconds since the previous character was received is also shown. This information may be useful to determine a preferred `fish_escape_delay_ms` setting or learn the amount of lag introduced by `ssh` or `tmux`.
+
+`fish_key_reader` intentionally disables handling of many signals. To terminate `fish_key_reader` in a `--continuous` run:
+- press `Ctrl-C` twice, or
+- press `Ctrl-D` twice, or
+- type `exit`, or 
+- type `quit`

@@ -85,7 +85,7 @@ function __fish_config_interactive -d "Initializations that should be performed 
 
     if not test -d $userdatadir/fish/generated_completions
         #fish_update_completions is a function, so it can not be directly run in background.
-        eval "$__fish_bin_dir/fish -c 'fish_update_completions > /dev/null ^/dev/null' &"
+        eval (string escape "$__fish_bin_dir/fish") "-c 'fish_update_completions > /dev/null ^/dev/null' &"
     end
 
 	#
@@ -166,7 +166,6 @@ function __fish_config_interactive -d "Initializations that should be performed 
 	function __fish_winch_handler --on-signal WINCH
 		commandline -f repaint
 	end
-
 
 	# Notify vte-based terminals when $PWD changes (issue #906)
 	if test "$VTE_VERSION" -ge 3405 -o "$TERM_PROGRAM" = "Apple_Terminal"
