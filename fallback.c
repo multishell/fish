@@ -777,8 +777,8 @@ int wcscasecmp( const wchar_t *a, const wchar_t *b )
 #endif
 
 
-#ifndef HAVE_WCSNCASECMP
-int wcsncasecmp( const wchar_t *a, const wchar_t *b, int count )
+#ifndef HAVE_WCSNCASECMP_USE_INTERNAL
+int wcsncasecmp_fish( const wchar_t *a, const wchar_t *b, int count )
 {
 	if( count == 0 )
 		return 0;
@@ -795,7 +795,7 @@ int wcsncasecmp( const wchar_t *a, const wchar_t *b, int count )
 	if( diff != 0 )
 		return diff;
 	else
-		return wcsncasecmp( a+1,b+1, count-1);
+		return wcsncasecmp_fish( a+1,b+1, count-1);
 }
 #endif
 
