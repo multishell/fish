@@ -1,233 +1,227 @@
 function fish_vi_key_bindings --description 'vi-like key bindings for fish'
-  bind --erase --all
-  set -l init_mode insert
-  if set -q argv[1]
-    set init_mode $argv[1]
-  end
+    # The default escape timeout is 300ms. But for users of Vi bindings that can
+    # be slightly annoying when trying to switch to Vi "normal" mode. Too,
+    # vi-mode users are unlikely to use escape-as-meta. So set a much shorter
+    # timeout in this case.
+    set -q fish_escape_delay_ms
+    or set -g fish_escape_delay_ms 10
 
+    set -l init_mode insert
+    set -l eol_keys \$ g\$ \e\[F
+    set -l bol_keys \^ 0 g\^ \e\[H
+    if set -q argv[1]
+        set init_mode $argv[1]
+    end
 
-  ##
-  ## command mode
-  ##
+    # Inherit default key bindings.
+    # Do this first so vi-bindings win over default.
+    bind --erase --all
+    fish_default_key_bindings -M insert
+    fish_default_key_bindings -M default
 
-  bind :q exit
+    # Remove the default self-insert bindings in default mode
+    bind -e "" -M default
+    # Add way to kill current command line while in insert mode.
+    bind -M insert \cc 'commandline ""'
+    # Add a way to switch from insert to normal (command) mode.
+    bind -M insert -m default \e backward-char force-repaint
 
-  #
-  # normal (default) mode
-  #
+    #
+    # normal (command) mode
+    #
+    bind :q exit
+    bind \cd exit
+    bind \cc 'commandline ""'
+    bind h backward-char
+    bind l forward-char
+    bind \e\[C forward-char
+    bind \e\[D backward-char
 
-  bind \cd exit
-  bind \cc 'commandline ""'
-  bind h backward-char
-  bind l forward-char
-  bind \e\[C forward-char
-  bind \e\[D backward-char
-  bind -k right forward-char
-  bind -k left backward-char
-  bind -m insert \n execute
-  bind -m insert i force-repaint
-  bind -m insert I beginning-of-line force-repaint
-  bind -m insert a forward-char force-repaint
-  bind -m insert A end-of-line force-repaint
-  bind -m visual v begin-selection force-repaint
+    # Some linux VTs output these (why?)
+    bind \eOC forward-char
+    bind \eOD backward-char
 
-  #bind -m insert o "commandline -a \n" down-line force-repaint
-  #bind -m insert O beginning-of-line "commandline -i \n" up-line force-repaint # doesn't work
+    bind -k right forward-char
+    bind -k left backward-char
+    bind -m insert \n execute
+    bind -m insert \r execute
+    bind -m insert i force-repaint
+    bind -m insert I beginning-of-line force-repaint
+    bind -m insert a forward-char force-repaint
+    bind -m insert A end-of-line force-repaint
+    bind -m visual v begin-selection force-repaint
 
-  bind gg beginning-of-buffer
-  bind G end-of-buffer
+    #bind -m insert o "commandline -a \n" down-line force-repaint
+    #bind -m insert O beginning-of-line "commandline -i \n" up-line force-repaint # doesn't work
 
-  bind \x24 end-of-line
-  bind \x5e beginning-of-line
-  bind 0 beginning-of-line
-  bind g\x24 end-of-line
-  bind g\x5e beginning-of-line
-  bind \e\[H beginning-of-line
-  bind \e\[F end-of-line
+    bind gg beginning-of-buffer
+    bind G end-of-buffer
 
-  bind u history-search-backward
-  bind \cr history-search-forward
+    for key in $eol_keys
+        bind $key end-of-line
+    end
+    for key in $bol_keys
+        bind $key beginning-of-line
+    end
 
-  bind [ history-token-search-backward
-  bind ] history-token-search-forward
+    bind u history-search-backward
+    bind \cr history-search-forward
 
-  bind k up-or-search
-  bind j down-or-search
-  bind \e\[A up-or-search
-  bind \e\[B down-or-search
-  bind -k down down-or-search
-  bind -k up up-or-search
+    bind [ history-token-search-backward
+    bind ] history-token-search-forward
 
-  bind b backward-word
-  bind B backward-word
-  bind gE backward-word
-  bind gE backward-word
-  bind w forward-word
-  bind W forward-word
-  bind e forward-word
-  bind E forward-word
+    bind k up-or-search
+    bind j down-or-search
+    bind \e\[A up-or-search
+    bind \e\[B down-or-search
+    bind -k down down-or-search
+    bind -k up up-or-search
+    bind \eOA up-or-search
+    bind \eOB down-or-search
 
-  bind x delete-char
-  bind X backward-delete-char
+    bind b backward-word
+    bind B backward-bigword
+    bind ge backward-word
+    bind gE backward-bigword
+    bind w forward-word forward-char
+    bind W forward-bigword forward-char
+    bind e forward-char forward-word backward-char
+    bind E forward-bigword backward-char
 
-  bind -k dc delete-char
+    bind x delete-char
+    bind X backward-delete-char
 
-  bind -k backspace backward-delete-char
-  bind \x7f backward-delete-char
-  bind \e\[3\;2~ backward-delete-char # Mavericks Terminal.app shift-delete
+    bind -k dc delete-char
 
-  bind dd kill-whole-line
-  bind D kill-line
-  bind d\x24 kill-line
-  bind d\x5e backward-kill-line
-  bind dw kill-word
-  bind dW kill-word
-  bind diw forward-char forward-char backward-word kill-word
-  bind diW forward-char forward-char backward-word kill-word
-  bind daw forward-char forward-char backward-word kill-word
-  bind daW forward-char forward-char backward-word kill-word
-  bind de kill-word
-  bind dE kill-word
-  bind db backward-kill-word
-  bind dB backward-kill-word
-  bind dgE backward-kill-word
-  bind dgE backward-kill-word
+    bind -k backspace backward-delete-char
+    bind \x7f backward-delete-char
+    bind \e\[3\;2~ backward-delete-char # Mavericks Terminal.app shift-delete
 
-  bind -m insert s delete-char force-repaint
-  bind -m insert S kill-whole-line force-repaint
-  bind -m insert cc kill-whole-line force-repaint
-  bind -m insert C kill-line force-repaint
-  bind -m insert c\x24 kill-line force-repaint
-  bind -m insert c\x5e backward-kill-line force-repaint
-  bind -m insert cw kill-word force-repaint
-  bind -m insert cW kill-word force-repaint
-  bind -m insert ciw forward-char forward-char backward-word kill-word force-repaint
-  bind -m insert ciW forward-char forward-char backward-word kill-word force-repaint
-  bind -m insert caw forward-char forward-char backward-word kill-word force-repaint
-  bind -m insert caW forward-char forward-char backward-word kill-word force-repaint
-  bind -m insert ce kill-word force-repaint
-  bind -m insert cE kill-word force-repaint
-  bind -m insert cb backward-kill-word force-repaint
-  bind -m insert cB backward-kill-word force-repaint
-  bind -m insert cgE backward-kill-word force-repaint
-  bind -m insert cgE backward-kill-word force-repaint
+    bind dd kill-whole-line
+    bind D kill-line
+    bind d\$ kill-line
+    bind d\^ backward-kill-line
+    bind dw kill-word
+    bind dW kill-bigword
+    bind diw forward-char forward-char backward-word kill-word
+    bind diW forward-char forward-char backward-bigword kill-bigword
+    bind daw forward-char forward-char backward-word kill-word
+    bind daW forward-char forward-char backward-bigword kill-bigword
+    bind de kill-word
+    bind dE kill-bigword
+    bind db backward-kill-word
+    bind dB backward-kill-bigword
+    bind dge backward-kill-word
+    bind dgE backward-kill-bigword
 
-  bind '~' capitalize-word 
-  bind gu downcase-word 
-  bind gU upcase-word 
+    bind -m insert s delete-char force-repaint
+    bind -m insert S kill-whole-line force-repaint
+    bind -m insert cc kill-whole-line force-repaint
+    bind -m insert C kill-line force-repaint
+    bind -m insert c\$ kill-line force-repaint
+    bind -m insert c\^ backward-kill-line force-repaint
+    bind -m insert cw kill-word force-repaint
+    bind -m insert cW kill-bigword force-repaint
+    bind -m insert ciw forward-char forward-char backward-word kill-word force-repaint
+    bind -m insert ciW forward-char forward-char backward-bigword kill-bigword force-repaint
+    bind -m insert caw forward-char forward-char backward-word kill-word force-repaint
+    bind -m insert caW forward-char forward-char backward-bigword kill-bigword force-repaint
+    bind -m insert ce kill-word force-repaint
+    bind -m insert cE kill-bigword force-repaint
+    bind -m insert cb backward-kill-word force-repaint
+    bind -m insert cB backward-kill-bigword force-repaint
+    bind -m insert cge backward-kill-word force-repaint
+    bind -m insert cgE backward-kill-bigword force-repaint
 
-  bind J end-of-line delete-char
-  bind K 'man (commandline -t) ^/dev/null; or echo -n \a'
+    bind '~' capitalize-word
+    bind gu downcase-word
+    bind gU upcase-word
 
-  bind yy kill-whole-line yank
-  bind Y  kill-whole-line yank
-  bind y\x24 kill-line yank
-  bind y\x5e backward-kill-line yank
-  bind yw kill-word yank
-  bind yW kill-word yank
-  bind yiw forward-char forward-char backward-word kill-word yank
-  bind yiW forward-char forward-char backward-word kill-word yank
-  bind yaw forward-char forward-char backward-word kill-word yank
-  bind yaW forward-char forward-char backward-word kill-word yank
-  bind ye kill-word yank
-  bind yE kill-word yank
-  bind yb backward-kill-word yank
-  bind yB backward-kill-word yank
-  bind ygE backward-kill-word yank
-  bind ygE backward-kill-word yank
+    bind J end-of-line delete-char
+    bind K 'man (commandline -t) ^/dev/null; or echo -n \a'
 
-  bind f forward-jump
-  bind F backward-jump
-  bind t forward-jump and backward-char
-  bind T backward-jump and forward-char
+    bind yy kill-whole-line yank
+    bind Y kill-whole-line yank
+    bind y\$ kill-line yank
+    bind y\^ backward-kill-line yank
+    bind yw kill-word yank
+    bind yW kill-bigword yank
+    bind yiw forward-char forward-char backward-word kill-word yank
+    bind yiW forward-char forward-char backward-bigword kill-bigword yank
+    bind yaw forward-char forward-char backward-word kill-word yank
+    bind yaW forward-char forward-char backward-bigword kill-bigword yank
+    bind ye kill-word yank
+    bind yE kill-bigword yank
+    bind yb backward-kill-word yank
+    bind yB backward-kill-bigword yank
+    bind yge backward-kill-word yank
+    bind ygE backward-kill-bigword yank
 
-  # in emacs yank means paste
-  bind p yank
-  bind P backward-char yank
-  bind gp yank-pop
+    bind f forward-jump
+    bind F backward-jump
+    bind t forward-jump and backward-char
+    bind T backward-jump and forward-char
 
-  bind '"*p' "commandline -i ( xsel -p; echo )[1]"
-  bind '"*P' backward-char "commandline -i ( xsel -p; echo )[1]"
+    # in emacs yank means paste
+    bind p yank
+    bind P backward-char yank
+    bind gp yank-pop
 
-  #
-  # insert mode
-  #
+    ### Overrides
+    # This is complete in vim
+    bind -M insert \cx end-of-line
 
-  bind -M insert "" self-insert
-  bind -M insert \n execute
+    bind '"*p' "commandline -i ( xsel -p; echo )[1]"
+    bind '"*P' backward-char "commandline -i ( xsel -p; echo )[1]"
 
-  bind -M insert -k dc delete-char
+    #
+    # Lowercase r, enters replace-one mode
+    #
+    bind -m replace-one r force-repaint
+    bind -M replace-one -m default '' delete-char self-insert backward-char force-repaint
+    bind -M replace-one -m default \e cancel force-repaint
 
-  bind -M insert -k backspace backward-delete-char
-  bind -M insert \x7f backward-delete-char
-  # Mavericks Terminal.app shift-delete
-  bind -M insert \e\[3\;2~ backward-delete-char 
+    #
+    # visual mode
+    #
+    bind -M visual \e\[C forward-char
+    bind -M visual \e\[D backward-char
+    bind -M visual -k right forward-char
+    bind -M visual -k left backward-char
+    bind -M insert \eOC forward-char
+    bind -M insert \eOD backward-char
+    bind -M visual h backward-char
+    bind -M visual l forward-char
 
-  bind -M insert \t complete
+    bind -M visual k up-line
+    bind -M visual j down-line
 
-	# OS X SnowLeopard doesn't have these keys. Don't show an annoying error message.
-	bind -M insert -k home beginning-of-line 2> /dev/null
-	bind -M insert -k end end-of-line 2> /dev/null
-	bind -M insert \e\[3\;2~ backward-delete-char # Mavericks Terminal.app shift-delete
+    bind -M visual b backward-word
+    bind -M visual B backward-bigword
+    bind -M visual ge backward-word
+    bind -M visual gE backward-bigword
+    bind -M visual w forward-word
+    bind -M visual W forward-bigword
+    bind -M visual e forward-word
+    bind -M visual E forward-bigword
+    bind -M visual o swap-selection-start-stop force-repaint
 
-	bind -M insert \cx end-of-line
+    for key in $eol_keys
+        bind -M visual $key end-of-line
+    end
+    for key in $bol_keys
+        bind -M visual $key beginning-of-line
+    end
 
-  bind -M insert \e\[A up-or-search
-  bind -M insert \e\[B down-or-search
-  bind -M insert -k down down-or-search
-  bind -M insert -k up up-or-search
+    bind -M visual -m insert c kill-selection end-selection force-repaint
+    bind -M visual -m default d kill-selection end-selection force-repaint
+    bind -M visual -m default x kill-selection end-selection force-repaint
+    bind -M visual -m default X kill-whole-line end-selection force-repaint
+    bind -M visual -m default y kill-selection yank end-selection force-repaint
+    bind -M visual -m default '"*y' "commandline -s | xsel -p" end-selection force-repaint
 
-  bind -M insert \e\[C forward-char
-  bind -M insert \e\[D backward-char
-  bind -M insert -k right forward-char
-  bind -M insert -k left backward-char
+    bind -M visual -m default \cc end-selection force-repaint
+    bind -M visual -m default \e end-selection force-repaint
 
-  # useful insert mode mappings
-  bind -M insert \ch backward-delete-char
-  bind -M insert \cw backward-kill-word
-  bind -M insert \cu backward-kill-line
-  bind -M insert \cp history-search-backward
-  bind -M insert \cn history-search-forward
-  bind -M insert \cb backward-word
-  bind -M insert \cf forward-word
-
-  bind -M insert \cc 'commandline ""'
-  bind -M insert -m default \e backward-char force-repaint
-
-  bind -M insert \cd exit
-
-  bind -M insert \ef forward-word
-
-
-
-  #
-  # visual mode
-  #
-
-  bind -M visual \e\[C forward-char
-  bind -M visual \e\[D backward-char
-  bind -M visual -k right forward-char
-  bind -M visual -k left backward-char
-  bind -M visual h backward-char
-  bind -M visual l forward-char
-
-  bind -M visual b backward-word
-  bind -M visual B backward-word
-  bind -M visual gE backward-word
-  bind -M visual gE backward-word
-  bind -M visual w forward-word
-  bind -M visual W forward-word
-  bind -M visual e forward-word
-  bind -M visual E forward-word
-
-  bind -M visual -m default d kill-selection end-selection force-repaint
-  bind -M visual -m default x kill-selection end-selection force-repaint
-  bind -M visual -m default X kill-whole-line end-selection force-repaint
-  bind -M visual -m default y kill-selection yank end-selection force-repaint
-  bind -M visual -m default '"*y' "commandline -s | xsel -p" end-selection force-repaint
-
-  bind -M visual -m default \cc end-selection force-repaint
-  bind -M visual -m default \e  end-selection force-repaint
-
-  set fish_bind_mode $init_mode
+    set fish_bind_mode $init_mode
 end

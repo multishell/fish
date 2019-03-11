@@ -3,9 +3,9 @@
 log_user 0
 log_file -noappend interactive.tmp.log
 
-set fish ../fish
+set fish ../test/root/bin/fish
 
-set timeout 2
+set timeout 5
 
 set send_human {.05 .1 5 .02 .2}
 

@@ -1,14 +1,21 @@
-set -l args_pre
-set -l args_post
-switch (uname)
-case Darwin
-	set args_pre $args_pre -e 's|^/private/|/|'
-case 'CYGWIN_*'
-	set args_pre $args_pre -e 's|^/cygdrive/\(.\)|\1/:|'
-	set args_post $args_post -e 's-^\([^/]\)/:/\?-\u\1:/-'
-end
+function prompt_pwd --description "Print the current working directory, shortened to fit the prompt"
+	set -q argv[1]; and switch $argv[1]
+		case -h --help
+			__fish_print_help prompt_pwd
+			return 0
+	end
 
-function prompt_pwd -V args_pre -V args_post --description "Print the current working directory, shortened to fit the prompt"
-	set -l realhome ~
-	echo $PWD | sed -e "s|^$realhome|~|" $args_pre -e 's-\([^/.]\)[^/]*/-\1/-g' $args_post
+	# This allows overriding fish_prompt_pwd_dir_length from the outside (global or universal) without leaking it
+	set -q fish_prompt_pwd_dir_length; or set -l fish_prompt_pwd_dir_length 1
+
+	# Replace $HOME with "~"
+	set realhome ~
+	set -l tmp (string replace -r '^'"$realhome"'($|/)' '~$1' $PWD)
+
+	if [ $fish_prompt_pwd_dir_length -eq 0 ]
+		echo $tmp
+	else
+		# Shorten to at most $fish_prompt_pwd_dir_length characters per directory
+		string replace -ar '(\.?[^/]{'"$fish_prompt_pwd_dir_length"'})[^/]*/' '$1/' $tmp
+	end
 end

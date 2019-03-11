@@ -59,7 +59,7 @@ Switches differ between commands and are documented in the manual page for each 
 
 \subsection quotes Quotes
 
-Sometimes features such as <a href="#expand">parameter expansion</a> and <a href="#escapes">character escapes</a> get in the way. When that happens, the user can write a parameter within quotes, either `'` (single quote) or `&quot;` (double quote). There is one important difference between single quoted and double quoted strings: When using double quoted string, <a href="#expand-variable">variable expansion</a> still takes place. Other than that, a quoted parameter will not be parameter expanded, may contain spaces, and escape sequences are ignored. The only backslash escape accepted within single quotes is `\'`, which escapes a single quote and `\\`, which escapes the backslash symbol. The only backslash escapes accepted within double quotes are `\&quot;`, which escapes a double quote, `\$`, which escapes a dollar character, `\` followed by a newline, which deletes the backslash and the newline, and lastly `\\`, which escapes the backslash symbol. Single quotes have no special meaning within double quotes and vice versa.
+Sometimes features such as <a href="#expand">parameter expansion</a> and <a href="#escapes">character escapes</a> get in the way. When that happens, the user can write a parameter within quotes, either `'` (single quote) or `&quot;` (double quote). There is one important difference between single quoted and double quoted strings: When using double quoted string, <a href="#expand-variable">variable expansion</a> still takes place. Other than that, no other kind of expansion (including <a href="#expand-brace">brace expansion</a> and parameter expansion) will take place, the parameter may contain spaces, and escape sequences are ignored. The only backslash escape accepted within single quotes is `\'`, which escapes a single quote and `\\`, which escapes the backslash symbol. The only backslash escapes accepted within double quotes are `\&quot;`, which escapes a double quote, `\$`, which escapes a dollar character, `\` followed by a newline, which deletes the backslash and the newline, and lastly `\\`, which escapes the backslash symbol. Single quotes have no special meaning within double quotes and vice versa.
 
 Example:
 
@@ -80,14 +80,14 @@ would remove the two files 'cumbersome' and 'filename.txt'.
 
 Some characters can not be written directly on the command line. For these characters, so called escape sequences are provided. These are:
 
-- '<code>\\a</code>' escapes the alert character
-- '<code>\\b</code>' escapes the backspace character
-- '<code>\\e</code>' escapes the escape character
-- '<code>\\f</code>' escapes the form feed character
-- '<code>\\n</code>' escapes a newline character
-- '<code>\\r</code>' escapes the carriage return character
-- '<code>\\t</code>' escapes the tab character
-- '<code>\\v</code>' escapes the vertical tab character
+- '<code>\\a</code>' represents the alert character
+- '<code>\\b</code>' represents the backspace character
+- '<code>\\e</code>' represents the escape character
+- '<code>\\f</code>' represents the form feed character
+- '<code>\\n</code>' represents a newline character
+- '<code>\\r</code>' represents the carriage return character
+- '<code>\\t</code>' represents the tab character
+- '<code>\\v</code>' represents the vertical tab character
 - '<code>\\ </code>' escapes the space character
 - '<code>\\$</code>' escapes the dollar character
 - '<code>\\\\</code>' escapes the backslash character
@@ -110,18 +110,18 @@ Some characters can not be written directly on the command line. For these chara
 - '<code>\\"</code>' escapes the quote character
 - '<code>\\'</code>' escapes the apostrophe character
 
-- '<code>\\x<i>xx</i></code>', where <code><i>xx</i></code> is a hexadecimal number, escapes the ascii character with the specified value. For example, `\x9` is the tab character.
+- '<code>\\x<i>xx</i></code>', where <code><i>xx</i></code> is a hexadecimal number, represents the ascii character with the specified value. For example, `\x9` is the tab character.
 
-- '<code>\\X<i>xx</i></code>', where <code><i>xx</i></code> is a hexadecimal number, escapes a byte of data with the specified value. If you are using a mutibyte encoding, this can be used to enter
+- '<code>\\X<i>xx</i></code>', where <code><i>xx</i></code> is a hexadecimal number, represents a byte of data with the specified value. If you are using a multibyte encoding, this can be used to enter
 invalid strings. Only use this if you know what you are doing.
 
-- '<code>\\<i>ooo</i></code>', where <code><i>ooo</i></code> is an octal number, escapes the ascii character with the specified value. For example, `\011` is the tab character.
+- '<code>\\<i>ooo</i></code>', where <code><i>ooo</i></code> is an octal number, represents the ascii character with the specified value. For example, `\011` is the tab character.
 
-- '<code>\\u<i>xxxx</i></code>', where <code><i>xxxx</i></code> is a hexadecimal number, escapes the 16-bit Unicode character with the specified value. For example, `\u9` is the tab character.
+- '<code>\\u<i>xxxx</i></code>', where <code><i>xxxx</i></code> is a hexadecimal number, represents the 16-bit Unicode character with the specified value. For example, `\u9` is the tab character.
 
-- '<code>\\U<i>xxxxxxxx</i></code>', where <code><i>xxxxxxxx</i></code> is a hexadecimal number, escapes the 32-bit Unicode character with the specified value. For example, `\U9` is the tab character.
+- '<code>\\U<i>xxxxxxxx</i></code>', where <code><i>xxxxxxxx</i></code> is a hexadecimal number, represents the 32-bit Unicode character with the specified value. For example, `\U9` is the tab character.
 
-- '<code>\\c<i>x</i></code>', where <code><i>x</i></code> is a letter of the alphabet, escapes the control sequence generated by pressing the control key and the specified letter. For example, `\ci` is the tab character
+- '<code>\\c<i>x</i></code>', where <code><i>x</i></code> is a letter of the alphabet, represents the control sequence generated by pressing the control key and the specified letter. For example, `\ci` is the tab character
 
 
 \subsection redirects Input/Output (IO) redirection
@@ -179,7 +179,7 @@ will call the `cat` program with the parameter 'foo.txt', which will print the c
 Pipes usually connect file descriptor 1 (standard output) of the first process to file descriptor 0 (standard input) of the second process. It is possible use a different output file descriptor by prepending the desired FD number and then output redirect symbol to the pipe. For example:
 
 \fish
-make fish 2> | less
+make fish 2>| less
 \endfish
 
 will attempt to build the fish program, and any errors will be shown using the less pager.
@@ -236,7 +236,7 @@ There are a few important things that need to be noted about aliases:
 
 - Always take care to add the `$argv` variable to the list of parameters to the wrapped command. This makes sure that if the user specifies any additional parameters to the function, they are passed on to the underlying command.
 
-- If the alias has the same name as the aliased command, it is necessary to refix the call to the program with `command` in order to tell fish that the unction should not call itself, but rather a command with the same name. ailing to do so will cause infinite recursion bugs.
+- If the alias has the same name as the aliased command, it is necessary to prefix the call to the program with `command` in order to tell fish that the function should not call itself, but rather a command with the same name. Failing to do so will cause infinite recursion bugs.
 
 To easily create a function of this form, you can use the <a href="commands.html#alias">alias</a> command.
 
@@ -247,9 +247,21 @@ Functions can be defined on the commandline or in a configuration file, but they
 
 Fish automatically searches through any directories in the array variable `$fish_function_path`, and any functions defined are automatically loaded when needed. A function definition file must have a filename consisting of the name of the function plus the suffix '`.fish`'.
 
-The default value for `$fish_function_path` is `~/.config/fish/functions` `/etc/fish/functions` `/usr/share/fish/functions`. The exact path to the last two of these may be slightly different depending on what install path prefix was chosen at configuration time. The rationale behind having three different directories is that the first one is for user specific functions, the second one is for system-wide additional functions and the last one is for default fish functions. The path list is searched in order, meaning that by default, the system administrator can override default fish functions, and the user can override functions defined by the system administrator.
+By default, Fish searches the following for functions, using the first available file that it finds:
+- A directory for end-users to keep their own functions, usually `~/.config/fish/functions` (controlled by the `XDG_CONFIG_HOME` environment variable).
+- A directory for systems administrators to install functions for all users on the system, usually `/etc/fish/functions`.
+- A directory for third-party software vendors to ship their own functions for their software, usually `/usr/share/fish/vendor_functions.d`.
+- The functions shipped with fish, usually installed in `/usr/share/fish/functions`.
+
+These paths are controlled by parameters set at build, install, or run time, and may vary from the defaults listed above.
+
+This wide search may be confusing. If you are unsure, your functions probably belong in `~/.config/fish/functions`.
 
 It is very important that function definition files only contain the definition for the specified function and nothing else. Otherwise, it is possible that autoloading a function files requires that the function already be loaded, which creates a circular dependency.
+
+Autoloading also won't work for <a href=#event>event handlers</a>, since fish cannot know that a function is supposed to be executed when an event occurs when it hasn't yet loaded the function. See the <a href=#event>event handlers</a> section for more information.
+
+If you are developing another program, you may wish to install functions which are available for all users of the fish shell on a system. They can be installed to the "vendor" functions directory. As this path may vary from system to system, the `pkgconfig` framework should be used to discover this path with the output of `pkg-config --variable functionsdir fish`.
 
 
 \subsubsection syntax-conditional Conditional execution of code and flow control
@@ -271,13 +283,13 @@ This is a short explanation of some of the commonly used words in fish.
 
 - <b>command</b> a program that the shell can run.
 
-- <b>function</b> a block of commands that can be called as if they where a single command. By using functions, it is possible to string together multiple smaller commands into one more advanced command.
+- <b>function</b> a block of commands that can be called as if they were a single command. By using functions, it is possible to string together multiple smaller commands into one more advanced command.
 
 - <b>job</b> a running pipeline or command
 
 - <b>pipeline</b> a set of commands stringed together so that the output of one command is the input of the next command
 
-- <b>redirection</b> a operation that changes one of the input/output streams associated with a job
+- <b>redirection</b> an operation that changes one of the input/output streams associated with a job
 
 - <b>switch</b> a special flag sent as an argument to a command that will alter the behavior of the command. A switch almost always begins with one or two hyphens.
 
@@ -293,7 +305,7 @@ Help on a specific builtin can also be obtained with the `-h` parameter. For ins
 
 \section autosuggestions Autosuggestions
 
-fish suggests commands as you type, based on command history, completions, and valid file paths. As you type commands, you will see a completion offered after the cursor, in a muted gray color (which can be changed with the `fish_color_autosuggestion` variable).
+fish suggests commands as you type, based on command history, completions, and valid file paths. As you type commands, you will see a suggestion offered after the cursor, in a muted gray color (which can be changed with the `fish_color_autosuggestion` variable).
 
 To accept the autosuggestion (replacing the command line contents), press right arrow or @key{Control,F}. To accept the first suggested word, press @key{Alt,&rarr;,Right} or @key{Alt,F}. If the autosuggestion is not what you want, just ignore it: it won't execute unless you accept it.
 
@@ -302,7 +314,7 @@ Autosuggestions are a powerful way to quickly summon frequently entered commands
 
 \section completion Tab completion
 
-Tab completion is one of the most time saving features of any modern shell. By tapping the tab key, the user asks `fish` to guess the rest of the command or parameter that the user is currently typing. If  `fish` can only find one possible completion, `fish` will write it out. If there is more than one completion, `fish` will write out the longest prefix that all completions have in common. If the completions differ on the first character, a list of all possible completions is printed. The list features descriptions of the completions and if the list doesn't fit the screen, it is scrollable by using the arrow keys, the page up/page down keys, the tab key or the space bar. Pressing any other key will exit the list and insert the pressed key into the command line.
+Tab completion is one of the most time saving features of any modern shell. By tapping the tab key, the user asks `fish` to guess the rest of the command or parameter that the user is currently typing. If  `fish` can only find one possible completion, `fish` will write it out. If there is more than one completion, `fish` will write out the longest prefix that all completions have in common. If the completions differ on the first character, a list of all possible completions is printed. The list features descriptions of the completions and if the list doesn't fit the screen, it is scrollable by using the arrow keys, the page up/page down keys, the tab key or the space bar. Once the list has been entered, pressing any other key will start a search. If the list has not been entered, pressing any other key will exit the list and insert the pressed key into the command line.
 
 These are the general purpose tab completions that `fish` provides:
 
@@ -343,7 +355,7 @@ To provide a list of possible completions for myprog, use the `-a` switch. If `m
 complete -c myprog -s o -l output -a "yes no"
 \endfish
 
-There are also special switches for specifying that a switch requires an argument, to disable filename completion, to create completions that are only available in some combinations, etc..  For a complete description of the various switches accepted by the `complete` command, see the documentationfor the <a href="commands.html#complete">complete</a> builtin, or write `complete --help` inside the `fish` shell.
+There are also special switches for specifying that a switch requires an argument, to disable filename completion, to create completions that are only available in some combinations, etc..  For a complete description of the various switches accepted by the `complete` command, see the documentation for the <a href="commands.html#complete">complete</a> builtin, or write `complete --help` inside the `fish` shell.
 
 For examples of how to write your own complex completions, study the completions in `/usr/share/fish/completions`. (The exact path depends on your chosen installation prefix and may be slightly different)
 
@@ -362,7 +374,7 @@ Functions beginning with the string `__fish_print_` print a newline separated li
 
 - `__fish_complete_pids` prints a list of all processes IDs with the command name as description.
 
-- `__fish_complete_suffix SUFFIX` performs file completion allowing only files ending in SUFFIX. The mimetype database is used to find a suitable description.
+- `__fish_complete_suffix SUFFIX` performs file completion allowing only files ending in SUFFIX, with an optional description.
 
 - `__fish_complete_users` prints a list of all users with their full name as description.
 
@@ -379,9 +391,20 @@ Functions beginning with the string `__fish_print_` print a newline separated li
 
 Completions can be defined on the commandline or in a configuration file, but they can also be automatically loaded. Fish automatically searches through any directories in the array variable `$fish_complete_path`, and any completions defined are automatically loaded when needed. A completion file must have a filename consisting of the name of the command to complete and the suffix '`.fish`'.
 
-The default value for `$fish_complete_path` is `~/.config/fish/completions` `/etc/fish/completions` `/usr/share/fish/vendor_completions.d` `/usr/share/fish/completions` `~/.local/share/generated_completions`. (Some paths may be slightly different depending on where fish is installed). If a suitable file is found in one of these directories, it will be automatically loaded and the search will be stopped. The large number of directories searched may be confusing. It is to allow, respectively, user-specific completions, system-wide completions, completions installed by other packages, default completions that ship with fish, and finally, completions generated from manual pages. If you are unsure, put your completions in `~/.config/fish/completions`.
+By default, Fish searches the following for completions, using the first available file that it finds:
+- A directory for end-users to keep their own completions, usually `~/.config/fish/completions` (controlled by the `XDG_CONFIG_HOME` environment variable);
+- A directory for systems administrators to install completions for all users on the system, usually `/etc/fish/completions`;
+- A directory for third-party software vendors to ship their own completions for their software, usually `/usr/share/fish/vendor_completions.d`;
+- The completions shipped with fish, usually installed in `/usr/share/fish/completions`; and
+- Completions automatically generated from the operating system's manual, usually stored in `~/.local/share/generated_completions`.
 
-If you have written new completions for a common Unix command, please consider sharing your work by submitting it via the instructions in <a href="#more-help">Further help and development</a>. If you are developing another program and would like to ship completions with your program, install them to `/usr/share/fish/vendor_completions.d` or similar directory. Systems using the `pkgconfig` framework can discover this path from the output of `pkg-config --variable completionsdir fish`.
+These paths are controlled by parameters set at build, install, or run time, and may vary from the defaults listed above.
+
+This wide search may be confusing. If you are unsure, your completions probably belong in `~/.config/fish/completions`.
+
+If you have written new completions for a common Unix command, please consider sharing your work by submitting it via the instructions in <a href="#more-help">Further help and development</a>.
+
+If you are developing another program and would like to ship completions with your program, install them to the "vendor" completions directory. As this path may vary from system to system, the `pkgconfig` framework should be used to discover this path with the output of `pkg-config --variable completionsdir fish`.
 
 
 \section expand Parameter expansion (Globbing)
@@ -397,7 +420,19 @@ If a star (`*`) or a question mark (`?`) is present in the parameter, `fish` att
 
 - `*` can match any string of characters not containing '/'. This includes matching an empty string.
 
-- `**` matches any string of characters. This includes matching an empty string. The string may include the `/` character but does not need to.
+- `**` matches any string of characters. This includes matching an empty string. The matched string may include the `/` character; that is, it recurses into subdirectories. Note that augmenting this wildcard with other strings will not match files in the current working directory (`$PWD`) if you separate the strings with a slash ("/"). This is unlike other shells such as zsh. For example, `**\/*.fish` in zsh will match `.fish` files in the PWD but in fish will only match such files in a subdirectory. In fish you should type `***.fish` to match files in the PWD as well as subdirectories.
+
+Other shells, such as zsh, provide a rich glob syntax for restricting the files matched by globs. For example, `**(.)`, to only match regular files. Fish prefers to defer such features to programs, such as `find`, rather than reinventing the wheel. Thus, if you want to limit the wildcard expansion to just regular files the fish approach is to define and use a function. For example,
+
+\fish{cli-dark}
+function ff --description 'Like ** but only returns plain files.'
+    # This also ignores .git directories.
+    find . \( -name .git -type d -prune \) -o -type f | \
+        sed -n -e '/^\.\/\.git$/n' -e 's/^\.\///p'
+end
+\endfish
+
+You would then use it in place of `**` like this, `my_prog (ff)`, to pass only regular files in or below $PWD to `my_prog`.
 
 Wildcard matches are sorted case insensitively. When sorting matches containing numbers, consecutive digits are considered to be one element, so that the strings '1' '5' and '12' would be sorted in the order given.
 
@@ -411,8 +446,19 @@ Examples:
 
 - `**` matches any files and directories in the current directory and all of its subdirectories.
 
-Note that if no matches are found for a specific wildcard, it will expand into zero arguments, i.e. to nothing. If none of the wildcarded arguments sent to a command result in any matches, the command will not be executed. If this happens when using the shell interactively, a warning will also be printed.
+Note that for most commands, if any wildcard fails to expand, the command is not executed, <a href='#variables-status'>`$status`</a> is set to nonzero, and a warning is printed. This behavior is consistent with setting `shopt -s failglob` in bash. There are exactly 3 exceptions, namely <a href="commands.html#set">`set`</a>, <a href="commands.html#count">`count`</a> and <a href="commands.html#for">`for`</a>. Their globs are permitted to expand to zero arguments, as with `shopt -s nullglob` in bash.
 
+Examples:
+\fish
+ls *.foo
+# Lists the .foo files, or warns if there aren't any.
+
+set foos *.foo
+if count $foos >/dev/null
+    ls $foos
+end
+# Lists the .foo files, if any.
+\endfish
 
 \subsection expand-command-substitution Command substitution
 
@@ -458,7 +504,7 @@ A dollar sign followed by a string of characters is expanded into the value of t
 
 Undefined and empty variables expand to nothing.
 
-To separate a variable name from text it should immediately be followed by, encase the variable within braces.
+To separate a variable name from text it should immediately be followed by, encase the variable within quotes.
 
 Examples:
 \fish
@@ -468,15 +514,17 @@ echo $HOME
 echo $nonexistentvariable
 # Prints no output.
 
-echo The plural of $WORD is {$WORD}s
+echo The plural of $WORD is "$WORD"s
 # Prints "The plural of cat is cats" when $WORD is set to cat.
+echo The plural of $WORD is {$WORD}s
+# ditto
 \endfish
 
-Note that without the braces, fish will try to expand a variable called `$WORDs`, which may not exist.
+Note that without the quotes or braces, fish will try to expand a variable called `$WORDs`, which may not exist.
 
-The latter syntax works by exploiting <a href="#expand-brace">brace expansion</a>; care should be taken with array variables and undefined variables, as these behave very differently to POSIX shells.
+The latter syntax `{$WORD}` works by exploiting <a href="#expand-brace">brace expansion</a>; care should be taken with array variables and undefined variables, as these behave very differently to POSIX shells.
 
-Variable expansion is the only type of expansion performed on double quoted strings. There is, however, an important difference in how variables are expanded when quoted and when unquoted. An unquoted variable expansion will result in a variable number of arguments. For example, if the variable `$foo` has zero elements or is undefined, the argument `$foo` will expand to zero elements. If the variable $foo is an array of five elements, the argument `$foo` will expand to five elements. When quoted, like `"$foo"`, a variable expansion will always result in exactly one argument. Undefined variables will expand to the empty string, and array variables will be concatenated using the space character. The dangers noted in the third example above can therefore be avoided by wrapping the variable in double quotes (`echo {"$WORD"}s`).
+Variable expansion is the only type of expansion performed on double quoted strings. There is, however, an important difference in how variables are expanded when quoted and when unquoted. An unquoted variable expansion will result in a variable number of arguments. For example, if the variable `$foo` has zero elements or is undefined, the argument `$foo` will expand to zero elements. If the variable $foo is an array of five elements, the argument `$foo` will expand to five elements. When quoted, like `"$foo"`, a variable expansion will always result in exactly one argument. Undefined variables will expand to the empty string, and array variables will be concatenated using the space character.
 
 There is one further notable feature of fish variable expansion. Consider the following code snippet:
 
@@ -494,6 +542,34 @@ end
 \endfish
 
 The above code demonstrates how to use multiple '`$`' symbols to expand the value of a variable as a variable name. One can think of the `$` symbol as a variable dereference operator. When using this feature together with array brackets, the brackets will always match the innermost `$` dereference. Thus, `$$foo[5]` will always mean the fifth element of the `foo` variable should be dereferenced, not the fifth element of the doubly dereferenced variable `foo`. The latter can instead be expressed as `$$foo[1][5]`.
+
+
+\subsection cartesian-product Cartesian Products
+
+Lists adjacent to other lists or strings are expanded as cartesian products:
+
+Examples:
+\fish{cli-dark}
+>_ echo {good,bad}" apples"
+<outp>good apples bad apples</outp>
+
+>_ set -l a x y z
+>_ set -l b 1 2 3
+
+>_ echo $a$b
+<outp>x1 y1 z1 x2 y2 z2 x3 y3 z3</outp>
+
+>_ echo $a"-"$b
+<outp>x-1 y-1 z-1 x-2 y-2 z-2 x-3 y-3 z-3</outp>
+
+>_ echo {x,y,z}$b
+<outp>x1 y1 z1 x2 y2 z2 x3 y3 z3</outp>
+
+>_ echo {$b}word
+<outp>1word 2word 3word</outp>
+\endfish
+
+Be careful when you try to use braces to separate variable names from text. The dangers noted in the last example above can be avoided by wrapping the variable in double quotes instead of braces (`echo "$b"word`).
 
 
 \subsection expand-index-range Index range expansion
@@ -546,6 +622,8 @@ The `~` (tilde) character at the beginning of a parameter, followed by a usernam
 The `%` (percent) character at the beginning of a parameter followed by a string is expanded into a process ID (PID). The following expansions are performed:
 
 - If the string is the entire word `self`, the shell's PID is the result.
+
+- Otherwise, if the string is the entire word `last`, the last job's PID is the result.
 
 - Otherwise, if the string is the ID of a job, the result is the process group ID of the job.
 
@@ -631,11 +709,13 @@ echo $pirate
 
 \subsection variables-universal More on universal variables
 
-Universal variables are variables that are shared between all the users fish sessions on the computer. Fish stores many of its configuration options as universal variables. This means that in order to change fish settings, all you have to do is change the variable value once, and it will be automatically updated for all sessions, and preserved across computer reboots and login/logout.
+Universal variables are variables that are shared between all the users' fish sessions on the computer. Fish stores many of its configuration options as universal variables. This means that in order to change fish settings, all you have to do is change the variable value once, and it will be automatically updated for all sessions, and preserved across computer reboots and login/logout.
 
 To see universal variables in action, start two fish sessions side by side, and issue the following command in one of them `set fish_color_cwd blue`. Since `fish_color_cwd` is a universal variable, the color of the current working directory listing in the prompt will instantly change to blue on both terminals.
 
 <a href="#variables-universal">Universal variables</a> are stored in the file `.config/fish/fishd.MACHINE_ID`, where MACHINE_ID is typically your MAC address. Do not edit this file directly, as your edits may be overwritten. Edit them through fish scripts or by using fish interactively instead.
+
+Do not append to universal variables in <a href="index.html#initialization">config.fish</a>, because these variables will then get longer with each new shell instance. Instead, simply set them once at the command line.
 
 
 \subsection variables-functions Variable scope for functions
@@ -721,16 +801,17 @@ All arrays are one-dimensional and cannot contain other arrays, although it is p
 
 \subsection variables-special Special variables
 
-The user can change the settings of `fish` by changing the values of
-certain environment variables.
-
-- `BROWSER`, the user's preferred web browser. If this variable is set, fish will use the specified browser instead of the system default browser to display the fish documentation.
-
-- `CDPATH`, an array of directories in which to search for the new directory for the `cd` builtin. By default, the fish configuration defines `CDPATH` to be a universal variable with the values `.` and `~`.
+The user can change the settings of `fish` by changing the values of certain variables.
 
 - A large number of variable starting with the prefixes `fish_color` and `fish_pager_color.` See <a href='#variables-color'>Variables for changing highlighting colors</a> for more information.
 
 - `fish_greeting`, the greeting message printed on startup.
+
+- `fish_escape_delay_ms` overrides the default timeout of 300ms (default key bindings) or 10ms (vi key bindings) after seeing an escape character before giving up on matching a key binding. See the documentation for the <a href='bind.html#special-case-escape'>bind</a> builtin command. This delay facilitates using escape as a meta key.
+
+- `BROWSER`, the user's preferred web browser. If this variable is set, fish will use the specified browser instead of the system default browser to display the fish documentation.
+
+- `CDPATH`, an array of directories in which to search for the new directory for the `cd` builtin. By default, the fish configuration defines `CDPATH` to be a universal variable with the values `.` and `~`.
 
 - `LANG`, `LC_ALL`, `LC_COLLATE`, `LC_CTYPE`, `LC_MESSAGES`, `LC_MONETARY`, `LC_NUMERIC` and `LC_TIME` set the language option for the shell and subprograms. See the section <a href='#variables-locale'>Locale variables</a> for more information.
 
@@ -817,6 +898,8 @@ The following variables are available to change the highlighting colors in fish:
 
 - `fish_color_cwd`, the color used for the current working directory in the default prompt
 
+- `fish_color_autosuggestion`, the color used for autosuggestions
+
 Additionally, the following variables are available to change the highlighting in the completion pager:
 
 - `fish_pager_color_prefix`, the color of the prefix string, i.e. the string that is to be completed
@@ -861,7 +944,7 @@ Similar to bash, fish has Emacs and Vi editing modes. The default editing mode i
 
 \subsection emacs-mode Emacs mode commands
 
-- @key{Tab} <a href="#completion">completes</a> the current token.
+- @key{Tab} <a href="#completion">completes</a> the current token. @key{Shift, Tab} completes the current token and starts the pager's search mode.
 
 - @key{Home} or @key{Control,A} moves the cursor to the beginning of the line.
 
@@ -887,7 +970,7 @@ Similar to bash, fish has Emacs and Vi editing modes. The default editing mode i
 
 - @key{Control,L} clears and repaints the screen.
 
-- @key{Control,W} moves the previous word to the <a href="#killring">killring</a>.
+- @key{Control,W} moves the previous path component (everything up to the previous "/") to the <a href="#killring">killring</a>.
 
 - @key{Alt,D} moves the next word to the <a href="#killring">killring</a>.
 
@@ -903,12 +986,17 @@ Similar to bash, fish has Emacs and Vi editing modes. The default editing mode i
 
 - @key{Alt,H} (or @key{F1}) shows the manual page for the current command, if one exists.
 
+- @key{Control, t} transposes the last two characters
+
+- @key{Alt,t} transposes the last two words
+
+
 You can change these key bindings using the <a href="commands.html#bind">bind</a> builtin command.
 
 
 \subsection vi-mode Vi mode commands
 
-Vi mode allows for the use of Vi-like commands at the prompt. Initially, <a href="#vi-mode-insert">insert mode</a> is active. @key{Escape} enters <a href="#vi-mode-command">command mode</a>. The commands available in command, insert and visual mode are described below.
+Vi mode allows for the use of Vi-like commands at the prompt. Initially, <a href="#vi-mode-insert">insert mode</a> is active. @key{Escape} enters <a href="#vi-mode-command">command mode</a>. The commands available in command, insert and visual mode are described below. Vi mode builds on top of <a href="#emacs-mode">Emacs mode</a>, so all keybindings mentioned there that do not contradict the ones mentioned here also work.
 
 \subsubsection vi-mode-command Command mode
 
@@ -952,7 +1040,7 @@ Command mode is also known as normal mode.
 
 - @key{Control,U} moves contents from the beginning of line to the cursor to the <a href="#killring">killring</a>.
 
-- @key{Control,B} and @key{Control,F} move the cursor one word left or right. If the cursor is already at the end of the line, and an autosuggestion is available, @key{Control,F} accepts the first word in the suggestion.
+- @key{Control,x} moves the cursor to the end of the line. If an autosuggestion is available, it will be accepted completely.
 
 \subsubsection vi-mode-visual Visual mode
 
@@ -1007,7 +1095,7 @@ The fish commandline editor works exactly the same in single line mode and in mu
 
 Normally when `fish` starts a program, this program will be put in the foreground, meaning it will take control of the terminal and `fish` will be stopped until the program finishes. Sometimes this is not desirable. For example, you may wish to start an application with a graphical user interface from the terminal, and then be able to continue using the shell. In such cases, there are several ways in which the user can change fish's behavior.
 
--# By ending a command with the `&amp` (ampersand) symbol, the user tells `fish` to put the specified command into the background. A background process will be run simultaneous with `fish`. `fish` will retain control of the terminal, so the program will not be able to read from the keyboard.
+-# By ending a command with the `&` (ampersand) symbol, the user tells `fish` to put the specified command into the background. A background process will be run simultaneous with `fish`. `fish` will retain control of the terminal, so the program will not be able to read from the keyboard.
 
 -# By pressing @key{Control,Z}, the user stops a currently running foreground  program and returns control to `fish`. Some programs do not support this feature, or remap it to another key. GNU Emacs uses @key{Control,X} @key{z} to stop running.
 
@@ -1018,9 +1106,27 @@ Note that functions cannot be started in the background. Functions that are stop
 
 \section initialization Initialization files
 
-On startup, `fish` evaluates the files `/usr/share/fish/config.fish` (Or `/usr/local/fish...` if you installed fish in `/usr/local`), `/etc/fish/config.fish` (Or `~/etc/fish/...` if you installed fish in your home directory) and `~/.config/fish/config.fish` (Or any other directory specified by the `$XDG_CONFIG_HOME` variable), in that order.
+On startup, Fish evaluates a number of configuration files, which can be used to control the behavior of the shell.
 
-The first file should not be directly edited, the second one is meant for systemwide configuration and the last one is meant for user configuration. If you want to run a command only on starting an interactive shell, use the exit status of the command `status --is-interactive` to determine if the shell is interactive. If you want to run a command only when using a login shell, use `status --is-login` instead.
+Configuration files are evaluated in the following order:
+- Configuration shipped with fish, which should not be edited, usually `/usr/share/fish/config.fish`.
+- System-wide configuration files, where administrators can include initialization that should be run for all users on the system - similar to `/etc/profile` for POSIX-style shells - usually `/etc/fish/config.fish`;
+- Configuration snippets in files ending in `.fish`, in the directories:
+  - `~/.config/fish/conf.d/`
+  - `/etc/fish/conf.d`
+  - `/usr/share/fish/vendor_conf.d`
+
+  If there are multiple files with the same name in these directories, only the first will be executed.
+
+- User initialization, usually in `~/.config/fish/config.fish` (controlled by the `XDG_CONFIG_HOME` environment variable).
+
+These paths are controlled by parameters set at build, install, or run time, and may vary from the defaults listed above.
+
+This wide search may be confusing. If you are unsure, use `~/.config/fish/config.fish`.
+
+These files are all executed on the startup of every shell. If you want to run a command only on starting an interactive shell, use the exit status of the command `status --is-interactive` to determine if the shell is interactive. If you want to run a command only when using a login shell, use `status --is-login` instead. This will speed up the starting of non-interactive or non-login shells.
+
+If you are developing another program, you may wish to install configuration which is run for all users of the fish shell on a system. This is discouraged; if not carefully written, they may have side-effects or slow the startup of the shell. Additionally, users of other shells will not benefit from the Fish-specific configuration. However, if they are absolutely required, you may install them to the "vendor" configuration directory. As this path may vary from system to system, the `pkgconfig` framework should be used to discover this path with the output of `pkg-config --variable confdir fish`.
 
 Examples:
 
@@ -1058,13 +1164,7 @@ Detected errors include:
 
 When the cursor is over a parenthesis or a quote, `fish` also highlights its matching quote or parenthesis.
 
-To customize the syntax highlighting, you can set the environment variables `fish_color_normal`, `fish_color_command`, `fish_color_substitution`, `fish_color_redirection`, `fish_color_end`, `fish_color_error`, `fish_color_param`, `fish_color_comment`, `fish_color_match`, `fish_color_search_match`, `fish_color_cwd`, `fish_pager_color_prefix`, `fish_pager_color_completion`, `fish_pager_color_description`, `fish_pager_color_progress` and `fish_pager_color_secondary`. Usually, the value of these variables will be one of `black`, `red`, `green`, `brown`, `yellow`, `blue`, `magenta`, `purple`, `cyan`, `white` or `normal`, but they can be an array containing any color options for the `set_color` command.
-
-\fish
-set fish_color_error black --background=red --bold
-# Make all commandline errors be written in a black,
-# bold font, with a red background.
-\endfish
+To customize the syntax highlighting, you can set the environment variables listed in the <a href='index.html#variables-color'>Variables for changing highlighting colors</a> section.
 
 \subsection title Programmable title
 
@@ -1113,6 +1213,8 @@ function --on-signal WINCH my_signal_handler
 end
 \endfish
 
+Please note that event handlers only become active when a function is loaded, which means you might need to otherwise <a href='commands.html#source'>source</a> or execute a function instead of relying on <a href=#syntax-function-autoloading>autoloading</a>. One approach is to put it into your <a href="index.html#initialization">initialization file</a>.
+
 For more information on how to define new event handlers, see the documentation for the <a href='commands.html#function'>function</a> command.
 
 
@@ -1132,7 +1234,7 @@ If you install fish in your home directory, fish will not work correctly for any
 
 If you have a question not answered by this documentation, there are several avenues for help:
 
--# The official mailing list at <a href='https://lists.sf.net/lists/listinfo/fish-users'>fish-users@lists.sf.net</a>
+-# The official mailing list at <a href='https://lists.sourceforge.net/lists/listinfo/fish-users'>fish-users@lists.sourceforge.net</a>
 
 -# The Internet Relay Chat channel, \#fish on `irc.oftc.net`
 

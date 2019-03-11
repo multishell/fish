@@ -9,17 +9,25 @@ function fish_default_key_bindings -d "Default (Emacs-like) key bindings for fis
 	bind $argv "" self-insert
 
 	bind $argv \n execute
+	bind $argv \r execute
 
 	bind $argv \ck kill-line
 	bind $argv \cy yank
 	bind $argv \t complete
 
 	bind $argv \e\n "commandline -i \n"
+	bind $argv \e\r "commandline -i \n"
 
 	bind $argv \e\[A up-or-search
 	bind $argv \e\[B down-or-search
 	bind $argv -k down down-or-search
 	bind $argv -k up up-or-search
+
+	# Some linux VTs output these (why?)
+	bind $argv \eOA up-or-search
+	bind $argv \eOB down-or-search
+	bind $argv \eOC forward-char
+	bind $argv \eOD backward-char
 
 	bind $argv \e\[C forward-char
 	bind $argv \e\[D backward-char
@@ -70,9 +78,8 @@ function fish_default_key_bindings -d "Default (Emacs-like) key bindings for fis
 	bind $argv \ce end-of-line
 	bind $argv \ey yank-pop
 	bind $argv \ch backward-delete-char
-	bind $argv \cw backward-kill-word
-	bind $argv \cp history-search-backward
-	bind $argv \cn history-search-forward
+	bind $argv \cp up-or-search
+	bind $argv \cn down-or-search
 	bind $argv \cf forward-char
 	bind $argv \cb backward-char
 	bind $argv \ct transpose-chars
@@ -89,8 +96,8 @@ function fish_default_key_bindings -d "Default (Emacs-like) key bindings for fis
 	bind $argv \e\[1\;5D backward-word
 	bind $argv \e\[1\;9A history-token-search-backward # iTerm2
 	bind $argv \e\[1\;9B history-token-search-forward # iTerm2
-	bind $argv \e\[1\;9C forward-word #iTerm2
-	bind $argv \e\[1\;9D backward-word #iTerm2
+	bind $argv \e\[1\;9C nextd-or-forward-word #iTerm2
+	bind $argv \e\[1\;9D prevd-or-backward-word #iTerm2
 	# Bash compatibility
 	# https://github.com/fish-shell/fish-shell/issues/89
 	bind $argv \e. history-token-search-backward
@@ -115,7 +122,8 @@ function fish_default_key_bindings -d "Default (Emacs-like) key bindings for fis
 	bind $argv -k f1 __fish_man_page
 	bind $argv \eh __fish_man_page
 
-	# This will make sure the output of the current command is paged using the less pager when you press Meta-p
+	# This will make sure the output of the current command is paged using the default pager when you press Meta-p
+	# If none is set, less will be used
 	bind $argv \ep '__fish_paginate'
 	
 	# shift-tab does a tab complete followed by a search

@@ -1,27 +1,63 @@
 language: cpp
-compiler:
-  - gcc
-  - clang
-before_install:
-  - sudo apt-get update
-install:
-  - sudo apt-get install --no-install-recommends bc doxygen expect gettext libncurses5-dev
+sudo: false
+
+matrix:
+  include:
+    - os: linux
+      compiler: gcc
+      addons:
+        apt:
+          packages:
+            - bc
+            - expect
+            - gettext
+            - libncurses5-dev
+
+    - os: linux
+      compiler: clang
+      addons:
+        apt:
+          sources:
+            - llvm-toolchain-precise-3.8
+            - ubuntu-toolchain-r-test
+          packages:
+            - clang-3.8
+            - llvm-3.8 # for llvm-symbolizer
+            - bc
+            - expect
+            - gettext
+            - libncurses5-dev
+      env:
+        - CXXFLAGS="-g -fno-omit-frame-pointer -fsanitize=address"
+        - ASAN_OPTIONS=check_initialization_order=1:detect_stack_use_after_return=1:detect_leaks=1
+      before_install: export CXX=clang++-3.8
+
+    - os: osx
+      before_install:
+        - brew update
+        - brew install pcre2 # use system PCRE2
+
+  fast_finish: true
+
 script:
   - autoreconf
-  - ./configure
+  - ./configure --prefix=$HOME/prefix || cat config.log
   - make -j2
-  - sudo make install
-  - make test SHOW_INTERACTIVE_LOG=1
+  - make install
+  - make test DESTDIR=$HOME/prefix/ SHOW_INTERACTIVE_LOG=1
+
 notifications:
+  # Some items are encrypted so that notifications from other repositories
+  # don't flood the official repositories.
   irc:
     channels:
-      - "irc.oftc.net#fish"
+        #- "irc.oftc.net#fish"
+        secure: "eRk9KGZ5+mrlD2SoI8yg2Sp8OYrh7YPyGe3WCDQUwTnNgNDII34rbM9a6UOA/l7AeWSNY8joLq5xVLCU4wpFgUcJ11SYIpMnLosZK29OW4ubDOHmdBDvJ971rLgAVG9cXngZtIxEVVxN/jnS1Qr8GKZx4DjkaTMgz1pemb4WxCc="
     template:
       - "%{repository}#%{build_number} (%{commit} on %{branch} by %{author}): %{message} Details at %{build_url}"
     use_notice: true
     skip_join: true
   webhooks:
     urls:
-      - https://webhooks.gitter.im/e/61821cec3015bf0f8bb1
-matrix:
-  fast_finish: true
+        #- https://webhooks.gitter.im/e/61821cec3015bf0f8bb1
+        secure: fPfOmxnC3MCsfR1oocVFeWLawGcRZkn+8fNHlSOeZ+SqqoZfcCHgQTvQ22TqmVl1yvkXbNlaXjo6dbVzTOAh7r7H0bRMEKBVh3dQS7wqjB1sKivpXd8PAS3BTj5MQpGeJzdHnDuwVlwDktGtfHfhGeq1Go/4IosOq8u+6RTe28g=

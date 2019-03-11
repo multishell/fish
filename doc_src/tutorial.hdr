@@ -27,6 +27,7 @@
 - <a href="#tut_path">$PATH</a>
 - <a href="#tut_startup">Startup</a>
 - <a href="#tut_autoload">Autoloading Functions</a>
+- <a href="#tut_universal">Universal Variables</a>
 - <a href="#tut_more">Ready for more?</a>
 
 \htmlonly[block]
@@ -251,7 +252,7 @@ Unlike other shells, variables are not further split after substitution:
 <outp>Mister Noodle</outp>
 \endfish
 
-In bash, this would have created two directories "Mister" and "Noodle". In `fish`, it created only one: the variable had the value "Mister Noodle", so that is the argument that was passed to `mkdir`, spaces and all.
+In bash, this would have created two directories "Mister" and "Noodle". In `fish`, it created only one: the variable had the value "Mister Noodle", so that is the argument that was passed to `mkdir`, spaces and all. Other shells use the term "arrays", rather than lists.
 
 
 \section tut_exit_status Exit Status
@@ -348,6 +349,20 @@ You can iterate over a list (or a slice) with a for loop:
 <outp>entry: /usr/local/bin</outp>
 \endfish
 
+Lists adjacent to other lists or strings are expanded as <a href="index.html#cartesian-product">cartesian products</a> unless quoted (see <a href="index.html#expand-variable">Variable expansion</a>):
+
+\fish{cli-dark}
+>_ set -l a 1 2 3
+>_ set -l 1 a b c
+>_ echo $a$1
+<outp>1a 2a 3a 1b 2b 3b 1c 2c 3c</outp>
+>_ echo $a" banana"
+<outp>1 banana 2 banana 3 banana</outp>
+>_ echo "$a banana"
+<outp>1 2 3 banana</outp>
+\endfish
+
+This is similar to <a href="index.html#expand-brace">Brace expansion</a>.
 
 \section tut_command_substitutions Command Substitutions
 
@@ -437,7 +452,7 @@ You can list the names of all functions with the `functions` keyword (note the p
 
 \fish{cli-dark}
 >_ functions
-<outp>alias, cd, delete-or-exit, dirh, dirs, down-or-search, eval, export, fish_command_not_found_setup, fish_config, fish_default_key_bindings, fish_prompt, fish_right_prompt, fish_sigtrap_handler, fish_update_completions, funced, funcsave, grep, help, history, isatty, ls, man, math, nextd, nextd-or-forward-word, open, popd, prevd, prevd-or-backward-word, prompt_pwd, psub, pushd, seq, setenv, sgrep, trap, type, umask, up-or-search, vared</outp>
+<outp>alias, cd, delete-or-exit, dirh, dirs, down-or-search, eval, export, fish_command_not_found_setup, fish_config, fish_default_key_bindings, fish_prompt, fish_right_prompt, fish_sigtrap_handler, fish_update_completions, funced, funcsave, grep, help, history, isatty, ls, man, math, nextd, nextd-or-forward-word, open, popd, prevd, prevd-or-backward-word, prompt_pwd, psub, pushd, seq, setenv, trap, type, umask, up-or-search, vared</outp>
 \endfish
 
 You can see the source for any function by passing its name to `functions`:
@@ -514,13 +529,13 @@ You can choose among some sample prompts by running `fish_config prompt`. `fish`
 
 `$PATH` is an environment variable containing the directories in which `fish` searches for commands. Unlike other shells, $PATH is a [list](#tut_lists), not a colon-delimited string.
 
-To prepend to `$PATH`, you can write:
+To prepend /usr/local/bin and /usr/sbin to `$PATH`, you can write:
 
 \fish{cli-dark}
->_ set PATH /new/path $PATH
+>_ set PATH /usr/local/bin /usr/sbin $PATH
 \endfish
 
-You can do so directly in `fish.config`, like you might do in other shells with `.profile`. See [this example](#path_example).
+You can do so directly in `config.fish`, like you might do in other shells with `.profile`. See [this example](#path_example).
 
 A faster way is to modify the `$fish_user_paths` [universal variable](#tut_universal), which is automatically prepended to `$PATH`. For example, to permanently add `/usr/local/bin` to your `$PATH`, you could write:
 
@@ -528,7 +543,7 @@ A faster way is to modify the `$fish_user_paths` [universal variable](#tut_unive
 >_ set -U fish_user_paths /usr/local/bin $fish_user_paths
 \endfish
 
-The advantage is that you don't have to go mucking around in files: just run this once at the command line, and it will affect the current session and all future instances too. (Note: you should NOT add this line to `fish.config`. If you do, the variable will get longer each time you run fish!)
+The advantage is that you don't have to go mucking around in files: just run this once at the command line, and it will affect the current session and all future instances too. (Note: you should NOT add this line to `config.fish`. If you do, the variable will get longer each time you run fish!)
 
 \section tut_startup Startup (Where's .bashrc?)
 

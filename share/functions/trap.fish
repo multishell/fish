@@ -1,18 +1,14 @@
 
 function __trap_translate_signal
 	set upper (echo $argv[1]|tr a-z A-Z)
-	if expr $upper : 'SIG.*' >/dev/null
-		echo $upper | cut -c 4-
-	else
-		echo $upper
-	end
+	string replace -r '^SIG' '' -- $upper
 end
 
 function __trap_switch
 
 	switch $argv[1]
 		case EXIT
-			echo --on-exit %self
+			echo --on-process-exit %self
 
 		case '*'
 			echo --on-signal $argv[1]
@@ -124,7 +120,7 @@ function trap -d 'Perform an action when the shell receives a signal'
 			if count $opt >/dev/null
 				set names $opt
 			else
-				set names (functions -na|sgrep "^__trap_handler_"|sed -e 's/__trap_handler_//' )
+				set names (functions -na| string match "__trap_handler_*" | string replace '__trap_handler_' '')
 			end
 
 			for i in $names

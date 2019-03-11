@@ -54,6 +54,12 @@ function __fish_print_packages
 
 	# Zypper needs caching as it is slow
 	if type -q -f zypper
+		# Use libzypp cache file if available
+		if test -f /var/cache/zypp/solv/@System/solv.idx
+			cat /var/cache/zypp/solv/*/solv.idx | awk '!/application:|srcpackage:|product:|pattern:|patch:/ {print $1'\t$package'}'
+			return
+		end
+
 		# If the cache is less than five minutes old, we do not recalculate it
 
 		set -l cache_file $XDG_CACHE_HOME/.zypper-cache.$USER
@@ -67,7 +73,7 @@ function __fish_print_packages
 		end
 
 		# Remove package version information from output and pipe into cache file
-		zypper --quiet --non-interactive search --type=package | tail -n +4 | sed -E 's/^. \| ((\w|[-_.])+).*/\1\t'$package'/g' > $cache_file &
+		zypper --quiet --non-interactive search --type=package | tail -n +4 | sed -r 's/^. \| ((\w|[-_.])+).*/\1\t'$package'/g' > $cache_file &
 		return
 	end
 
@@ -124,7 +130,7 @@ function __fish_print_packages
 	else
 		# FIXME?  Seems to be broken
 		if type -q -f emerge
-			emerge -s \^(commandline -tc) |sgrep "^*" |cut -d\  -f3 |cut -d/ -f2
+			emerge -s \^(commandline -tc) | __fish_sgrep "^*" |cut -d\  -f3 |cut -d/ -f2
 			return
 		end
 	end

@@ -2,7 +2,7 @@
 
 \subsection abbr-synopsis Synopsis
 \fish{synopsis}
-abbr -a word="phrase"
+abbr -a word phrase...
 abbr -s
 abbr -l
 abbr -e word
@@ -14,7 +14,7 @@ abbr -e word
 
 Abbreviations are user-defined character sequences or words that are replaced with longer phrases after they are entered. For example, a frequently-run command such as `git checkout` can be abbreviated to `gco`. After entering `gco` and pressing @key{Space} or @key{Enter}, the full text `git checkout` will appear in the command line.
 
-Abbreviations are stored, by default, in a universal variable.
+Abbreviations are stored using universal variables. You can create abbreviations directly on the command line, and they will be saved automatically. Calling `abbr -a` in config.fish will lead to slightly worse startup performance.
 
 The following parameters are available:
 
@@ -25,6 +25,8 @@ The following parameters are available:
 - `-l` or `--list` Lists all abbreviated words.
 
 - `-e WORD` or `--erase WORD` Erase the abbreviation WORD.
+
+Note: fish version 2.1 supported `-a WORD=PHRASE`. This syntax is now deprecated but will still be converted.
 
 \subsection abbr-example Examples
 

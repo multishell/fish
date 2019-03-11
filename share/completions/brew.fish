@@ -1,6 +1,6 @@
 function __fish_brew_needs_command
   set cmd (commandline -opc)
-  if [ (count $cmd) -eq 1 -a $cmd[1] = 'brew' ]
+  if [ (count $cmd) -eq 1 ]
     return 0
   end
   return 1
@@ -75,6 +75,13 @@ complete -f -c brew -n '__fish_brew_using_command create' -l autotools -d 'Use t
 complete -f -c brew -n '__fish_brew_using_command create' -l no-fetch -d 'Don\'t download URL'
 complete -f -c brew -n '__fish_brew_using_command create' -l set-name -d 'Override name autodetection'
 complete -f -c brew -n '__fish_brew_using_command create' -l set-version -d 'Override version autodetection'
+
+# desc
+complete -f -c brew -n '__fish_brew_needs_command' -a desc -d "Summarize specified formulae in one line"
+complete -f -c brew -n '__fish_brew_using_command desc' -l search -d 'Search names and descriptions'
+complete -f -c brew -n '__fish_brew_using_command desc' -l name -d 'Search only names'
+complete -f -c brew -n '__fish_brew_using_command desc' -l description -d 'Search only descriptions'
+complete -f -c brew -n '__fish_brew_using_command desc' -a '(__fish_brew_formulae)'
 
 # deps
 complete -f -c brew -n '__fish_brew_needs_command' -a deps -d 'Show a formula\'s dependencies'

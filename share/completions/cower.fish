@@ -1,4 +1,3 @@
-
 complete -c cower -f -s b -l 'brief'            -d 'Show output in a more script friendly format'
 complete -c cower -f -s d -l 'download'         -d 'Download [twice to fetch dependencies]'
 complete -c cower -f -s i -l 'info'             -d 'Show info for target [twice for more details]'
@@ -11,7 +10,7 @@ complete -c cower -f -s f -l 'force'            -d 'Overwrite existing files whe
 complete -c cower -f      -l 'format'           -d 'Print formatted'
 complete -c cower -f -s h -l 'help'             -d 'Display help and quit'
 complete -c cower -f      -l 'ignore' -xa "(pacman -Qq)" -d 'Ignore a package upgrade'
-complete -c cower -f      -l 'ignorerepo' -xa "(cat /etc/pacman.conf | grep '^\[.\+\]' | sed 's/[]\[]//g')" -d 'Ignore a binary repo when checking for updates'
+complete -c cower -f      -l 'ignorerepo' -xa "(__fish_print_pacman_repos)" -d 'Ignore a binary repo when checking for updates'
 complete -c cower -f      -l 'listdelim'        -d 'Specify a delimiter for list formatters'
 complete -c cower -f -s q -l 'quiet'            -d 'Output less'
 complete -c cower -f -s t -l 'target'           -d 'Download targets to DIR'
@@ -20,4 +19,5 @@ complete -c cower -f      -l 'timeout'          -d 'Curl timeout in seconds'
 complete -c cower -f -s v -l 'verbose'          -d 'Output more'
 
 # Complete with AUR packages:
-complete -c cower -f --condition 'not expr -- (commandline --current-token) : "^\-.*" > /dev/null' --arguments '(cower --format="%n\n" --search (commandline --current-token))'
+# If the search string is too short, cower prints an annoying message to stderr - ignore that
+complete -c cower -f -n 'not string match -q -- "-*" (commandline --current-token)' -a '(cower --format="%n\t%d\n" --search (commandline --current-token) ^/dev/null)'

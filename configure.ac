@@ -13,9 +13,7 @@ m4_syscmd([build_tools/git_version_gen.sh 2>/dev/null])
 AC_PREREQ([2.60])
 AC_INIT(fish,
         m4_esyscmd([cut -f 3 -d ' ' FISH-BUILD-VERSION-FILE | tr -d '\n']),
-        fish-users@lists.sf.net)
-
-conf_arg=$@
+        fish-users@lists.sourceforge.net)
 
 #
 # List of output variables produced by this configure script
@@ -24,6 +22,8 @@ conf_arg=$@
 AC_SUBST(HAVE_GETTEXT)
 AC_SUBST(HAVE_DOXYGEN)
 AC_SUBST(LDFLAGS_FISH)
+AC_SUBST(WCHAR_T_BITS)
+AC_SUBST(EXTRA_PCRE2)
 
 
 #
@@ -107,9 +107,15 @@ AC_CONFIG_HEADERS(config.h)
 #
 
 AH_BOTTOM([#if __GNUC__ >= 3
+#ifndef __warn_unused
 #define __warn_unused __attribute__ ((warn_unused_result))
+#endif
+#ifndef __sentinel
 #define __sentinel __attribute__ ((sentinel))
+#endif
+#ifndef __packed
 #define __packed __attribute__ ((packed))
+#endif
 #else
 #define __warn_unused
 #define __sentinel
@@ -210,20 +216,19 @@ CXXFLAGS="$CXXFLAGS -Wall -Wno-sign-compare"
 # This is needed in order to get the really cool backtraces on Linux
 #
 
-if test `uname` != "Darwin"; then
-   LDFLAGS_FISH="$LDFLAGS_FISH -rdynamic"
-fi
+AC_MSG_CHECKING([for -rdynamic linker flag])
+prev_LDFLAGS="$LDFLAGS"
+LDFLAGS="$LDFLAGS -rdynamic"
+AC_LINK_IFELSE([AC_LANG_PROGRAM([[]],[[]])],
+               [
+                AC_MSG_RESULT([yes])
+                LDFLAGS_FISH="$LDFLAGS_FISH -rdynamic"
+               ], [
+                AC_MSG_RESULT([no])
+                LDFLAGS_FISH="$LDFLAGS_FISH"
+               ])
+LDFLAGS="$prev_LDFLAGS"
 
-#
-# On Cygwin, we need to add some flags for ncurses.
-#
-case `uname` in
-    CYGWIN*)
-        echo "adding flags for ncurses on Cygwin"
-        CXXFLAGS="$CXXFLAGS -I/usr/include -I/usr/include/ncursesw"
-        LDFLAGS_FISH="$LDFLAGS_FISH -L/usr/lib/ncursesw"
-    ;;
-esac
 
 #
 # If we are compiling against glibc, set some flags to work around
@@ -355,6 +360,7 @@ AC_SEARCH_LIBS( shm_open, rt, , [AC_MSG_ERROR([Cannot find the rt library, neede
 AC_SEARCH_LIBS( pthread_create, pthread, , [AC_MSG_ERROR([Cannot find the pthread library, needed to build this package.] )] )
 AC_SEARCH_LIBS( setupterm, [ncurses tinfo curses], , [AC_MSG_ERROR([Could not find a curses implementation, needed to build fish. If this is Linux, try running 'sudo apt-get install libncurses5-dev' or 'sudo yum install ncurses-devel'])] )
 AC_SEARCH_LIBS( [nan], [m], [AC_DEFINE( [HAVE_NAN], [1], [Define to 1 if you have the nan function])] )
+AC_SEARCH_LIBS( [backtrace_symbols_fd], [execinfo] )
 
 if test x$local_gettext != xno; then
   AC_SEARCH_LIBS( gettext, intl,,)
@@ -370,17 +376,16 @@ if test x$local_gettext != xno; then
   AC_CHECK_HEADERS([libintl.h])
 fi
 
-AC_CHECK_HEADER(
-  [regex.h],
-  [
-    AC_DEFINE(
-      [HAVE_REGEX_H],
-      [1],
-      [Define to 1 if you have the <regex.h> header file.]
-    )
-  ],
-  [AC_MSG_ERROR([Could not find the header regex.h, needed to build fish])]
-)
+
+#
+# Get the size in bits of wchar_t, needed for configuring the pcre2 build
+# and for code that #includes pcre2.h
+#
+
+AC_CHECK_SIZEOF(wchar_t)
+WCHAR_T_BITS=`expr 8 \* $ac_cv_sizeof_wchar_t`
+AC_DEFINE_UNQUOTED([WCHAR_T_BITS], [$WCHAR_T_BITS], [The size of wchar_t in bits.])
+
 
 #
 # On some platforms (Solaris 10) adding -std=c99 in turn requires that
@@ -518,7 +523,8 @@ AC_STRUCT_DIRENT_D_TYPE
 AC_CHECK_FUNCS( wcsdup wcsndup wcslen wcscasecmp wcsncasecmp fwprintf )
 AC_CHECK_FUNCS( futimes wcwidth wcswidth wcstok fputwc fgetwc )
 AC_CHECK_FUNCS( wcstol wcslcat wcslcpy lrand48_r killpg mkostemp )
-AC_CHECK_FUNCS( backtrace backtrace_symbols sysconf getifaddrs )
+AC_CHECK_FUNCS( backtrace backtrace_symbols_fd sysconf getifaddrs )
+AC_CHECK_FUNCS( futimens clock_gettime )
 
 if test x$local_gettext != xno; then
   AC_CHECK_FUNCS( gettext dcgettext )
@@ -744,42 +750,6 @@ else
   AC_MSG_RESULT(no)
 fi
 
-# Check if getopt_long exists and works
-AC_MSG_CHECKING([if getopt_long exists and works])
-AC_TRY_LINK(
-  [
-    #if HAVE_GETOPT_H
-    #include <getopt.h>
-    #endif
-  ],
-  [
-    static struct option
-      long_options[] =
-      {
-        0, 0, 0, 0
-      }
-    ;
-    int opt = getopt_long( 0,
-                 0,
-                 0,
-                 long_options,
-                 0 );
-
-  ],
-  have_working_getopt_long=yes,
-  have_working_getopt_long=no
-)
-if test "$have_working_getopt_long" = yes; then
-  AC_MSG_RESULT(yes)
-  AC_DEFINE(
-    [HAVE_WORKING_GETOPT_LONG],
-    [1],
-    [Define to 1 if getopt_long exists and works.]
-  )
-else
-  AC_MSG_RESULT(no)
-fi
-
 # Check for Solaris curses tputs having fixed length parameter list.
 AC_MSG_CHECKING([if we are using non varargs tparm.])
 AC_COMPILE_IFELSE(
@@ -788,6 +758,8 @@ AC_COMPILE_IFELSE(
       [
 	#if HAVE_NCURSES_H
 	#include <ncurses.h>
+	#elif HAVE_NCURSES_CURSES_H
+	#include <ncurses/curses.h>
 	#else
 	#include <curses.h>
 	#endif
@@ -817,7 +789,100 @@ else
   AC_MSG_RESULT(no)
 fi
 
-# Tell the world what we know
+EXTRA_PCRE2=
+AC_ARG_WITH(
+  included-pcre2,
+  AS_HELP_STRING(
+    [--without-included-pcre2],
+    [build against the system PCRE2 library instead of the bundled version]
+  ),
+  [included_pcre2=$withval],
+  [included_pcre2=auto]
+)
+
+if test "x$included_pcre2" != "xyes"; then
+
+  # test for pcre2-config
+  # can use either pcre2-config or pkgconfig here but only implement the former for now
+  AC_CHECK_PROG(PCRE2_CONFIG, pcre2-config, pcre2-config)
+
+  if test "x$PCRE2_CONFIG" != "x"; then
+    dnl AC_MSG_CHECKING([for $WCHAR_T_BITS-bit PCRE2])
+    XLIBS="$LIBS"
+    LIBS="$LIBS "`$PCRE2_CONFIG --libs$WCHAR_T_BITS 2>/dev/null`
+    XCXXFLAGS="$CXXFLAGS"
+    CXXFLAGS="$CXXFLAGS"`$PCRE2_CONFIG --cflags`
+
+    # cheat a bit here. the exact library is determined by $WCHAR_T_BITS,
+    # and so AC_CHECK_LIB won't work (can't use a variable as library name)
+    # AC_SEARCH_LIBS will use the existing $LIBS flags with no additional library first
+    AC_SEARCH_LIBS([pcre2_compile_$WCHAR_T_BITS], [],
+      [ working_pcre2=yes
+        AC_MSG_NOTICE([using system PCRE2 library])
+      ],
+      [ # fail case; undo the changes to LIBS/CXXFLAGS
+       working_pcre2=no
+       LIBS="$XLIBS"
+       CXXFLAGS="$XCXXFLAGS"
+      ]
+    )
+  fi
+
+  if test "x$working_pcre2" != "xyes"; then
+    # pcre2 size wrong or pcre2-config not found
+    # is it OK to use the included version?
+    if test "x$included_pcre2" = "xno"; then
+      # complain
+      AC_MSG_ERROR([cannot find system pcre2-config, but --without-included-pcre2 was given.
+Make sure pcre2-config is installed and available in PATH.
+You may need to install the PCRE2 development library for your system.])
+    else
+      # use the internal version
+      included_pcre2=yes
+    fi
+  fi
+fi
+
+# Re-test as value may have changed.
+if test "x$included_pcre2" = "xyes"; then
+  # Build configure/Makefile for pcre2
+  AC_MSG_NOTICE([using included PCRE2 library])
+  # unfortunately these get added to the global configuration
+  ac_configure_args="$ac_configure_args --disable-pcre2-8 --enable-pcre2-$WCHAR_T_BITS --disable-shared"
+  AC_CONFIG_SUBDIRS([pcre2-10.21])
+
+  PCRE2_CXXFLAGS='-I$(PCRE2_DIR)/src'
+  PCRE2_LIBS='-L$(PCRE2_LIBDIR) -lpcre2-$(PCRE2_WIDTH)'
+
+  # Make the binary depend on the PCRE2 libraries so they get built
+  EXTRA_PCRE2='$(PCRE2_LIB)'
+  CXXFLAGS="$CXXFLAGS $PCRE2_CXXFLAGS"
+  LIBS="$LIBS $PCRE2_LIBS"
+fi
+
+# Allow configurable extra directories.
+AC_SUBST(extra_completionsdir)
+AC_ARG_WITH([extra-completionsdir],
+            AS_HELP_STRING([--with-extra-completionsdir=DIR],
+                           [path for extra completions]),
+            [extra_completionsdir=$withval],
+            [extra_completionsdir='${datadir}/fish/vendor_completions.d'])
+
+AC_SUBST(extra_functionsdir)
+AC_ARG_WITH([extra_functionsdir],
+            AS_HELP_STRING([--with-extra-functionsdir=DIR],
+                           [path for extra functions]),
+            [extra_functionsdir=$withval],
+            [extra_functionsdir='${datadir}/fish/vendor_functions.d'])
+
+AC_SUBST(extra_confdir)
+AC_ARG_WITH([extra-confdir],
+            AS_HELP_STRING([--with-extra-confdir=DIR],
+                           [path for extra conf]),
+            [extra_confdir=$withval],
+            [extra_confdir='${datadir}/fish/vendor_conf.d'])
+
+# Tell the world what we know.
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT
 

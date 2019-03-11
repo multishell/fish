@@ -37,59 +37,42 @@ function __fish_config_interactive -d "Initializations that should be performed 
 		end
 		set -U __fish_init_1_50_0
 
-		#
-		# Set various defaults using these throwaway functions
-		#
-
-		function set_default -d "Set a universal variable, unless it has already been set"
-			if not set -q $argv[1]
-				set -U -- $argv
-			end
-		end
-
 		# Regular syntax highlighting colors
-		set_default fish_color_normal normal
-		set_default fish_color_command 005fd7 purple
-		set_default fish_color_param 00afff cyan
-		set_default fish_color_redirection normal
-		set_default fish_color_comment red
-		set_default fish_color_error red --bold
-		set_default fish_color_escape cyan
-		set_default fish_color_operator cyan
-		set_default fish_color_quote brown
-		set_default fish_color_autosuggestion 555 yellow
-		set_default fish_color_valid_path --underline
+		set -q fish_color_normal; or set -U fish_color_normal normal
+		set -q fish_color_command; or set -U fish_color_command 005fd7 purple
+		set -q fish_color_param; or set -U fish_color_param 00afff cyan
+		set -q fish_color_redirection; or set -U fish_color_redirection normal
+		set -q fish_color_comment; or set -U fish_color_comment red
+		set -q fish_color_error; or set -U fish_color_error red --bold
+		set -q fish_color_escape; or set -U fish_color_escape cyan
+		set -q fish_color_operator; or set -U fish_color_operator cyan
+		set -q fish_color_quote; or set -U fish_color_quote brown
+		set -q fish_color_autosuggestion; or set -U fish_color_autosuggestion 555 yellow
+		set -q fish_color_valid_path; or set -U fish_color_valid_path --underline
 
-		set_default fish_color_cwd green
-		set_default fish_color_cwd_root red
+		set -q fish_color_cwd; or set -U fish_color_cwd green
+		set -q fish_color_cwd_root; or set -U fish_color_cwd_root red
 
 		# Background color for matching quotes and parenthesis
-		set_default fish_color_match cyan
+		set -q fish_color_match; or set -U fish_color_match cyan
 
 		# Background color for search matches
-		set_default fish_color_search_match --background=purple
+		set -q fish_color_search_match; or set -U fish_color_search_match --background=purple
 
 		# Background color for selections
-		set_default fish_color_selection --background=purple
+		set -q fish_color_selection; or set -U fish_color_selection --background=purple
 
 		# Pager colors
-		set_default fish_pager_color_prefix cyan
-		set_default fish_pager_color_completion normal
-		set_default fish_pager_color_description 555 yellow
-		set_default fish_pager_color_progress cyan
+		set -q fish_pager_color_prefix; or set -U fish_pager_color_prefix cyan
+		set -q fish_pager_color_completion; or set -U fish_pager_color_completion normal
+		set -q fish_pager_color_description 555; or set -U fish_pager_color_description 555 yellow
+		set -q fish_pager_color_progress; or set -U fish_pager_color_progress cyan
 
 		#
 		# Directory history colors
 		#
 
-		set_default fish_color_history_current cyan
-
-		#
-		# Remove temporary functions for setting default variable values
-		#
-
-		functions -e set_default
-
+		set -q fish_color_history_current; or set -U fish_color_history_current cyan
 	end
 
     #
@@ -101,24 +84,17 @@ function __fish_config_interactive -d "Initializations that should be performed 
         eval "$__fish_bin_dir/fish -c 'fish_update_completions > /dev/null ^/dev/null' &"
     end
 
-	if status -i
-		#
-		# Print a greeting
-		#
+	#
+	# Print a greeting
+	# fish_greeting can be a function (preferred) or a variable
+	#
 
-		if functions -q fish_greeting
-			fish_greeting
-		else
-			if set -q fish_greeting
-				switch "$fish_greeting"
-					case ''
-					# If variable is empty, don't print anything, saves us a fork
-
-					case '*'
-					echo $fish_greeting
-				end
-			end
-		end
+	if functions -q fish_greeting
+		fish_greeting
+	else
+		# The greeting used to be skipped when fish_greeting was empty (not just undefined)
+		# Keep it that way to not print superfluous newlines on old configuration
+		test -n "$fish_greeting"; and echo $fish_greeting
 	end
 
 	#
@@ -169,12 +145,12 @@ function __fish_config_interactive -d "Initializations that should be performed 
 		set -g fish_bind_mode default
 		if test "$fish_key_bindings" = fish_default_key_bindings
 			fish_default_key_bindings
-			# Load user key bindings if they are defined
-			if functions --query fish_user_key_bindings > /dev/null
-				fish_user_key_bindings
-			end
 		else
 			eval $fish_key_bindings ^/dev/null
+		end
+		# Load user key bindings if they are defined
+		if functions --query fish_user_key_bindings > /dev/null
+			fish_user_key_bindings
 		end
 	end
 
@@ -183,7 +159,7 @@ function __fish_config_interactive -d "Initializations that should be performed 
 	__fish_reload_key_bindings ^ /dev/null
 
 	# Repaint screen when window changes size
-	function __fish_winch_handler --on-signal winch
+	function __fish_winch_handler --on-signal WINCH
 		commandline -f repaint
 	end
 
@@ -194,48 +170,41 @@ function __fish_config_interactive -d "Initializations that should be performed 
 			status --is-command-substitution; and return
 			printf '\033]7;file://%s%s\a' (hostname) (pwd | __fish_urlencode)
 		end
+		__update_vte_cwd # Run once because we might have already inherited a PWD from an old tab
 	end
 
-	# The first time a command is not found, look for command-not-found
-	# This is not cheap so we try to avoid doing it during startup
-	# config.fish already installed a handler for noninteractive command-not-found,
-	# so delete it here since we are now interactive
-	functions -e __fish_command_not_found_handler
-
-	# Now install our fancy variant
-	function __fish_command_not_found_setup --on-event fish_command_not_found
-		# Remove fish_command_not_found_setup so we only execute this once
-		functions --erase __fish_command_not_found_setup
-
+	### Command-not-found handlers
+	# This can be overridden by defining a new __fish_command_not_found_handler function
+	if not type -q __fish_command_not_found_handler
 		# First check if we are on OpenSUSE since SUSE's handler has no options
 		# and expects first argument to be a command and second database
 		# also check if there is command-not-found command.
-		if begin; test -f /etc/SuSE-release; and type -q -p command-not-found; end
+		if test -f /etc/SuSE-release; and type -q -p command-not-found
 			function __fish_command_not_found_handler --on-event fish_command_not_found
 				/usr/bin/command-not-found $argv[1]
 			end
-		# Check for Fedora's handler
+			# Check for Fedora's handler
 		else if test -f /usr/libexec/pk-command-not-found
 			function __fish_command_not_found_handler --on-event fish_command_not_found
 				/usr/libexec/pk-command-not-found $argv[1]
 			end
-		# Check in /usr/lib, this is where modern Ubuntus place this command
+			# Check in /usr/lib, this is where modern Ubuntus place this command
 		else if test -f /usr/lib/command-not-found
 			function __fish_command_not_found_handler --on-event fish_command_not_found
 				/usr/lib/command-not-found -- $argv[1]
 			end
-		# Check for NixOS handler
+			# Check for NixOS handler
 		else if test -f /run/current-system/sw/bin/command-not-found
 			function __fish_command_not_found_handler --on-event fish_command_not_found
-				/run/current-system/sw/bin/command-not-found $argv[1]
+				/run/current-system/sw/bin/command-not-found $argv
 			end
-		# Ubuntu Feisty places this command in the regular path instead
+			# Ubuntu Feisty places this command in the regular path instead
 		else if type -q -p command-not-found
 			function __fish_command_not_found_handler --on-event fish_command_not_found
 				command-not-found -- $argv[1]
 			end
-		# pkgfile is an optional, but official, package on Arch Linux
-		# it ships with example handlers for bash and zsh, so we'll follow that format
+			# pkgfile is an optional, but official, package on Arch Linux
+			# it ships with example handlers for bash and zsh, so we'll follow that format
 		else if type -p -q pkgfile
 			function __fish_command_not_found_handler --on-event fish_command_not_found
 				set -l __packages (pkgfile --binaries --verbose -- $argv[1] ^/dev/null)
@@ -246,12 +215,76 @@ function __fish_config_interactive -d "Initializations that should be performed 
 					__fish_default_command_not_found_handler $argv[1]
 				end
 			end
-		# Use standard fish command not found handler otherwise
+			# Use standard fish command not found handler otherwise
 		else
 			function __fish_command_not_found_handler --on-event fish_command_not_found
 				__fish_default_command_not_found_handler $argv[1]
 			end
 		end
-		__fish_command_not_found_handler $argv
+	end
+
+	if test $TERM = "linux" # A linux in-kernel VT with 8 colors and 256/512 glyphs
+		# In a VT we have
+		# black (invisible)
+		# red
+		# green
+		# yellow
+		# blue
+		# magenta
+		# cyan
+		# white
+
+		# Pretty much just set at random
+		set -g fish_color_normal normal
+		set -g fish_color_command yellow
+		set -g fish_color_param cyan
+		set -g fish_color_redirection normal
+		set -g fish_color_comment red
+		set -g fish_color_error red
+		set -g fish_color_escape cyan
+		set -g fish_color_operator cyan
+		set -g fish_color_quote blue
+		set -g fish_color_autosuggestion yellow
+		set -g fish_color_valid_path
+		set -g fish_color_cwd green
+		set -g fish_color_cwd_root red
+		set -g fish_color_match cyan
+		set -g fish_color_history_current cyan
+		set -g fish_color_search_match cyan
+		set -g fish_color_selection blue
+		set -g fish_color_end yellow
+		set -g fish_color_host normal
+		set -g fish_color_status red
+		set -g fish_color_user green
+		set -g fish_pager_color_prefix cyan
+		set -g fish_pager_color_completion normal
+		set -g fish_pager_color_description yellow
+		set -g fish_pager_color_progress cyan
+
+		# Don't allow setting color other than what linux offers (see #2001)
+		functions -e set_color
+		function set_color
+			set -l term_colors black red green yellow blue magenta cyan white normal
+			for a in $argv
+				if not contains -- $a $term_colors
+					switch $a
+						# Also allow options
+						case "-*"
+							continue
+						case "*"
+							echo "Color not valid in TERM = linux: $a"
+							return 1
+					end
+				end
+			end
+			builtin set_color $argv
+			return $status
+		end
+
+		# Set fish_prompt to a VT-friendly version
+		# without color or unicode
+		function fish_prompt
+			fish_fallback_prompt
+		end
 	end
 end

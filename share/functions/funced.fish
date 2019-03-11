@@ -1,5 +1,11 @@
 function funced --description 'Edit function definition'
-    set -l editor $EDITOR
+    set -l editor
+    # Check VISUAL first since theoretically EDITOR could be ed
+    if set -q VISUAL
+        set editor $VISUAL
+    else if set -q EDITOR
+        set editor $EDITOR
+    end
     set -l interactive
     set -l funcname
     while set -q argv[1]
@@ -81,7 +87,7 @@ function funced --description 'Edit function definition'
         return 0
     end
 
-    set tmpname (mktemp -t fish_funced.XXXXXXXXXX)
+    set tmpname (mktemp -t fish_funced.XXXXXXXXXX.fish)
 
     if functions -q -- $funcname
         functions -- $funcname > $tmpname

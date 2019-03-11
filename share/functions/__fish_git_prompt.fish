@@ -2,7 +2,7 @@
 #
 # Written by Kevin Ballard <kevin@sb.org>
 # Updated by Brian Gernhardt <brian@gernhardtsoftware.com>
-#							
+#
 # This is heavily based off of the git-prompt.bash script that ships with
 # git, which is Copyright (C) 2006,2007 Shawn O. Pearce <spearce@spearce.org>.
 # The act of porting the code, along with any new code, are Copyright (C) 2012
@@ -286,8 +286,8 @@ function __fish_git_prompt_show_upstream --description "Helper function for __fi
 		set -l os
 		set -l commits (command git rev-list --left-right $upstream...HEAD ^/dev/null; set os $status)
 		if test $os -eq 0
-			set -l behind (count (for arg in $commits; echo $arg; end | grep '^<'))
-			set -l ahead (count (for arg in $commits; echo $arg; end | grep -v '^<'))
+			set -l behind (count (for arg in $commits; echo $arg; end | string match -r '^<'))
+			set -l ahead (count (for arg in $commits; echo $arg; end | string match -r -v '^<'))
 			set count "$behind	$ahead"
 		else
 			set count
@@ -346,6 +346,11 @@ function __fish_git_prompt_show_upstream --description "Helper function for __fi
 end
 
 function __fish_git_prompt --description "Prompt function for Git"
+	# If git isn't installed, there's nothing we can do
+	# Return 1 so the calling prompt can deal with it
+	if not command -s git >/dev/null
+		return 1
+	end
 	set -l repo_info (command git rev-parse --git-dir --is-inside-git-dir --is-bare-repository --is-inside-work-tree --short HEAD ^/dev/null)
 	test -n "$repo_info"; or return
 
@@ -373,9 +378,11 @@ function __fish_git_prompt --description "Prompt function for Git"
 	__fish_git_prompt_validate_chars
 	__fish_git_prompt_validate_colors
 
+	set -l space "$___fish_git_prompt_color$___fish_git_prompt_char_stateseparator$___fish_git_prompt_color_done"
+
 	if test "true" = $inside_worktree
 		if test -n "$__fish_git_prompt_show_informative_status"
-			set informative_status "$___fish_git_prompt_char_stateseparator"(__fish_git_prompt_informative_status)
+			set informative_status "$space"(__fish_git_prompt_informative_status)
 		else
 			if test -n "$__fish_git_prompt_showdirtystate"
 				set -l config (command git config --bool bash.showDirtyState)
@@ -440,7 +447,6 @@ function __fish_git_prompt --description "Prompt function for Git"
 	end
 
 	# Formatting
-	set -l space "$___fish_git_prompt_color$___fish_git_prompt_char_stateseparator$___fish_git_prompt_color_done"
 	set -l f "$w$i$s$u"
 	if test -n "$f"
 		set f "$space$f"
