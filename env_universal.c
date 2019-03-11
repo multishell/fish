@@ -164,7 +164,6 @@ static void callback( int type, const wchar_t *name, const wchar_t *val )
 {	
 	if( type == BARRIER_REPLY )
 	{
-		debug( 3, L"Got barrier reply" );
 		barrier_reply = 1;
 	}
 	else
@@ -194,7 +193,7 @@ static void check_connection()
 		
 		env_universal_server.fd = -1;
 		env_universal_server.killme=0;
-		sb_clear( &env_universal_server.input );	
+		env_universal_server.input.used=0;	
 		env_universal_read_all();
 	}	
 }
@@ -212,6 +211,7 @@ static void reconnect()
 	debug( 3, L"Get new fishd connection" );
 	
 	init = 0;
+	env_universal_server.buffer_consumed = env_universal_server.buffer_used = 0;
 	env_universal_server.fd = get_socket(1);
 	init = 1;
 	if( env_universal_server.fd >= 0 )
@@ -226,26 +226,21 @@ void env_universal_init( wchar_t * p,
 						 void (*sf)(),
 						 void (*cb)( int type, const wchar_t *name, const wchar_t *val ))
 {
-	debug( 3, L"env_universal_init()" );
 	path=p;
 	user=u;
 	start_fishd=sf;	
 	external_callback = cb;
+
+	connection_init( &env_universal_server, -1 );
 	
-	env_universal_server.fd = -1;
-	env_universal_server.killme = 0;
 	env_universal_server.fd = get_socket(1);
-	memset (&env_universal_server.wstate, '\0', sizeof (mbstate_t));
-	q_init( &env_universal_server.unsent );
 	env_universal_common_init( &callback );
-	sb_init( &env_universal_server.input );	
 	env_universal_read_all();	
 	init = 1;	
 	if( env_universal_server.fd >= 0 )
 	{
 		env_universal_barrier();
 	}
-	debug( 3, L"end env_universal_init()" );
 }
 
 void env_universal_destroy()
@@ -259,17 +254,11 @@ void env_universal_destroy()
 		{
 			wperror( L"fcntl" );
 		}
-		try_send_all( &env_universal_server );	
-		
-		if( close( env_universal_server.fd ) )
-		{
-			wperror( L"close" );
-		}
+		try_send_all( &env_universal_server );		
 	}
-	
+
+	connection_destroy( &env_universal_server );
 	env_universal_server.fd =-1;
-	q_destroy( &env_universal_server.unsent );
-	sb_destroy( &env_universal_server.input );	
 	env_universal_common_destroy();
 	init = 0;
 }
@@ -282,8 +271,6 @@ int env_universal_read_all()
 {
 	if( !init)
 		return 0;
-
-	debug( 3, L"env_universal_read_all()" );
 
 	if( env_universal_server.fd == -1 )
 	{
@@ -312,7 +299,6 @@ wchar_t *env_universal_get( const wchar_t *name )
 
 	CHECK( name, 0 );
 	
-	debug( 3, L"env_universal_get( \"%ls\" )", name );
 	return env_universal_common_get( name );
 }
 
@@ -323,7 +309,6 @@ int env_universal_get_export( const wchar_t *name )
 
 	CHECK( name, 0 );
 	
-	debug( 3, L"env_universal_get_export()" );
 	return env_universal_common_get_export( name );
 }
 
@@ -367,7 +352,7 @@ void env_universal_barrier()
 		FD_SET( env_universal_server.fd, &fds );
 		select( env_universal_server.fd+1, 0, &fds, 0, 0 );
 	}
-	
+
 	/*
 	  Wait for barrier reply
 	*/

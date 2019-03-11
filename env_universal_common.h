@@ -50,6 +50,11 @@ enum
 	;
 
 /**
+   The size of the buffer used for reading from the socket
+*/
+#define ENV_UNIVERSAL_BUFFER_SIZE 1024
+
+/**
    This struct represents a connection between a universal variable server/client
 */
 typedef struct connection
@@ -67,15 +72,27 @@ typedef struct connection
 	*/
 	int killme;
 	/**
-	   The state used for character conversions
-	*/
-	mbstate_t wstate;
-	/**
 	   The input string. Input from the socket goes here. When a
 	   newline is encountered, the buffer is parsed and cleared.
 	*/
-	string_buffer_t input;
+	buffer_t input;
 	
+	/**
+	   The read buffer. 
+	*/
+	char buffer[ENV_UNIVERSAL_BUFFER_SIZE];
+
+	/**
+	   Number of bytes that have already been consumed.
+	*/
+	int buffer_consumed;
+	
+	/**
+	   Number of bytes that have been read into the buffer. 
+	*/
+	int buffer_used;
+	
+
 	/**
 	   Link to the next connection
 	*/
@@ -146,6 +163,9 @@ int env_universal_common_get_export( const wchar_t *name );
    Add messages about all existing variables to the specified connection
 */
 void enqueue_all( connection_t *c );
+
+void connection_init( connection_t *c, int fd );
+void connection_destroy( connection_t *c);
 
 
 #endif

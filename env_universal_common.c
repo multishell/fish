@@ -21,6 +21,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <wctype.h>
+#include <iconv.h>
 
 #include <errno.h>
 #include <locale.h>
@@ -70,6 +71,21 @@
 #define PARSE_ERR L"Unable to parse universal variable message: '%ls'"
 
 /**
+   ERROR string for internal buffered reader
+*/
+#define ENV_UNIVERSAL_ERROR 0x100
+
+/**
+   EAGAIN string for internal buffered reader
+*/
+#define ENV_UNIVERSAL_AGAIN 0x101
+
+/**
+   EOF string for internal buffered reader
+*/
+#define ENV_UNIVERSAL_EOF   0x102
+
+/**
    A variable entry. Stores the value of a variable and whether it
    should be exported. Obviously, it needs to be allocated large
    enough to fit the value string.
@@ -110,9 +126,163 @@ static int get_names_show_exported;
 static int get_names_show_unexported;
 
 
+wchar_t *utf2wcs( const char *in )
+{
+	iconv_t cd=(iconv_t) -1;
+	int i,j;
+
+	wchar_t *out;
+
+	char *to_name[]=
+	{
+		"wchar_t", "WCHAR_T", "wchar", "WCHAR", 0
+	}
+	;
+
+	char *from_name[]=
+	{
+		"utf-8", "UTF-8", "utf8", "UTF8", 0
+	}
+	;
+
+	size_t in_len = strlen( in );
+	size_t out_len =  sizeof( wchar_t )*(in_len+1);
+	size_t nconv;
+	char *nout;
+	
+	out = malloc( out_len );
+	nout = (char *)out;
+
+	if( !out )
+		return 0;
+	
+	for( i=0; to_name[i]; i++ )
+	{
+		for( j=0; from_name[j]; j++ )
+		{
+			cd = iconv_open ( to_name[i], from_name[j] );
+
+			if( cd != (iconv_t) -1)
+			{
+				goto start_conversion;
+				
+			}
+		}
+	}
+
+  start_conversion:
+
+	if (cd == (iconv_t) -1)
+	{
+		/* Something went wrong.  */
+		debug( 0, L"Could not perform utf-8 conversion" );		
+		if(errno != EINVAL)
+			wperror( L"iconv_open" );
+		
+		/* Terminate the output string.  */
+		free(out);
+		return 0;		
+	}
+	
+	
+	nconv = iconv( cd, (char **)&in, &in_len, &nout, &out_len );
+		
+	if (nconv == (size_t) -1)
+	{
+		debug( 0, L"Error while converting from utf string" );
+		return 0;
+	}
+	     
+	*((wchar_t *) nout) = L'\0';
+	
+	if (iconv_close (cd) != 0)
+		wperror (L"iconv_close");
+	
+	return out;	
+}
+
+char *wcs2utf( const wchar_t *in )
+{
+	iconv_t cd=(iconv_t) -1;
+	int i,j;
+	
+	char *char_in = (char *)in;
+	char *out;
+
+	char *from_name[]=
+	{
+		"wchar_t", "WCHAR_T", "wchar", "WCHAR", 0
+	}
+	;
+
+	char *to_name[]=
+	{
+		"utf-8", "UTF-8", "utf8", "UTF8", 0
+	}
+	;
+
+	size_t in_len = wcslen( in );
+	size_t out_len =  sizeof( char )*( (MAX_UTF8_BYTES*in_len)+1);
+	size_t nconv;
+	char *nout;
+	
+	out = malloc( out_len );
+	nout = (char *)out;
+	in_len *= sizeof( wchar_t );
+
+	if( !out )
+		return 0;
+	
+	for( i=0; to_name[i]; i++ )
+	{
+		for( j=0; from_name[j]; j++ )
+		{
+			cd = iconv_open ( to_name[i], from_name[j] );
+			
+			if( cd != (iconv_t) -1)
+			{
+				goto start_conversion;
+				
+			}
+		}
+	}
+
+  start_conversion:
+
+	if (cd == (iconv_t) -1)
+	{
+		/* Something went wrong.  */
+		debug( 0, L"Could not perform utf-8 conversion" );		
+		if(errno != EINVAL)
+			wperror( L"iconv_open" );
+		
+		/* Terminate the output string.  */
+		free(out);
+		return 0;		
+	}
+	
+	nconv = iconv( cd, &char_in, &in_len, &nout, &out_len );
+	
+
+	if (nconv == (size_t) -1)
+	{
+		debug( 0, L"%d %d", in_len, out_len );
+		debug( 0, L"Error while converting from to string" );
+		return 0;
+	}
+	     
+	*nout = '\0';
+	
+	if (iconv_close (cd) != 0)
+		wperror (L"iconv_close");
+	
+	return out;	
+}
+
+
+
 void env_universal_common_init( void (*cb)(int type, const wchar_t *key, const wchar_t *val ) )
 {
-	debug( 3, L"Init env_universal_common" );
 	callback = cb;
 	hash_init( &env_universal_var, &hash_wcs_func, &hash_wcs_cmp );
 }
@@ -134,69 +304,118 @@ void env_universal_common_destroy()
 	hash_destroy( &env_universal_var );
 }
 
+static int read_byte( connection_t *src )
+{
+
+	if( src->buffer_consumed >= src->buffer_used )
+	{
+
+		int res;
+
+		res = read( src->fd, src->buffer, ENV_UNIVERSAL_BUFFER_SIZE );
+		
+//		debug(4, L"Read chunk '%.*s'", res, src->buffer );
+		
+		if( res < 0 )
+		{
+
+			if( errno == EAGAIN ||
+				errno == EINTR )
+			{
+				return ENV_UNIVERSAL_AGAIN;
+			}
+		
+			return ENV_UNIVERSAL_ERROR;
+
+		}
+		
+		if( res == 0 )
+		{
+			return ENV_UNIVERSAL_EOF;
+		}
+		
+		src->buffer_consumed = 0;
+		src->buffer_used = res;
+	}
+	
+	return src->buffer[src->buffer_consumed++];
+
+}
+
 
 void read_message( connection_t *src )
 {
 	while( 1 )
 	{
-		char b;		
-		int read_res = read( src->fd, &b, 1 );
-		wchar_t res=0;
 		
-		if( read_res < 0 )
+		int ib = read_byte( src );
+		char b;
+		
+		switch( ib )
 		{
-			if( errno != EAGAIN && 
-				errno != EINTR )
+			case ENV_UNIVERSAL_AGAIN:
+			{
+				return;
+			}
+
+			case ENV_UNIVERSAL_ERROR:
 			{
 				debug( 2, L"Read error on fd %d, set killme flag", src->fd );
-				wperror( L"read" );
+				if( debug_level > 2 )
+					wperror( L"read" );
 				src->killme = 1;
+				return;
 			}
-			return;
-		}
-		if( read_res == 0 )
-		{
-			src->killme = 1;
-			debug( 3, L"Fd %d has reached eof, set killme flag", src->fd );
-			if( src->input.used > 0 )
+
+			case ENV_UNIVERSAL_EOF:
 			{
-				debug( 1, 
-				       L"Universal variable connection closed while reading command. Partial command recieved: '%ls'", 
-				       (wchar_t *)src->input.buff  );
+				src->killme = 1;
+				debug( 3, L"Fd %d has reached eof, set killme flag", src->fd );
+				if( src->input.used > 0 )
+				{
+					char c = 0;
+					b_append( &src->input, &c, 1 );
+					debug( 1, 
+						   L"Universal variable connection closed while reading command. Partial command recieved: '%s'", 
+						   (wchar_t *)src->input.buff  );
+				}
+				return;
 			}
-			return;
 		}
 		
-		int sz = mbrtowc( &res, &b, 1, &src->wstate );
+		b = (char)ib;
 		
-		if( sz == -1 )
-		{			
-			debug( 1, L"Error while reading universal variable after '%ls'", (wchar_t *)src->input.buff  );
-			wperror( L"mbrtowc" );
-		}
-		else if( sz > 0 )
+		if( b == '\n' )
 		{
-			if( res == L'\n' )
+			wchar_t *msg;
+			
+			b = 0;
+			b_append( &src->input, &b, 1 );
+			
+			msg = utf2wcs( src->input.buff );
+			
+			/*
+			  Before calling parse_message, we must empty reset
+			  everything, since the callback function could
+			  potentially call read_message.
+			*/
+			src->input.used=0;
+			
+			if( msg )
 			{
-				/*
-				  Before calling parse_message, we must empty reset
-				  everything, since the callback function could
-				  potentially call read_message.
-				*/
-				
-				wchar_t *msg = wcsdup( (wchar_t *)src->input.buff );
-				sb_clear( &src->input );
-			 	memset (&src->wstate, '\0', sizeof (mbstate_t));
-
-
 				parse_message( msg, src );	
-				free( msg );
-				
 			}
 			else
 			{
-				sb_append_char( &src->input, res );
+				debug( 0, _(L"Could not convert message '%s' to wide character string"), src->input.buff );
 			}
+			
+			free( msg );
+			
+		}
+		else
+		{
+			b_append( &src->input, &b, 1 );
 		}
 	}
 }
@@ -236,7 +455,7 @@ static int match( const wchar_t *msg, const wchar_t *cmd )
 static void parse_message( wchar_t *msg, 
 						   connection_t *src )
 {
-	debug( 3, L"parse_message( %ls );", msg );
+//	debug( 3, L"parse_message( %ls );", msg );
 	
 	if( msg[0] == L'#' )
 		return;
@@ -343,7 +562,16 @@ static int try_send( message_t *msg,
 		   L"before write of %d chars to fd %d", strlen(msg->body), fd );	
 
 	int res = write( fd, msg->body, strlen(msg->body) );
-		
+
+	if( res != -1 )
+	{
+		debug( 4, L"Wrote message '%s'", msg->body );
+	}
+	else
+	{
+		debug( 4, L"Failed to write message '%s'", msg->body );
+	}
+	
 	if( res == -1 )
 	{
 		switch( errno )
@@ -352,10 +580,11 @@ static int try_send( message_t *msg,
 				return 0;
 				
 			default:
-				debug( 1,
+				debug( 2,
 					   L"Error while sending universal variable message to fd %d. Closing connection",
 					   fd );
-				wperror( L"write" );
+				if( debug_level > 2 )
+					wperror( L"write" );
 				
 				return -1;
 		}		
@@ -371,9 +600,9 @@ static int try_send( message_t *msg,
 
 void try_send_all( connection_t *c )
 {
-	debug( 3,
+/*	debug( 3,
 		   L"Send all updates to connection on fd %d", 
-		   c->fd );
+		   c->fd );*/
 	while( !q_empty( &c->unsent) )
 	{
 		switch( try_send( (message_t *)q_peek( &c->unsent), c->fd ) )
@@ -383,7 +612,7 @@ void try_send_all( connection_t *c )
 				break;
 				
 			case 0:
-				debug( 1,
+				debug( 4,
 					   L"Socket full, send rest later" );	
 				return;
 								
@@ -394,6 +623,33 @@ void try_send_all( connection_t *c )
 	}
 }
 
+static wchar_t *full_escape( const wchar_t *in )
+{
+	string_buffer_t out;
+	sb_init( &out );
+	for( ; *in; in++ )
+	{
+		if( *in < 32 )
+		{
+			sb_printf( &out, L"\\x%.2x", *in );
+		}
+		else if( *in < 128 )
+		{
+			sb_append_char( &out, *in );
+		}
+		else if( *in < 65536 )
+		{
+			sb_printf( &out, L"\\u%.4x", *in );
+		}
+		else
+		{
+			sb_printf( &out, L"\\U%.8x", *in );
+		}
+	}
+	return (wchar_t *)out.buff;
+}
+
+
 message_t *create_message( int type,
 						   const wchar_t *key_in, 
 						   const wchar_t *val_in )
@@ -402,10 +658,18 @@ message_t *create_message( int type,
 	
 	char *key=0;
 	size_t sz;
+
+//	debug( 4, L"Crete message of type %d", type );
 	
 	if( key_in )
 	{
-		key = wcs2str(key_in);
+		if( wcsvarname( key_in ) )
+		{
+			debug( 0, L"Illegal variable name: '%ls'", key_in );
+			return 0;
+		}
+		
+		key = wcs2utf(key_in);
 		if( !key )
 		{
 			debug( 0,
@@ -426,11 +690,11 @@ message_t *create_message( int type,
 				val_in=L"";
 			}
 			
-			wchar_t *esc = escape(val_in,1);
+			wchar_t *esc = full_escape( val_in );
 			if( !esc )
 				break;
 			
-			char *val = wcs2str(esc );
+			char *val = wcs2utf(esc );
 			free(esc);
 						
 			sz = strlen(type==SET?SET_MBS:SET_EXPORT_MBS) + strlen(key) + strlen(val) + 4;
@@ -495,6 +759,9 @@ message_t *create_message( int type,
 
 	if( msg )
 		msg->count=0;
+
+//	debug( 4, L"Message body is '%s'", msg->body );
+
 	return msg;	
 }
 
@@ -572,3 +839,22 @@ void enqueue_all( connection_t *c )
 	try_send_all( c );
 }
 
+
+void connection_init( connection_t *c, int fd )
+{
+	memset (c, 0, sizeof (connection_t));
+	c->fd = fd;
+	b_init( &c->input );
+	q_init( &c->unsent );
+	c->buffer_consumed = c->buffer_used = 0;	
+}
+
+void connection_destroy( connection_t *c)
+{
+	q_destroy( &c->unsent );
+	b_destroy( &c->input );
+	if( close( c->fd ) )
+	{
+		wperror( L"close" );
+	}
+}

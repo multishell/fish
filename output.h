@@ -82,7 +82,7 @@ void set_color( int c, int c2 );
 int writembs( char *str );
 
 /**
-   Write a wide character to fd 1.
+   Write a wide character using the output method specified using output_set_writer().
 */
 int writech( wint_t ch );
 
@@ -103,21 +103,9 @@ void writestr_ellipsis( const wchar_t *str, int max_width );
 int write_escaped_str( const wchar_t *str, int max_len );
 
 /**
-   parm_ich seems to often be undefined, so we use this
-   workalike. Writes the specified number of spaces.
-*/
-int writespace( int c );
-
-/**
    Return the internal color code representing the specified color
 */
 int output_color_code( const wchar_t *val );
-
-/**
-   perm_left_cursor and parm_right_cursor don't seem to be defined
-   very often so we use cursor_left and cursor_right as a fallback.
-*/
-void move_cursor( int steps );
 
 /**
    This is for writing process notification messages. Has to write to
@@ -133,6 +121,10 @@ int writeb( tputs_arg_t b );
    output to stdout.
 */
 void output_set_writer( int (*writer)(char) );
+
+//typedef int (*func_ptr_t)(char);
+
+int (*output_get_writer())(char) ;
 
 
 #endif

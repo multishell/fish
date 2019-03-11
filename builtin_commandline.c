@@ -52,15 +52,15 @@ enum
 }
 	;
 
+static wchar_t *current_buffer=0;
+static int current_cursor_pos = -1;
+
 /**
    Returns the current commandline buffer.
 */
-static const wchar_t *get_buffer()
+static wchar_t *get_buffer()
 {
-	const wchar_t *buff = builtin_complete_get_temporary_buffer();
-	if( !buff )
-		buff = reader_get_buffer();
-	return buff;
+	return current_buffer;
 }
 
 /**
@@ -68,11 +68,7 @@ static const wchar_t *get_buffer()
 */
 static int get_cursor_pos()
 {
-	const wchar_t *buff = builtin_complete_get_temporary_buffer();
-	if( buff )
-		return wcslen( buff );
-	else
-		return reader_get_cursor_pos();
+	return current_cursor_pos;
 }
 
 
@@ -210,6 +206,20 @@ static int builtin_commandline( wchar_t **argv )
 	int function_mode = 0;
 	
 	int tokenize = 0;	
+	
+	int cursor_mode = 0;
+	wchar_t *begin, *end;
+
+	current_buffer = (wchar_t *)builtin_complete_get_temporary_buffer();
+	if( current_buffer )
+	{
+		current_cursor_pos = wcslen( current_buffer );
+	}
+	else
+	{
+		current_buffer = reader_get_buffer();
+		current_cursor_pos = reader_get_cursor_pos();
+	}
 
 	if( !get_buffer() )
 	{
@@ -272,6 +282,14 @@ static int builtin_commandline( wchar_t **argv )
 					L"help", no_argument, 0, 'h'
 				}
 				,
+				{					
+					L"input", required_argument, 0, 'I'
+				}
+				,
+				{
+					L"cursor", no_argument, 0, 'C'
+				}
+				,
 				{
 					0, 0, 0, 0 
 				}
@@ -282,7 +300,7 @@ static int builtin_commandline( wchar_t **argv )
 		
 		int opt = wgetopt_long( argc,
 								argv, 
-								L"aijpctwforh", 
+								L"aijpctwforhI:C", 
 								long_options, 
 								&opt_index );
 		if( opt == -1 )
@@ -337,6 +355,15 @@ static int builtin_commandline( wchar_t **argv )
 				tokenize=1;
 				break;
 
+			case 'I':
+				current_buffer = woptarg;
+				current_cursor_pos = wcslen( woptarg );
+				break;
+				
+			case 'C':
+				cursor_mode = 1;
+				break;
+				
 			case 'h':
 				builtin_print_help( argv[0], sb_out );
 				return 0;
@@ -354,16 +381,13 @@ static int builtin_commandline( wchar_t **argv )
 		/*
 		  Check for invalid switch combinations
 		*/
-		if( buffer_part || cut_at_cursor || append_mode || tokenize )
+		if( buffer_part || cut_at_cursor || append_mode || tokenize || cursor_mode )
 		{
 			sb_printf(sb_err,
 					  BUILTIN_ERR_COMBO,
 					  argv[0] );
 			
-			sb_append2(sb_err,
-					   parser_current_line(),
-					   L"\n",
-					   (void *)0);
+			builtin_print_help( argv[0], sb_err );
 			return 1;
 		}
 		
@@ -374,10 +398,6 @@ static int builtin_commandline( wchar_t **argv )
 					   BUILTIN_ERR_MISSING,
 					   argv[0] );
 			
-			sb_append2( sb_err,
-						parser_current_line(),
-						L"\n",
-						(void *)0 );
 			builtin_print_help( argv[0], sb_err );
 			return 1;
  		}
@@ -386,7 +406,6 @@ static int builtin_commandline( wchar_t **argv )
 			wint_t c = input_get_code( argv[i] );
 			if( c != -1 )
 			{
-//				fwprintf( stderr, L"Add function %ls (%d)\n", argv[i], c );
 				/*
 				  input_unreadch inserts the specified keypress or
 				  readline function at the top of the stack of unused
@@ -396,15 +415,10 @@ static int builtin_commandline( wchar_t **argv )
 			}
 			else
 			{
-//				fwprintf( stderr, L"BLUR %ls %d\n", argv[i], c );
-				sb_append2( sb_err,
-							argv[0],
-							L": Unknown readline function '",
-							argv[i],
-							L"'\n",
-							parser_current_line(),
-							L"\n",
-							(void *)0 );
+				sb_printf( sb_err,
+						   _(L"%ls: Unknown readline function '%ls'\n"),
+						   argv[0],
+						   argv[i] );
 				builtin_print_help( argv[0], sb_err );
 				return 1;
 			}
@@ -416,7 +430,7 @@ static int builtin_commandline( wchar_t **argv )
 	/*
 	  Check for invalid switch combinations
 	*/
-	if( argc-woptind > 1 )
+	if( cursor_mode && (argc-woptind > 1) )
 	{
 		
 		sb_append2( sb_err,
@@ -427,9 +441,19 @@ static int builtin_commandline( wchar_t **argv )
 		return 1;
 	}
 
+	if( (buffer_part || tokenize || cut_at_cursor) && cursor_mode )
+	{		
+		sb_printf( sb_err,
+				   BUILTIN_ERR_COMBO,
+				   argv[0] );
+
+		builtin_print_help( argv[0], sb_err );
+		return 1;
+	}		
+	
+
 	if( (tokenize || cut_at_cursor) && (argc-woptind) )
 	{
-		
 		sb_printf( sb_err,
 				   BUILTIN_ERR_COMBO2,
 				   argv[0],
@@ -463,14 +487,44 @@ static int builtin_commandline( wchar_t **argv )
 	{
 		buffer_part = STRING_MODE;
 	}
+
+	if( cursor_mode )
+	{
+		if( argc-woptind )
+		{
+			wchar_t *endptr;
+			int new_pos;
+			errno = 0;
+			
+			new_pos = wcstol( argv[woptind], &endptr, 10 );
+			if( *endptr || errno )
+			{
+				sb_printf( sb_err,
+						   BUILTIN_ERR_NOT_NUMBER,
+						   argv[0],
+						   argv[woptind] );
+				builtin_print_help( argv[0], sb_err );
+			}
+			
+			current_buffer = reader_get_buffer();
+			new_pos = maxi( 0, mini( new_pos, wcslen( current_buffer ) ) );
+			reader_set_buffer( current_buffer, new_pos );
+			return 0;
+		}
+		else
+		{
+			sb_printf( sb_out, L"%d\n", reader_get_cursor_pos() );
+			return 0;
+		}
 		
-	wchar_t *begin, *end;
+	}
 	
+		
 	switch( buffer_part )
 	{
 		case STRING_MODE:
 		{			
-			begin = (wchar_t *)get_buffer();
+			begin = get_buffer();
 			end = begin+wcslen(begin);
 			break;			
 		}
@@ -516,7 +570,28 @@ static int builtin_commandline( wchar_t **argv )
 		case 1:
 		{
 			replace_part( begin, end, argv[woptind], append_mode );
-			break;					
+			break;
+		}		
+
+		default:
+		{
+			string_buffer_t sb;
+			int i;
+			
+			sb_init( &sb );
+			
+			sb_append( &sb, argv[woptind] );
+			
+			for( i=woptind+1; i<argc; i++ )
+			{
+				sb_append( &sb, L"\n" );
+				sb_append( &sb, argv[i] );
+			}
+			
+			replace_part( begin, end, (wchar_t *)sb.buff, append_mode );
+			sb_destroy( &sb );
+			
+			break;
 		}		
 	}
 	

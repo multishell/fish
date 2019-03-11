@@ -12,6 +12,9 @@
 #include "parser.h"
 #include "event.h"
 
+#define PARSER_TEST_ERROR 1
+#define PARSER_TEST_INCOMPLETE 2
+
 /**
    event_block_t represents a block on events of the specified type
 */
@@ -54,6 +57,11 @@ typedef struct block
 	   The job that is currently evaluated in the specified block.
 	*/
 	job_t *job;
+
+	/**
+	   Block type-specific data
+	*/
+	void *data;
 	
 	/**
 	   First block type specific variable
@@ -62,11 +70,11 @@ typedef struct block
 	{
 		int while_state;  /**< True if the loop condition has not yet been evaluated*/
 		wchar_t *for_variable; /**< Name of the variable to loop over */
-		int if_state; /**< The state of the if block */
+		int if_state; /**< The state of the if block, can be one of IF_STATE_UNTESTED, IF_STATE_FALSE, IF_STATE_TRUE */
 		wchar_t *switch_value; /**< The value to test in a switch block */
-		wchar_t *function_name; /**< The name of the function to define or the function called*/
 		const wchar_t *source_dest; /**< The name of the file to source*/
 		event_t *event; /**<The event that triggered this block */		
+		wchar_t *function_call_name;
 	} param1;
 
 	/**
@@ -76,25 +84,9 @@ typedef struct block
 	{
 		array_list_t for_vars; /**< List of values for a for block */	
 		int switch_taken; /**< Whether a switch match has already been found */
-		wchar_t *function_description; /**< The description of the function to define */
 		process_t *function_call_process;		/**< The process representing this function call */
 	} param2;
 
-	/**
-	   Third block type specific variable
-	*/
-	union
-	{
-		int function_is_binding; /**< Whether a function is a keybinding */
-	} param3;
-
-	/**
-	   Fourth block type specific variable
-	*/
-	union
-	{
-		array_list_t *function_events;
-	} param4;
 
 	/**
 	   Name of file that created this block
@@ -195,15 +187,6 @@ extern event_block_t *global_event_block;
    Current block level io redirections 
 */
 extern io_data_t *block_io;
-
-/**
-  Finds the full path of an executable in a newly allocated string.
-  
-  \param cmd The name of the executable.
-  \param context the halloc context to use for memory allocations
-  \return 0 if the command can not be found, the path of the command otherwise.
-*/
-wchar_t *parser_get_filename( void *context, const wchar_t *cmd );
 
 /**
   Evaluate the expressions contained in cmd.
@@ -313,11 +296,17 @@ const wchar_t *parser_get_block_desc( int block );
 
 /**
    Test if the specified string can be parsed, or if more bytes need
-   to be read first.  The result has the first bit set if the string
-   contains errors, and the second bit is set if the string contains
-   an unclosed block.
+   to be read first. The result will have the PARSER_TEST_ERROR bit
+   set if there is a syntax error in the code, and the
+   PARSER_TEST_INCOMPLETE bit set if the code contains unclosed
+   blocks.
+
+   \param buff the text buffer to test
+   \param block_level if non-null, the block nesting level will be filled out into this array
+   \param out if non-null, any errors in the command will be filled out into this buffer
+   \param prefix the prefix string to prepend to each error message written to the \c out buffer
 */
-int parser_test( const wchar_t * buff, string_buffer_t *out, const wchar_t *prefix );
+int parser_test( const wchar_t * buff, int *block_level, string_buffer_t *out, const wchar_t *prefix );
 
 /**
    Test if the specified string can be parsed as an argument list,
@@ -326,15 +315,6 @@ int parser_test( const wchar_t * buff, string_buffer_t *out, const wchar_t *pref
    contains an unclosed block.
 */
 int parser_test_args( const wchar_t * buff, string_buffer_t *out, const wchar_t *prefix );
-
-/**
-   Returns the full path of the specified directory. If the \c in is a
-   full path to an existing directory, a copy of the string is
-   returned. If \c in is a directory relative to one of the
-   directories i the CDPATH, the full path is returned. If no
-   directory can be found, 0 is returned.
-*/
-wchar_t *parser_cdpath_get( void *context, wchar_t *in );
 
 /**
    Tell the parser that the specified function may not be run if not
@@ -376,6 +356,9 @@ const wchar_t *parser_current_filename();
    Write a stack trace starting at the specified block to the specified string_buffer_t
 */
 void parser_stack_trace( block_t *b, string_buffer_t *buff);
+
+int parser_get_block_type( const wchar_t *cmd );
+const wchar_t *parser_get_block_command( int type );
 
 
 #endif

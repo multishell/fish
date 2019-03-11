@@ -21,7 +21,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <errno.h>
-
+#include <assert.h>
 
 #include "fallback.h"
 #include "util.h"
@@ -168,8 +168,16 @@ void hash_init2( hash_table_t *h,
 				 size_t capacity)
 {
 	int i;
-	size_t sz = capacity*4/3+1;
+	size_t sz = 32;
+	while( sz < (capacity*4/3) )
+		sz*=2;
+	/*
+	  Make sure the size is a Mersenne number. Should hopfully be a
+	  reasonably good size with regard to avoiding patterns of collisions.
+	*/
+	sz--;
 	
+
 	h->arr = malloc( sizeof(hash_struct_t)*sz );
 	h->size = sz;
 	for( i=0; i< sz; i++ )
@@ -207,7 +215,7 @@ static int hash_search( hash_table_t *h,
 	int pos;
 
 	hv = h->hash_func( key );
-	pos = abs(hv) % h->size;
+	pos = (hv & 0x7fffffff) % h->size;
 	while(1)
 	{
 		if( (h->arr[pos].key == 0 ) ||
@@ -370,7 +378,7 @@ void hash_remove( hash_table_t *h,
 	{
 
 		int hv = h->hash_func( h->arr[next_pos].key );
-		int ideal_pos = abs( hv ) % h->size;
+		int ideal_pos = ( hv  & 0x7fffffff) % h->size;
 		int dist_old = (next_pos - ideal_pos + h->size)%h->size;
 		int dist_new = (pos - ideal_pos + h->size)%h->size;
 		if ( dist_new < dist_old )
@@ -465,19 +473,126 @@ void hash_foreach2( hash_table_t *h,
 }
 
 
-int hash_str_cmp( void *a, void *b )
+/**
+   Helper function for hash_wcs_func
+*/
+static unsigned int rotl1( unsigned int in )
 {
-	return strcmp((char *)a,(char *)b) == 0;
+	return (in<<1|in>>31);
 }
 
 /**
    Helper function for hash_wcs_func
 */
-static unsigned long rotl5( unsigned long in )
+static unsigned int rotl5( unsigned int in )
 {
-	return ((in<<5|in>>27))&0xffffffff;
+	return (in<<5|in>>27);
 }
 
+/**
+   Helper function for hash_wcs_func
+*/
+static unsigned int rotl30( unsigned int in )
+{
+	return (in<<30|in>>2);
+}
+
+/**
+   The number of words of input used in each lap by the sha-like
+   string hashing algorithm. 
+*/
+#define WORD_COUNT 16
+
+int hash_wcs_func( void *data )
+{
+	const wchar_t *in = (const wchar_t *)data;
+	unsigned int a,b,c,d,e;
+	int t;
+	unsigned int k0=0x5a827999u;	
+	unsigned int k1 =0x6ed9eba1u;
+	
+	unsigned int w[2*WORD_COUNT];	
+	
+	/*
+	  Same constants used by sha1
+	*/
+	a=0x67452301u;
+	b=0xefcdab89u;
+	c=0x98badcfeu;
+	d=0x10325476u;
+	e=0xc3d2e1f0u;
+	
+	if( data == 0 )
+		return 0;
+	
+	while( *in )
+	{
+		int i;
+
+		/*
+		  Read WORD_COUNT words of data into w
+		*/
+		for( i=0; i<WORD_COUNT; i++ )
+		{
+			if( *in==0)
+			{
+				for( ;i<WORD_COUNT; i++ )
+					w[i]=0;
+			}
+			else
+				w[i]=*in++;
+			
+		}
+		
+		/*
+		  And fill up the rest by rotating the previous content
+		*/
+		for( i=WORD_COUNT; i<(2*WORD_COUNT); i++ )
+		{
+			w[i]=rotl1(w[i-1]^w[i-(WORD_COUNT/2)]^w[i-(WORD_COUNT/2-1)]^w[i-WORD_COUNT]);
+		}
+
+		/*
+		  Only 2*WORD_COUNT laps, not 80 like in sha1. Only two types
+		  of laps, not 4 like in sha1
+		*/
+		for( t=0; t<WORD_COUNT; t++ )
+		{
+			unsigned int temp;
+			temp = (rotl5(a)+(b^c^d)+e+w[t]+k0);
+			e=d;
+			d=c;
+			c=rotl30(b);
+			b=a;
+			a=temp;
+		}
+		for( t=WORD_COUNT; t<(2*WORD_COUNT); t++ )
+		{
+			unsigned int temp;
+			temp = (rotl5(a)+((b&c)|(b&d)|(c&d))+e+w[t]+k1);
+			e=d;
+			d=c;
+			c=rotl30(b);
+			b=a;
+			a=temp;
+		}
+	}
+
+	/*
+	  Implode from 160 to 32 bit hash and return
+	*/
+	return a^b^c^d^e;
+}
+
+int hash_wcs_cmp( void *a, void *b )
+{
+	return wcscmp((wchar_t *)a,(wchar_t *)b) == 0;
+}
+
+int hash_str_cmp( void *a, void *b )
+{
+	return strcmp((char *)a,(char *)b) == 0;
+}
 
 int hash_str_func( void *data )
 {
@@ -488,23 +603,6 @@ int hash_str_func( void *data )
 		res = (18499*rotl5(res)) ^ *str++;
 	
 	return res;
-}
-
-int hash_wcs_func( void *data )
-{
-	int res = 0x67452301u;
-	const wchar_t *str = data;	
-
-	while( *str )
-		res = (18499*rotl5(res)) ^ *str++;
-	
-	return res;
-}
-
-
-int hash_wcs_cmp( void *a, void *b )
-{
-	return wcscmp((wchar_t *)a,(wchar_t *)b) == 0;
 }
 
 int hash_ptr_func( void *data )
@@ -721,6 +819,51 @@ int al_push_all( array_list_t *a, array_list_t *b )
 	return 1;
 }
 
+int al_insert( array_list_t *a, int pos, int count )
+{
+
+	assert( pos >= 0 );
+	assert( count >= 0 );
+	assert( a );
+	
+	if( !count )
+		return 0;
+	
+	/*
+	  Reallocate, if needed
+	*/
+	if( maxi( pos, a->pos) + count > a->size )
+	{
+		/*
+		  If we reallocate, add a few extra elements just in case we
+		  want to do some more reallocating any time soon
+		*/
+		size_t new_size = maxi( maxi( pos, a->pos ) + count +32, a->size*2); 
+		void *tmp = realloc( a->arr, sizeof( anything_t )*new_size );
+		if( tmp )
+		{
+			a->arr = tmp;
+		}
+		else
+		{
+			DIE_MEM();
+		}
+					
+	}
+	
+	if( a->pos > pos )
+	{
+		memmove( &a->arr[pos],
+				 &a->arr[pos+count], 
+				 sizeof(anything_t ) * (a->pos-pos) );
+	}
+	
+	memset( &a->arr[pos], 0, sizeof(anything_t)*count );
+	a->pos += count;
+	
+	return 1;
+}
+
 
 static int al_set_generic( array_list_t *l, int pos, anything_t v )
 {
@@ -805,7 +948,16 @@ void al_truncate( array_list_t *l, int new_sz )
 
 static anything_t al_pop_generic( array_list_t *l )
 {
-	anything_t e = l->arr[--l->pos];
+	anything_t e;
+
+	if( l->pos <= 0 )
+	{
+		memset( &e, 0, sizeof(anything_t ) );
+		return e;
+	}
+	
+	
+	e = l->arr[--l->pos];
 	if( (l->pos*3 < l->size) && (l->size < MIN_SIZE) )
 	{
 		anything_t *old_arr = l->arr;
@@ -923,16 +1075,21 @@ int wcsfilecmp( const wchar_t *a, const wchar_t *b )
 	}
 
 	int res = wcsfilecmp( a+1, b+1 );
-	switch( abs(res) )
-	{
-		case 2:
-			return res;
-		default:
-			if( secondary_diff )
-				return secondary_diff>0?1:-1;
-	}
-	return 0;
 
+	if( abs(res) < 2 )
+	{
+		/*
+		  No primary difference in rest of string.
+		  Use secondary difference on this element if found.
+		*/
+		if( secondary_diff )
+		{
+			return secondary_diff>0?1:-1;
+		}
+	}
+	
+	return res;
+	
 }
 
 void sb_init( string_buffer_t * b)

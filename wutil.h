@@ -111,7 +111,7 @@ struct wdirent *wreaddir(DIR *dir );
 /**
    Wide character version of dirname()
 */
-wchar_t *wdirname( const wchar_t *path );
+wchar_t *wdirname( wchar_t *path );
 
 /**
    Wide character version of basename()
@@ -133,5 +133,14 @@ const wchar_t *wgettext( const wchar_t *in );
 */
 wchar_t *wgetenv( const wchar_t *name );
 
+/**
+   Wide character version of mkdir
+*/
+int wmkdir( const wchar_t *dir, int mode );
+
+/**
+   Wide character version of rename
+*/
+int wrename( const wchar_t *old, const wchar_t *new );
 
 #endif

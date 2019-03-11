@@ -63,10 +63,28 @@ enum
 #define BUILTIN_FOR_ERR_IN _( L"%ls: Second argument must be 'in'\n" )
 
 /**
+   Error message for insufficient number of arguments 
+*/
+#define BUILTIN_FOR_ERR_COUNT _( L"%ls: Expected at least two arguments, got %d\n")
+
+#define BUILTIN_FOR_ERR_NAME _( L"%ls: '%ls' is not a valid variable name\n" )
+
+/**
    Error message when too many arguments are supplied to a builtin
 */
 #define BUILTIN_ERR_TOO_MANY_ARGUMENTS _( L"%ls: Too many arguments\n" )
 
+/**
+   Error message when block types mismatch in the end builtin, e.g. 'begin; end for'
+*/
+#define BUILTIN_END_BLOCK_MISMATCH _( L"%ls: Block mismatch: '%ls' vs. '%ls'\n" )
+
+/**
+   Error message for unknown block type in the end builtin, e.g. 'begin; end beggin'
+*/
+#define BUILTIN_END_BLOCK_UNKNOWN _( L"%ls: Unknown block type '%ls'\n" )
+
+#define BUILTIN_ERR_NOT_NUMBER _( L"%ls: Argument '%ls' is not a number\n" )
 /**
    Stringbuffer used to represent standard output
 */

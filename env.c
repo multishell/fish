@@ -59,7 +59,7 @@
 /**
    Command used to start fishd
 */
-#define FISHD_CMD L"if which fishd 2>/dev/null >/dev/null; fishd ^/tmp/fishd.log.%s; end"
+#define FISHD_CMD L"fishd ^/tmp/fishd.log.%s"
 
 /**
    Value denoting a null string
@@ -452,6 +452,27 @@ static void setup_path()
 	al_destroy( &l );
 }
 
+static void env_set_defaults()
+{
+	if( !env_get( L"USER" ) )
+	{
+		struct passwd *pw = getpwuid( getuid());
+		wchar_t *unam = str2wcs( pw->pw_name );
+		env_set( L"USER", unam, ENV_GLOBAL );
+		free( unam );
+	}
+	if( !env_get( L"HOME" ) )
+	{
+		wchar_t *unam = env_get( L"USER" );
+		char *unam_narrow = wcs2str( unam );
+		struct passwd *pw = getpwnam( unam_narrow );
+		wchar_t *dir = str2wcs( pw->pw_dir );
+		env_set( L"HOME", dir, ENV_GLOBAL );
+		free( dir );		
+		free( unam_narrow );
+	}	
+}
+
 void env_init()
 {
 	char **p;
@@ -570,7 +591,11 @@ void env_init()
 						env_get( L"USER" ),
 						&start_fishd,
 						&universal_callback );
-	
+
+	/*
+	  Set correct defaults for e.g. USER and HOME variables
+	*/
+	env_set_defaults();
 }
 
 void env_destroy()
@@ -693,7 +718,7 @@ int env_set( const wchar_t *key,
 		
 		env_universal_set( key, val, export );
 		is_universal = 1;
-		
+
 	}
 	else
 	{
@@ -721,6 +746,7 @@ int env_set( const wchar_t *key,
 			(var_mode & ENV_GLOBAL) )
 		{
 			node = ( var_mode & ENV_GLOBAL )?global_env:top;
+		
 		}
 		else
 		{
@@ -946,7 +972,7 @@ wchar_t *env_get( const wchar_t *key )
 	wchar_t *item;
 	
 	CHECK( key, 0 );
-		
+
 	if( wcscmp( key, L"history" ) == 0 )
 	{
 		wchar_t *current;
@@ -961,15 +987,11 @@ wchar_t *env_get( const wchar_t *key )
 			sb_append( &dyn_var, current );
 		}
 		
-		for( i=add_current; i<8; i++ )
+		for( i=add_current;; i++ )
 		{
 			wchar_t *next = history_get( i-add_current );
 			if( !next )
 			{
-				/*
-				  This is not an error - it simply means the user has
-				  a short history
-				*/
 				break;
 			}
 			
@@ -977,6 +999,7 @@ wchar_t *env_get( const wchar_t *key )
 				sb_append( &dyn_var, ARRAY_SEP_STR );
 			sb_append( &dyn_var, next );
 		}
+
 		return (wchar_t *)dyn_var.buff;
 	}
 	else if( wcscmp( key, L"COLUMNS" )==0 )

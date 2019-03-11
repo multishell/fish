@@ -109,12 +109,24 @@ priority_queue_t;
 */
 typedef struct array_list
 {
-	/** Array containing the data */
+	/** 
+		Array containing the data
+	*/
 	anything_t *arr;
-	/** Position to append elements at*/
-	int pos;
-	/** Length of array */
-	int size;
+	
+	/** 
+		Internal cursor position of the array_list_t. This is the
+		position to append elements at. This is also what the
+		array_list_t considers to be its true size, as reported by
+		al_get_count(), etc. Calls to e.g. al_insert will preserve the
+		values of all elements up to pos.
+	*/
+	size_t pos;
+
+	/** 
+		Amount of memory allocated in arr, expressed in number of elements.
+	*/
+	size_t size;
 }
 array_list_t;
 
@@ -295,7 +307,9 @@ int hash_str_cmp( void *a,
 				  void *b );
 
 /**
-   Hash function suitable for wide character strings. 
+   Hash function suitable for wide character strings. Uses a version
+   of the sha cryptographic function which is simplified in order to
+   returns a 32-bit number.
 */
 int hash_wcs_func( void *data );
 
@@ -414,6 +428,8 @@ int al_push_func( array_list_t *l, void (*f)() );
 */
 int al_push_all( array_list_t *a, array_list_t *b );
 
+int al_insert( array_list_t *a, int pos, int count );
+
 /**
    Sets the element at the specified index
 
@@ -517,8 +533,8 @@ void al_foreach( array_list_t *l, void (*func)( void * ));
 void al_foreach2( array_list_t *l, void (*func)( void *, void *), void *aux);
 
 /**
-   Compares two wide character strings without case but with  
-   a logical ordering for numbers.
+   Compares two wide character strings with an (arguably) intuitive
+   ordering.
 
    This function tries to order strings in a way which is intuitive to
    humans with regards to sorting strings containing numbers.
@@ -542,6 +558,13 @@ void al_foreach2( array_list_t *l, void (*func)( void *, void *), void *aux);
    This won't return the optimum results for numbers in bases higher
    than ten, such as hexadecimal, but at least a stable sort order
    will result.
+
+   This function performs a two-tiered sort, where difference in case
+   and in number of leading zeroes in numbers only have effect if no
+   other differences between strings are found. This way, a 'file1'
+   and 'File1' will not be considered identical, and hence their
+   internal sort order is not arbitrary, but the names 'file1',
+   'File2' and 'file3' will still be sorted in the order given above.
 */
 int wcsfilecmp( const wchar_t *a, const wchar_t *b );
 
@@ -584,7 +607,7 @@ void sb_append_char( string_buffer_t *, wchar_t );
 
    Do not forget to cast the last 0 to (void *), or you might encounter errors on 64-bit platforms!
 */
-void sb_append2( string_buffer_t *, ... );
+__sentinel void sb_append2( string_buffer_t *, ... );
 
 /**
    Append formated string data to the buffer. This function internally

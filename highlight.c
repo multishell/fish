@@ -33,6 +33,7 @@
 #include "halloc.h"
 #include "halloc_util.h"
 #include "wildcard.h"
+#include "path.h"
 
 /**
    Number of elements in the highlight_var array
@@ -559,8 +560,7 @@ void highlight_shell( wchar_t * buff,
 	{	
 		int last_type = tok_last_type( &tok );
 		int prev_argc=0;
-		
-				
+
 		switch( last_type )
 		{
 			case TOK_STRING:
@@ -589,7 +589,7 @@ void highlight_shell( wchar_t * buff,
 												   EXPAND_SKIP_CMDSUBST );
 						if( dir )
 						{
-							if( !parser_cdpath_get( context, dir ) )
+							if( !path_get_cdpath( context, dir ) )
 							{
 								color[ tok_get_pos( &tok ) ] = HIGHLIGHT_ERROR;							
 							}
@@ -624,7 +624,7 @@ void highlight_shell( wchar_t * buff,
 						int is_subcommand = 0;
 						int mark = tok_get_pos( &tok );
 						color[ tok_get_pos( &tok ) ] = HIGHLIGHT_COMMAND;
-						
+
 						if( parser_is_subcommand( cmd ) )
 						{
 							tok_next( &tok );
@@ -672,13 +672,13 @@ void highlight_shell( wchar_t * buff,
 							/*
 							  Check if this is a regular command
 							*/
-							is_cmd |= !!(tmp=parser_get_filename( context, cmd ));
+							is_cmd |= !!(tmp=path_get_path( context, cmd ));
 							
 							/* 
 							   Could not find the command. Maybe it is
 							   a path for a implicit cd command.
 							*/
-							is_cmd |= !!(tmp=parser_cdpath_get( context, cmd ));
+							is_cmd |= !!(tmp=path_get_cdpath( context, cmd ));
 														
 							if( is_cmd )
 							{								
@@ -687,7 +687,7 @@ void highlight_shell( wchar_t * buff,
 							else
 							{
 								if( error )
-									al_push( error, wcsdupcat2 ( L"Unknown command \'", cmd, L"\'", 0 ));
+									al_push( error, wcsdupcat2 ( L"Unknown command \'", cmd, L"\'", (void *)0 ));
 								color[ tok_get_pos( &tok ) ] = (HIGHLIGHT_ERROR);
 							}
 							had_cmd = 1;
@@ -761,7 +761,7 @@ void highlight_shell( wchar_t * buff,
 						{
 							color[ tok_get_pos( &tok ) ] = HIGHLIGHT_ERROR;
 							if( error )
-								al_push( error, wcsdupcat2( L"Directory \'", dir, L"\' does not exist", 0 ) );
+								al_push( error, wcsdupcat2( L"Directory \'", dir, L"\' does not exist", (void *)0 ) );
 							
 						}
 					}
@@ -777,7 +777,7 @@ void highlight_shell( wchar_t * buff,
 						{
 							color[ tok_get_pos( &tok ) ] = HIGHLIGHT_ERROR;
 							if( error )
-								al_push( error, wcsdupcat2( L"File \'", target, L"\' does not exist", 0 ) );
+								al_push( error, wcsdupcat2( L"File \'", target, L"\' does not exist", (void *)0 ) );
 						}
 					}
 				}

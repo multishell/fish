@@ -543,7 +543,7 @@ void signal_set_handlers()
 		   Interactive mode. Ignore interactive signals.  We are a
 		   shell, we know whats best for the user. ;-)
 		*/
-
+		
 		act.sa_handler=SIG_IGN;
 		
 		sigaction( SIGINT, &act, 0);
@@ -650,6 +650,7 @@ void signal_block()
 	}
 	
 	block_count++;
+//	debug( 0, L"signal block level increased to %d", block_count );
 }
 
 void signal_unblock()
@@ -663,5 +664,11 @@ void signal_unblock()
 		sigfillset( &chldset );
 		sigprocmask(SIG_UNBLOCK, &chldset, 0);	
 	}
-
+//	debug( 0, L"signal block level decreased to %d", block_count );
 }
+
+int signal_is_blocked()
+{
+	return !!block_count;
+}
+

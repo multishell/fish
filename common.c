@@ -408,18 +408,24 @@ wchar_t **strv2wcsv( const char **in )
 
 }
 
-wchar_t *wcsvarname( wchar_t *str )
+wchar_t *wcsvarname( const wchar_t *str )
 {
 	while( *str )
 	{
 		if( (!iswalnum(*str)) && (*str != L'_' ) )
 		{
-			return str;
+			return (wchar_t *)str;
 		}
 		str++;
 	}
 	return 0;
 }
+
+wchar_t *wcsfuncname( const wchar_t *str )
+{
+	return wcschr( str, L'/' );
+}
+
 
 int wcsvarchr( wchar_t chr )
 {
@@ -1015,7 +1021,8 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 						
 						default:
 						{
-							in[out_pos++] = INTERNAL_SEPARATOR;							
+							if( unescape_special )
+								in[out_pos++] = INTERNAL_SEPARATOR;							
 							in[out_pos]=in[in_pos];
 							break;
 						}
@@ -1140,14 +1147,16 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 						case L'\'':
 						{
 							mode = 1;
-							in[out_pos] = INTERNAL_SEPARATOR;							
+							if( unescape_special )
+								in[out_pos] = INTERNAL_SEPARATOR;							
 							break;					
 						}
 				
 						case L'\"':
 						{
 							mode = 2;
-							in[out_pos] = INTERNAL_SEPARATOR;							
+							if( unescape_special )
+								in[out_pos] = INTERNAL_SEPARATOR;							
 							break;
 						}
 
@@ -1172,6 +1181,7 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 					{
 						case '\\':
 						case L'\'':
+						case L'\n':
 						{
 							in[out_pos]=in[in_pos];
 							break;
@@ -1193,7 +1203,8 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 				}
 				if( c == L'\'' )
 				{
-					in[out_pos] = INTERNAL_SEPARATOR;							
+					if( unescape_special )
+						in[out_pos] = INTERNAL_SEPARATOR;							
 					mode = 0;
 				}
 				else
@@ -1214,7 +1225,8 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 					case '"':
 					{
 						mode = 0;
-						in[out_pos] = INTERNAL_SEPARATOR;							
+						if( unescape_special )
+							in[out_pos] = INTERNAL_SEPARATOR;							
 						break;
 					}
 				
@@ -1231,6 +1243,7 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 							case '\\':
 							case L'$':
 							case '"':
+							case '\n':
 							{
 								in[out_pos]=in[in_pos];
 								break;
@@ -1549,4 +1562,43 @@ void tokenize_variable_array( const wchar_t *val, array_list_t *out )
 	}
 }
 
+
+int create_directory( wchar_t *d )
+{
+	int ok = 0;
+	struct stat buf;
+	int stat_res = 0;
+	
+	while( (stat_res = wstat(d, &buf ) ) != 0 )
+	{
+		if( errno != EAGAIN )
+			break;
+	}
+	
+	if( stat_res == 0 )
+	{
+		if( S_ISDIR( buf.st_mode ) )
+		{
+			ok = 1;
+		}
+	}
+	else
+	{
+		if( errno == ENOENT )
+		{
+			wchar_t *dir = wcsdup( d );
+			dir = wdirname( dir );
+			if( !create_directory( dir ) )
+			{
+				if( !wmkdir( d, 0700 ) )
+				{
+					ok = 1;
+				}
+			}
+			free(dir);
+		}
+	}
+	
+	return ok?0:-1;
+}
 

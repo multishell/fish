@@ -52,7 +52,8 @@ extern struct termios shell_modes;
 extern wchar_t ellipsis_char;
 
 /**
-   The verbosity of fish
+   The verbosity level of fish. If a call to debug has a severity
+   level higher than \c debug_level, it will not be printed.
 */
 extern int debug_level;
 
@@ -73,28 +74,54 @@ extern wchar_t *program_name;
    failiure, the current function is ended at once. The second
    parameter is the exit status of the current function on failiure.
 */
-#define CHECK( arg, retval )					\
+#define CHECK( arg, retval )											\
 	if( !(arg) )														\
 	{																	\
 		debug( 1,														\
-			   L"function %s called with null value for argument %s. "	\
-			   L"This is a bug. "										\
-			   L"If you can reproduce it, please send a bug report to %s.", \
+			   _( L"function %s called with null value for argument %s. " \
+				  L"This is a bug. "									\
+				  L"If you can reproduce it, please send a bug report to %s." ), \
 			   __func__,												\
 			   #arg,													\
 			   PACKAGE_BUGREPORT );										\
 		return retval;													\
-	}																	\
-		
+	}
 
 /**
    Exit program at once, leaving an error message about running out of memory
 */
-#define DIE_MEM()								\
+#define DIE_MEM()														\
 	{																	\
-		fwprintf( stderr, L"fish: Out of memory on line %d of file %s, shutting down fish\n", __LINE__, __FILE__ );	\
+		fwprintf( stderr,												\
+				  L"fish: Out of memory on line %d of file %s, shutting down fish\n", \
+				  __LINE__,												\
+				  __FILE__ );											\
 		exit(1);														\
-	}																	\
+	}
+
+/**
+   Cause fish to crash. This should only be usd for debugging.
+*/
+#define CRASH()									\
+	{											\
+		int *n = 0;								\
+		*n = 1;									\
+	}
+
+/**
+   Check if signals are blocked
+*/
+#define CHECK_BLOCK( retval )													\
+	if( signal_is_blocked() )											\
+	{																	\
+		debug( 0,														\
+			   L"function %s called while blocking signals. "			\
+			   L"This is a bug. "										\
+			   L"If you can reproduce it, please send a bug report to %s.",	\
+			   __func__,												\
+			   PACKAGE_BUGREPORT );										\
+		return retval;														\
+	}
 		
 /**
    Shorthand for wgettext call
@@ -105,6 +132,7 @@ extern wchar_t *program_name;
    Noop, used to tell xgettext that a string should be translated, even though it is not directly sent to wgettext.
 */
 #define N_(wstr) wstr
+
 
 /**
    Take an array_list_t containing wide strings and converts them to a
@@ -193,7 +221,7 @@ wchar_t *wcsdupcat( const wchar_t *a, const wchar_t *b );
    Returns a newly allocated concatenation of the specified wide
    character strings. The last argument must be a null pointer.
 */
-wchar_t *wcsdupcat2( const wchar_t *a, ... );
+__sentinel wchar_t *wcsdupcat2( const wchar_t *a, ... );
 
 /**
    Test if the given string is a valid variable name
@@ -206,7 +234,16 @@ wchar_t *wcsdupcat2( const wchar_t *a, ... );
    \return null if this is a valid name, and a pointer to the first invalid character otherwise
 */
 
-wchar_t *wcsvarname( wchar_t *str );
+wchar_t *wcsvarname( const wchar_t *str );
+
+
+/**
+   Test if the given string is a valid function name. 
+
+   \return null if this is a valid name, and a pointer to the first invalid character otherwise
+*/
+
+wchar_t *wcsfuncname( const wchar_t *str );
 
 /**
    Test if the given string is valid in a variable name 
@@ -256,7 +293,7 @@ const wchar_t *wsetlocale( int category, const wchar_t *locale );
 
    \return zero is needle is not found, of if needle is null, non-zero otherwise
 */
-int contains_str( const wchar_t *needle, ... );
+__sentinel int contains_str( const wchar_t *needle, ... );
 
 /**
    Call read while blocking the SIGCHLD signal. Should only be called
@@ -357,6 +394,13 @@ void write_screen( const wchar_t *msg, string_buffer_t *buff );
 */
 void tokenize_variable_array( const wchar_t *val, array_list_t *out );
 
+
+/**
+   Make sure the specified direcotry exists. If no, try to create it.
+
+   \return 0 if the directory exists, -1 otherwise.
+*/
+int create_directory( wchar_t *d );
 
 #endif
 

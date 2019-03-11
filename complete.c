@@ -45,6 +45,7 @@
 #include "halloc.h"
 #include "halloc_util.h"
 #include "wutil.h"
+#include "path.h"
 
 
 /*
@@ -194,7 +195,7 @@ typedef struct complete_entry_opt
 	/** Next option in the linked list */
 	struct complete_entry_opt *next;
 }
-	complete_entry_opt;
+	complete_entry_opt_t;
 
 /**
    Struct describing a command completion
@@ -209,16 +210,16 @@ typedef struct complete_entry
 	/** String containing all short option characters */
 	wchar_t *short_opt_str;
 	/** Linked list of all options */
-	complete_entry_opt *first_option;
+	complete_entry_opt_t *first_option;
 	/** Next command completion in the linked list */
 	struct complete_entry *next;
 	/** True if no other options than the ones supplied are possible */
 	int authorative;
 }
-	complete_entry;
+	complete_entry_t;
 
 /** First node in the linked list of all completion entries */
-static complete_entry *first_entry=0;
+static complete_entry_t *first_entry=0;
 
 /** Hashtable containing all descriptions that describe an executable */
 static hash_table_t *suffix_hash=0;
@@ -235,7 +236,7 @@ static hash_table_t *condition_cache=0;
 static string_buffer_t *get_desc_buff=0;
 
 
-static void complete_free_entry( complete_entry *c );
+static void complete_free_entry( complete_entry_t *c );
 static void clear_hash_entry( void *key, void *data );
 
 
@@ -244,7 +245,7 @@ static void clear_hash_entry( void *key, void *data );
 */
 static void complete_destroy()
 {
-	complete_entry *i=first_entry, *prev;
+	complete_entry_t *i=first_entry, *prev;
 	
 	while( i )
 	{
@@ -346,9 +347,9 @@ static int condition_test( const wchar_t *condition )
 
 
 /**
-   Recursively free all complete_entry_opt structs and their contents
+   Recursively free all complete_entry_opt_t structs and their contents
 */
-static void complete_free_opt_recursive( complete_entry_opt *o )
+static void complete_free_opt_recursive( complete_entry_opt_t *o )
 {
 	if( o->next != 0 )
 		complete_free_opt_recursive( o->next );
@@ -356,9 +357,9 @@ static void complete_free_opt_recursive( complete_entry_opt *o )
 }
 
 /**
-   Free a complete_entry and its contents
+   Free a complete_entry_t and its contents
 */
-static void complete_free_entry( complete_entry *c )
+static void complete_free_entry( complete_entry_t *c )
 {
 //	free( c->cmd );
 	free( c->short_opt_str );
@@ -378,10 +379,10 @@ static void clear_hash_entry( void *key, void *data )
 /**
    Search for an exactly matching completion entry
 */
-static complete_entry *complete_find_exact_entry( const wchar_t *cmd,
+static complete_entry_t *complete_find_exact_entry( const wchar_t *cmd,
 												  const int cmd_type )
 {
-	complete_entry *i;
+	complete_entry_t *i;
 	for( i=first_entry; i; i=i->next )
 	{
 		if( ( wcscmp(cmd, i->cmd)==0) && ( cmd_type == i->cmd_type ))
@@ -403,18 +404,18 @@ void complete_add( const wchar_t *cmd,
 				   const wchar_t *comp,
 				   const wchar_t *desc )
 {
-	complete_entry *c;
-	complete_entry_opt *opt;
+	complete_entry_t *c;
+	complete_entry_opt_t *opt;
 
 	CHECK( cmd, );
-	
+
 	complete_init();
 
 	c = complete_find_exact_entry( cmd, cmd_type );
 
 	if( c == 0 )
 	{
-		if( !(c = malloc( sizeof(complete_entry) )))
+		if( !(c = malloc( sizeof(complete_entry_t) )))
 		{
 			DIE_MEM();
 		}
@@ -429,7 +430,7 @@ void complete_add( const wchar_t *cmd,
 		c->short_opt_str = wcsdup(L"");
 	}
 
-	if( !(opt = malloc( sizeof( complete_entry_opt ) )))
+	if( !(opt = malloc( sizeof( complete_entry_opt_t ) )))
 	{
 		DIE_MEM();
 	}
@@ -474,7 +475,7 @@ void complete_remove( const wchar_t *cmd,
 					  wchar_t short_opt,
 					  const wchar_t *long_opt )
 {
-	complete_entry *e, *eprev=0, *enext=0;
+	complete_entry_t *e, *eprev=0, *enext=0;
 
 	CHECK( cmd, );
 		
@@ -485,7 +486,7 @@ void complete_remove( const wchar_t *cmd,
 		if( (cmd_type == e->cmd_type ) &&
 			( wcscmp( cmd, e->cmd) == 0 ) )
 		{
-			complete_entry_opt *o, *oprev=0, *onext=0;
+			complete_entry_opt_t *o, *oprev=0, *onext=0;
 
 			if(( short_opt == 0 ) && (long_opt == 0 ) )
 			{
@@ -581,7 +582,7 @@ static void parse_cmd_string( void *context,
     wchar_t *cmd, *path;
 
 	/* Get the path of the command */
-	path = parser_get_filename( context, str );
+	path = path_get_path( context, str );
 	if( path == 0 )
 	{
 		/**
@@ -610,8 +611,8 @@ int complete_is_valid_option( const wchar_t *str,
 							  const wchar_t *opt,
 							  array_list_t *errors )
 {
-	complete_entry *i;
-	complete_entry_opt *o;
+	complete_entry_t *i;
+	complete_entry_opt_t *o;
 	wchar_t *cmd, *path;
 	int found_match = 0;
 	int authorative = 1;
@@ -815,7 +816,7 @@ int complete_is_valid_option( const wchar_t *str,
 						str[0] = opt[j];
 						str[1]=0;
 						al_push( errors,
-								 wcsdupcat2(_( L"Unknown option: " ), L"'", str, L"'", 0) );
+								 wcsdupcat2(_( L"Unknown option: " ), L"'", str, L"'", (void *)0) );
 					}
 
 					opt_found = 0;
@@ -833,12 +834,12 @@ int complete_is_valid_option( const wchar_t *str,
 				if( hash_get_count( &gnu_match_hash )==0)
 				{
 					al_push( errors,
-							 wcsdupcat2( _(L"Unknown option: "), L"'", opt, L"\'", 0) );
+							 wcsdupcat2( _(L"Unknown option: "), L"'", opt, L"\'", (void *)0) );
 				}
 				else
 				{
 					al_push( errors,
-							 wcsdupcat2( _(L"Multiple matches for option: "), L"'", opt, L"\'", 0) );
+							 wcsdupcat2( _(L"Multiple matches for option: "), L"'", opt, L"\'", (void *)0) );
 				}
 			}
 		}
@@ -908,24 +909,26 @@ static const wchar_t *complete_get_desc_suffix( const wchar_t *suff_orig )
 			array_list_t l;
 			al_init( &l );
 
-			exec_subshell( cmd, &l );
-			free(cmd);
-
-			if( al_get_count( &l )>0 )
+			if( exec_subshell( cmd, &l ) != -1 )
 			{
-				wchar_t *ln = (wchar_t *)al_get(&l, 0 );
-				if( wcscmp( ln, L"unknown" ) != 0 )
+				
+				if( al_get_count( &l )>0 )
 				{
-					desc = wcsdup( ln);
-					/*
-					  I have decided I prefer to have the description
-					  begin in uppercase and the whole universe will just
-					  have to accept it. Hah!
-					*/
-					desc[0]=towupper(desc[0]);
+					wchar_t *ln = (wchar_t *)al_get(&l, 0 );
+					if( wcscmp( ln, L"unknown" ) != 0 )
+					{
+						desc = wcsdup( ln);
+						/*
+						  I have decided I prefer to have the description
+						  begin in uppercase and the whole universe will just
+						  have to accept it. Hah!
+						*/
+						desc[0]=towupper(desc[0]);
+					}
 				}
 			}
-
+			
+			free(cmd);
 			al_foreach( &l, &free );
 			al_destroy( &l );
 		}
@@ -1154,78 +1157,82 @@ static void complete_cmd_desc( const wchar_t *cmd, array_list_t *comp )
 	  systems with a large set of manuals, but it should be ok
 	  since apropos is only called once.
 	*/
-	exec_subshell( lookup_cmd, &list );
+	if( exec_subshell( lookup_cmd, &list ) != -1 )
+	{
+		
 	
-	/*
-	  Then discard anything that is not a possible completion and put
-	  the result into a hashtable with the completion as key and the
-	  description as value.
-
-	  Should be reasonably fast, since no memory allocations are needed.
-	*/
-	for( i=0; i<al_get_count( &list); i++ )
-	{
-		wchar_t *el = (wchar_t *)al_get( &list, i );
-		wchar_t *key, *key_end, *val_begin;
-		key = el+wcslen(cmd);
-		
-		if( !el )
-			continue;
-
-		key_end = wcschr( el, L'\t' );
-		if( !key_end )
-			continue;
-		
-		*key_end = 0;
-		val_begin = key_end+1;
-		
 		/*
-		  And once again I make sure the first character is uppercased
-		  because I like it that way, and I get to decide these
-		  things.
+		  Then discard anything that is not a possible completion and put
+		  the result into a hashtable with the completion as key and the
+		  description as value.
+
+		  Should be reasonably fast, since no memory allocations are needed.
 		*/
-		val_begin[0]=towupper(val_begin[0]);
+		for( i=0; i<al_get_count( &list); i++ )
+		{
+			wchar_t *el = (wchar_t *)al_get( &list, i );
+			wchar_t *key, *key_end, *val_begin;
 		
-		hash_put( &lookup, key, val_begin );
-	}
+			if( !el )
+				continue;
 
-	/*
-	  Then do a lookup on every completion and if a match is found,
-	  change to the new description.
+			key = el+wcslen(cmd_start);
+			key_end = wcschr( el, L'\t' );
 
-	  This needs to do a reallocation for every description added, but
-	  there shouldn't be that many completions, so it should be ok.
-	*/
-	for( i=0; i<al_get_count(comp); i++ )
-	{
-		wchar_t *el = (wchar_t *)al_get( comp, i );
-		wchar_t *cmd_end = wcschr( el,
-								   COMPLETE_SEP );
-		wchar_t *new_desc;
-
-		if( cmd_end )
-			*cmd_end = 0;
-
-		new_desc = (wchar_t *)hash_get( &lookup,
-										el );
-
-		if( new_desc )
-		{
-			wchar_t *new_el = wcsdupcat2( el,
-										  COMPLETE_SEP_STR,
-										  new_desc,
-										  0 );
-
-			al_set( comp, i, new_el );
-			free( el );
+			if( !key_end )
+				continue;
+		
+			*key_end = 0;
+			val_begin = key_end+1;
+		
+			/*
+			  And once again I make sure the first character is uppercased
+			  because I like it that way, and I get to decide these
+			  things.
+			*/
+			val_begin[0]=towupper(val_begin[0]);
+		
+			hash_put( &lookup, key, val_begin );
 		}
-		else
+
+		/*
+		  Then do a lookup on every completion and if a match is found,
+		  change to the new description.
+
+		  This needs to do a reallocation for every description added, but
+		  there shouldn't be that many completions, so it should be ok.
+		*/
+		for( i=0; i<al_get_count(comp); i++ )
 		{
+			wchar_t *el = (wchar_t *)al_get( comp, i );
+			wchar_t *cmd_end = wcschr( el,
+									   COMPLETE_SEP );
+			wchar_t *new_desc;
+
 			if( cmd_end )
-				*cmd_end = COMPLETE_SEP;
+				*cmd_end = 0;
+
+			new_desc = (wchar_t *)hash_get( &lookup,
+											el );
+
+			if( new_desc )
+			{
+				wchar_t *new_el = wcsdupcat2( el,
+											  COMPLETE_SEP_STR,
+											  new_desc,
+											  (void *)0 );
+
+				al_set( comp, i, new_el );
+				free( el );
+			}
+			else
+			{
+				if( cmd_end )
+					*cmd_end = COMPLETE_SEP;
+			}
 		}
 	}
-
+	
 	hash_destroy( &lookup );
 	al_foreach( &list,
 				&free );
@@ -1270,9 +1277,11 @@ static void complete_cmd( const wchar_t *cmd,
 
 	wchar_t *cdpath = env_get(L"CDPATH");
 	wchar_t *cdpath_cpy = wcsdup( cdpath?cdpath:L"." );
+	int prev_count = al_get_count( comp );
 
 	if( (wcschr( cmd, L'/') != 0) || (cmd[0] == L'~' ) )
 	{
+		
 		array_list_t tmp;
 		al_init( &tmp );
 
@@ -1281,47 +1290,57 @@ static void complete_cmd( const wchar_t *cmd,
 						   comp,
 						   ACCEPT_INCOMPLETE | EXECUTABLES_ONLY ) != EXPAND_ERROR )
 		{
-			complete_cmd_desc( cmd, comp );
+			if( al_get_count( comp ) > prev_count )
+			{
+				complete_cmd_desc( cmd, comp );
+			}
 		}
 		al_destroy( &tmp );
 	}
 	else
 	{
 		path = env_get(L"PATH");
-		path_cpy = wcsdup( path );
-
-		for( nxt_path = wcstok( path_cpy, ARRAY_SEP_STR, &state );
-			 nxt_path != 0;
-			 nxt_path = wcstok( 0, ARRAY_SEP_STR, &state) )
+		if( path )
 		{
-			nxt_completion = wcsdupcat2( nxt_path,
-										 (nxt_path[wcslen(nxt_path)-1]==L'/'?L"":L"/"),
-										 cmd,
-										 0 );
-			if( ! nxt_completion )
-				continue;
-
-			al_init( &tmp );
-
-			if( expand_string( 0,
-							   nxt_completion,
-							   &tmp,
-							   ACCEPT_INCOMPLETE |
-							   EXECUTABLES_ONLY ) != EXPAND_ERROR )
+			
+			path_cpy = wcsdup( path );
+			
+			for( nxt_path = wcstok( path_cpy, ARRAY_SEP_STR, &state );
+				 nxt_path != 0;
+				 nxt_path = wcstok( 0, ARRAY_SEP_STR, &state) )
 			{
-				for( i=0; i<al_get_count(&tmp); i++ )
+				nxt_completion = wcsdupcat2( nxt_path,
+											 (nxt_path[wcslen(nxt_path)-1]==L'/'?L"":L"/"),
+											 cmd,
+											 (void *)0 );
+				if( ! nxt_completion )
+					continue;
+				
+				al_init( &tmp );
+				
+				if( expand_string( 0,
+								   nxt_completion,
+								   &tmp,
+								   ACCEPT_INCOMPLETE |
+								   EXECUTABLES_ONLY ) != EXPAND_ERROR )
 				{
-					al_push( comp, al_get( &tmp, i ) );
+					for( i=0; i<al_get_count(&tmp); i++ )
+					{
+						al_push( comp, al_get( &tmp, i ) );
+					}
 				}
+				
+				al_destroy( &tmp );
+				
 			}
-
-			al_destroy( &tmp );
-
+			free( path_cpy );
+			
+			if( al_get_count( comp ) > prev_count )
+			{
+				complete_cmd_desc( cmd, comp );
+			}
 		}
-		free( path_cpy );
-
-		complete_cmd_desc( cmd, comp );
-
+		
 		/*
 		  These return the original strings - don't free them
 		*/
@@ -1334,7 +1353,6 @@ static void complete_cmd( const wchar_t *cmd,
 		builtin_get_names( &possible_comp );
 		copy_strings_with_prefix( comp, cmd, COMPLETE_BUILTIN_DESC, &builtin_get_desc, &possible_comp );
 		al_destroy( &possible_comp );
-
 
 	}
 
@@ -1354,7 +1372,7 @@ static void complete_cmd( const wchar_t *cmd,
 				wcsdupcat2( nxt_path,
 							(nxt_path[wcslen(nxt_path)-1]==L'/'?L"":L"/"),
 							cmd,
-							0 );
+							(void *)0 );
 			if( ! nxt_completion )
 			{
 				continue;
@@ -1435,29 +1453,29 @@ static void complete_from_args( const wchar_t *str,
 	  strings should be escaped!
 	*/
 	/*
-	for( i=0; i< al_get_count( &possible_comp ); i++ )
-	{
-		wchar_t *next = (wchar_t *)al_get( &possible_comp, i );
-		wchar_t *next_unescaped;
-		if( next )
-		{
-			next_unescaped = unescape( next, 0 );
-			if( next_unescaped )
-			{
-				al_set( &possible_comp , i, next_unescaped );
-			}
-			else
-			{
-				al_set( &possible_comp , i, 0 );
-				debug( 2, L"Could not expand string %ls on line %d of file %s", next, __LINE__, __FILE__ );
-			}
-			free( next );
-		}
-		else
-		{
-			debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
-		}
-	}
+	  for( i=0; i< al_get_count( &possible_comp ); i++ )
+	  {
+	  wchar_t *next = (wchar_t *)al_get( &possible_comp, i );
+	  wchar_t *next_unescaped;
+	  if( next )
+	  {
+	  next_unescaped = unescape( next, 0 );
+	  if( next_unescaped )
+	  {
+	  al_set( &possible_comp , i, next_unescaped );
+	  }
+	  else
+	  {
+	  al_set( &possible_comp , i, 0 );
+	  debug( 2, L"Could not expand string %ls on line %d of file %s", next, __LINE__, __FILE__ );
+	  }
+	  free( next );
+	  }
+	  else
+	  {
+	  debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
+	  }
+	  }
 	*/
 
 	copy_strings_with_prefix( comp_out, str, desc, 0, &possible_comp );
@@ -1469,7 +1487,7 @@ static void complete_from_args( const wchar_t *str,
 /**
    Match against an old style long option
 */
-static int param_match_old( complete_entry_opt *e,
+static int param_match_old( complete_entry_opt_t *e,
 							wchar_t *optstr )
 {
 	return  (optstr[0] == L'-') && (wcscmp( e->long_opt, &optstr[1] ) == 0);
@@ -1478,7 +1496,7 @@ static int param_match_old( complete_entry_opt *e,
 /**
    Match a parameter
 */
-static int param_match( complete_entry_opt *e,
+static int param_match( complete_entry_opt_t *e,
 						wchar_t *optstr )
 {
 	if( e->short_opt != L'\0' &&
@@ -1499,7 +1517,7 @@ static int param_match( complete_entry_opt *e,
 /**
    Test if a string is an option with an argument, like --color=auto or -I/usr/include
 */
-static wchar_t *param_match2( complete_entry_opt *e,
+static wchar_t *param_match2( complete_entry_opt_t *e,
 							  wchar_t *optstr )
 {
 	if( e->short_opt != L'\0' && e->short_opt == optstr[1] )
@@ -1571,6 +1589,7 @@ static void complete_load_handler( const wchar_t *cmd )
 
 void complete_load( const wchar_t *name, int reload )
 {
+	CHECK( name, );
 	parse_util_load( name, 
 					 L"fish_complete_path",
 					 &complete_load_handler, 
@@ -1587,8 +1606,8 @@ static int complete_param( wchar_t *cmd_orig,
 						   wchar_t *str,
 						   array_list_t *comp_out )
 {
-	complete_entry *i;
-	complete_entry_opt *o;
+	complete_entry_t *i;
+	complete_entry_opt_t *o;
 
 	array_list_t matches;
 	wchar_t *cmd, *path;
@@ -1775,7 +1794,7 @@ static void complete_param_expand( wchar_t *str,
 								   int do_file )
 {
 	wchar_t *comp_str;
-
+	
 	if( (wcsncmp( str, L"--", 2 )) == 0 && (comp_str = wcschr(str, L'=' ) ) )
 	{
 		comp_str++;
@@ -1784,16 +1803,16 @@ static void complete_param_expand( wchar_t *str,
 	{
 		comp_str = str;
 	}
-	/*
-	debug( 3,
-		   L"expand_string( \"%ls\", comp_out, EXPAND_SKIP_CMDSUBST | ACCEPT_INCOMPLETE | %ls );",
-		   comp_str,
-		   do_file?L"0":L"EXPAND_SKIP_WILDCARDS" );
-	*/
-	expand_string( 0, 
-				   wcsdup(comp_str),
-				   comp_out,
-				   EXPAND_SKIP_CMDSUBST | ACCEPT_INCOMPLETE | (do_file?0:EXPAND_SKIP_WILDCARDS) );
+
+	if( expand_string( 0, 
+					   wcsdup(comp_str),
+					   comp_out,
+					   EXPAND_SKIP_CMDSUBST | ACCEPT_INCOMPLETE | (do_file?0:EXPAND_SKIP_WILDCARDS) ) == EXPAND_ERROR )
+	{
+		debug( 3, L"Error while expanding string '%ls'", comp_str );
+	}
+	
+	
 }
 
 /**
@@ -1821,22 +1840,22 @@ static int complete_variable( const wchar_t *var,
 		if( wcsncmp( var, name, varlen) == 0 )
 		{
 			wchar_t *value_unescaped, *value;
-			
-			wchar_t *blarg;
 
 			value_unescaped = env_get( name );
 			if( value_unescaped )
 			{
+				wchar_t *desc;
+
 				value = expand_escape_variable( value_unescaped );
 				/*
 				  Variable description is 'Variable: VALUE
 				*/
-				blarg = wcsdupcat2( &name[varlen], COMPLETE_SEP_STR, COMPLETE_VAR_DESC_VAL, value, 0 );
+				desc = wcsdupcat2( &name[varlen], COMPLETE_SEP_STR, COMPLETE_VAR_DESC_VAL, value, (void *)0 );
 				
-				if( blarg )
+				if( desc )
 				{
 					res =1;
-					al_push( comp, blarg );
+					al_push( comp, desc );
 				}
 				free( value );
 			}
@@ -1960,7 +1979,7 @@ static int try_complete_user( const wchar_t *cmd,
 														 L"/",
 														 COMPLETE_SEP_STR,
 														 COMPLETE_USER_DESC,
-														 0 );
+														 (void *)0 );
 							if( blarg != 0 )
 							{
 								al_push( comp, blarg );
@@ -2180,11 +2199,13 @@ static void append_switch( string_buffer_t *out,
 
 void complete_print( string_buffer_t *out )
 {
-	complete_entry *e;
+	complete_entry_t *e;
+
+	CHECK( out, );
 
 	for( e = first_entry; e; e=e->next )
 	{
-		complete_entry_opt *o;
+		complete_entry_opt_t *o;
 		for( o= e->first_option; o; o=o->next )
 		{
 			wchar_t *modestr[] =

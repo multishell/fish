@@ -74,6 +74,33 @@ enum
 }
 	;
 
+enum
+{
+	/*
+	  Returnd by the pager if no more displaying is needed
+	*/
+	PAGER_DONE,
+	/*
+	  Returned by the pager if the completions would not fit in the specified number of columns
+	*/
+	PAGER_RETRY,
+	/*
+	  Returned by the pager if the terminal changes size
+	*/
+	PAGER_RESIZE
+}
+	;
+
+/**
+   The minimum number of columns the terminal may have for fish_pager to not refuse showing the completions
+*/
+#define PAGER_MIN_WIDTH 16
+
+/**
+   The maximum number of columns of completion to attempt to fit onto the screen
+*/
+#define PAGER_MAX_COLS 6
+
 /**
    This struct should be continually updated by signals as the term
    resizes, and as such always contain the correct current size.
@@ -81,11 +108,23 @@ enum
 
 static struct winsize termsize;
 
+/**
+   The termios modes the terminal had when the program started. These
+   should be restored on exit
+*/
 static struct termios saved_modes;
-static struct termios pager_modes;
 
+/**
+   This flag is set to 1 of we have sent the enter_ca_mode terminfo
+   sequence to save the previous terminal contents.
+*/
 static int is_ca_mode = 0;
 
+/**
+   This buffer_t is used to buffer the output of the pager to improve
+   screen redraw performance bu cutting down the number of write()
+   calls to only one.
+*/
 static buffer_t *pager_buffer;
 
 /**
@@ -101,7 +140,13 @@ static wchar_t *hightlight_var[] =
 }
 	;
 
+/**
+   This string_buffer_t contains the text that should be sent back to the calling program
+*/
 static string_buffer_t out_buff;
+/**
+   This is the file to which the output text should be sent. It is really a pipe.
+*/
 static FILE *out_file;
 
 /**
@@ -136,6 +181,10 @@ typedef struct
 }
 	comp_t;
 
+/**
+   This function translates from a highlight code to a specific color
+   by check invironement variables
+*/
 static int get_color( int highlight )
 {
 	wchar_t *val;
@@ -160,6 +209,12 @@ static int get_color( int highlight )
 	return output_color_code( val );	
 }
 
+/**
+   This function calculates the minimum width for each completion
+   entry in the specified array_list. This width depends on the
+   terminal size, so this function should be called when the terminal
+   changes size.
+*/
 static void recalc_width( array_list_t *l, const wchar_t *prefix )
 {
 	int i;
@@ -173,6 +228,10 @@ static void recalc_width( array_list_t *l, const wchar_t *prefix )
 	
 }
 
+/**
+   Test if the specified character sequence has been entered on the
+   keyboard
+*/
 static int try_sequence( char *seq )
 {
 	int j, k;
@@ -196,6 +255,9 @@ static int try_sequence( char *seq )
 	return 0;
 }
 
+/**
+   Read a character from keyboard
+*/
 static wint_t readch()
 {
 	struct mapping
@@ -255,26 +317,39 @@ static wint_t readch()
 	return input_common_readch(0);
 }
 
-
+/**
+   Write specified character to the output buffer \c pager_buffer
+*/
 static int pager_buffered_writer( char c)
 {
 	b_append( pager_buffer, &c, 1 );
 	return 0;
 }
 
+/**
+   Flush \c pager_buffer to stdout
+*/
 static void pager_flush()
 {
 	write( 1, pager_buffer->buff, pager_buffer->used );
 	pager_buffer->used = 0;
 }
 
+/**
+   Print the specified string, but use at most the specified amount of
+   space. If the whole string can't be fitted, ellipsize it.
 
+   \param str the string to print
+   \param max the maximum space that may be used for printing
+   \param has_more if this flag is true, this is not the entire string, and the string should be ellisiszed even if the string fits but takes up the whole space.
+*/
 static int print_max( const wchar_t *str, int max, int has_more )
 {
 	int i;
 	int written = 0;
 	for( i=0; str[i]; i++ )
 	{
+		
 		if( written + wcwidth(str[i]) > max )
 			break;
 		if( ( written + wcwidth(str[i]) == max) && (has_more || str[i+1]) )
@@ -290,6 +365,9 @@ static int print_max( const wchar_t *str, int max, int has_more )
 	return written;
 }
 
+/**
+   Print the specified item using at the specified amount of space
+*/
 static void completion_print_item( const wchar_t *prefix, comp_t *c, int width )
 {
 	int comp_width=0, desc_width=0;
@@ -423,7 +501,7 @@ static void completion_print( int cols,
    \param is_quoted whether the completions should be quoted
    \param l the list of completions
 
-   \return zero if the specified number of columns do not fit, no-zero otherwise
+   \return one of PAGER_RETRY, PAGER_DONE and PAGER_RESIZE
 */
 
 static int completion_try_print( int cols,
@@ -434,11 +512,11 @@ static int completion_try_print( int cols,
 	/*
 	  The calculated preferred width of each column
 	*/
-	int pref_width[32];
+	int pref_width[PAGER_MAX_COLS];
 	/*
 	  The calculated minimum width of each column
 	*/
-	int min_width[32];
+	int min_width[PAGER_MAX_COLS];
 	/*
 	  If the list can be printed with this width, width will contain the width of each column
 	*/
@@ -454,13 +532,13 @@ static int completion_try_print( int cols,
 	
 	int pref_tot_width=0;
 	int min_tot_width = 0;
-	int res=0;
+	int res=PAGER_RETRY;
 	/*
 	  Skip completions on tiny terminals
 	*/
 	
-	if( termsize.ws_col < 16 )
-		return 1;
+	if( termsize.ws_col < PAGER_MIN_WIDTH )
+		return PAGER_DONE;
 	
 	memset( pref_width, 0, sizeof(pref_width) );
 	memset( min_width, 0, sizeof(min_width) );
@@ -545,11 +623,9 @@ static int completion_try_print( int cols,
 		}
 	}
 
-//	return cols==1;
-	
 	if( print )
 	{
-		res=1;
+		res=PAGER_DONE;
 		if( rows < termsize.ws_row )
 		{
 			/* List fits on screen. Print it and leave */
@@ -583,14 +659,19 @@ static int completion_try_print( int cols,
 			*/
 			while(do_loop)
 			{
-				wchar_t msg[30];
-				int percent = 100*(pos+rows)/(2*rows-termsize.ws_row+1);
+				string_buffer_t msg;
+				sb_init( &msg );
+				
 				set_color( FISH_COLOR_BLACK,
 						   get_color(HIGHLIGHT_PAGER_PROGRESS) );
-				swprintf( msg, 30,
-						  L" %d to %d of %d \r",
-						  pos, pos+termsize.ws_row-1, rows );
-				writestr(msg);
+				sb_printf( &msg,
+						   _(L" %d to %d of %d \r"),
+						   pos,
+						   pos+termsize.ws_row-1, 
+						   rows );
+				
+				writestr((wchar_t *)msg.buff);
+				sb_destroy( &msg );
 				set_color( FISH_COLOR_NORMAL, FISH_COLOR_NORMAL );
 				pager_flush();
 				int c = readch();
@@ -688,7 +769,7 @@ static int completion_try_print( int cols,
 					case R_NULL:
 					{
 						do_loop=0;
-						res=2;
+						res=PAGER_RESIZE;
 						break;
 						
 					}
@@ -877,15 +958,28 @@ static void handle_winch( int sig )
 	}
 }
 
+/**
+   The callback function that the keyboard reading function calls when
+   an interrupt occurs. This makes sure that R_NULL is returned at
+   once when an interrupt has occured.
+*/
 static int interrupt_handler()
 {
 	return R_NULL;
 }
 
-
+/**
+   Initialize various subsystems. This also closes stdin and replaces
+   it with a copy of stderr, so the reading of completion strings must
+   be done before init is called.
+*/
 static void init()
 {
 	struct sigaction act;
+
+	static struct termios pager_modes;
+
+
 	program_name = L"fish_pager";
 	wsetlocale( LC_ALL, L"" );
 
@@ -902,21 +996,21 @@ static void init()
 	{
 		if( dup2( 2, 1 ) == -1 )
 		{			
-			debug( 0, L"Could not set up output file descriptors for pager" );
+			debug( 0, _(L"Could not set up output file descriptors for pager") );
 			exit( 1 );
 		}
 		
 		if( dup2( in, 0 ) == -1 )
 		{			
-			debug( 0, L"Could not set up input file descriptors for pager %d", in );
+			debug( 0, _(L"Could not set up input file descriptors for pager %d"), in );
 			exit( 1 );
 		}
 	}
 	else
-	    {
-		debug( 0, L"Could not open tty for pager" );
+	{
+		debug( 0, _(L"Could not open tty for pager") );
 		exit( 1 );
-	    }
+	}
 	out_file = fdopen( out, "w" );
 
 	/**
@@ -924,7 +1018,6 @@ static void init()
 	*/
 	sb_init( &out_buff );
 
-	halloc_util_init();
 	env_universal_init( 0, 0, 0, 0);
 	input_common_init( &interrupt_handler );
 	output_set_writer( &pager_buffered_writer );
@@ -965,17 +1058,21 @@ static void init()
 
 	if( setupterm( 0, STDOUT_FILENO, 0) == ERR )
 	{
-		debug( 0, L"Could not set up terminal" );
+		debug( 0, _(L"Could not set up terminal") );
 		exit(1);
 	}
 
 }
 
-void destroy()
+/**
+   Free memory used by various subsystems.
+*/
+static void destroy()
 {
 	env_universal_destroy();
 	input_common_destroy();
 	halloc_util_destroy();
+	wutil_destroy();
 	if( del_curterm( cur_term ) == ERR )
 	{
 		debug( 0, _(L"Error while closing terminfo") );		
@@ -985,43 +1082,58 @@ void destroy()
 	fclose( out_file );
 }
 
-#define BUFSIZE 1024
-void read_array( FILE* file, array_list_t *comp )
+/**
+   Read lines of input from the specified file, unescape them and
+   insert them into the specified list.
+*/
+static void read_array( FILE* file, array_list_t *comp )
 {
-	char buffer[BUFSIZE];
+	buffer_t buffer;
 	int c;
-	int i;
+	char cc;
 	wchar_t *wcs, *unescaped;
+
+	b_init( &buffer );
 
 	while( !feof( file ) )
 	{
-		i = 0;
-		while( i < BUFSIZE-1 )
+		buffer.used=0;
+
+		while( 1 )
 		{
 		    c = getc( file );
 			if( c == EOF ) 
 			{
-				return;
-				
+				break;
 			}
+
 			if( c == '\n' )
 			{
 				break;
 			}
+
+			cc=c;
 			
-			buffer[ i++ ] = c;
+			b_append( &buffer, &cc, 1 );
 		}
 
-		buffer[ i ] = '\0';
-
-		wcs = str2wcs( buffer );
-		if( wcs ) 
+		if( buffer.used )
 		{
-			unescaped = unescape( wcs, 0 );
-			al_push( comp, unescaped );
-			free( wcs );
+			cc=0;
+			b_append( &buffer, &cc, 1 );
+			
+			wcs = str2wcs( buffer.buff );
+			if( wcs ) 
+			{
+				unescaped = unescape( wcs, 0 );
+				al_push( comp, unescaped );
+				free( wcs );
+			}
 		}
 	}
+
+	b_destroy( &buffer );
+
 }
 
 int main( int argc, char **argv )
@@ -1030,19 +1142,26 @@ int main( int argc, char **argv )
 	int is_quoted=0;	
 	array_list_t *comp;
 	wchar_t *prefix;
-		
+
+	/*
+	  This initialization is made early, so that the other init code
+	  can use global_context for memory managment
+	*/
+	halloc_util_init();
+
 	if( argc < 3 )
 	{
-		debug( 0, L"Insufficient arguments" );
+		debug( 0, _(L"Insufficient arguments") );
 	}
 	else
 	{
+
 		comp = al_halloc( global_context );
 		prefix = str2wcs( argv[2] );
 		is_quoted = strcmp( "1", argv[1] )==0;
 		is_quoted = 0;
 		
-		debug( 3, L"prefix is '%ls'", prefix );
+//		debug( 3, L"prefix is '%ls'", prefix );
 		
 	    if( argc > 3 )
 		{
@@ -1060,28 +1179,44 @@ int main( int argc, char **argv )
 		    read_array( stdin, comp );
 		}
 
-
 	    init();
 
 	    mangle_descriptions( comp );
+
 	    if( wcscmp( prefix, L"-" ) == 0 )
-		join_completions( comp );
+			join_completions( comp );
+
 	    mangle_completions( comp, prefix );
-	
-		for( i = 6; i>0; i-- )
+
+		/**
+		   Try to print the completions. Start by trying to print the
+		   list in PAGER_MAX_COLS columns, if the completions won't
+		   fit, reduce the number of columns by one. Printing a single
+		   column never fails.
+		*/
+		for( i = PAGER_MAX_COLS; i>0; i-- )
 		{
 			switch( completion_try_print( i, prefix, is_quoted, comp ) )
 			{
-				case 0:
+
+				case PAGER_RETRY:
 					break;
-				case 1:
+
+				case PAGER_DONE:
 					i=0;
 					break;
-				case 2:
-					i=7;
+
+				case PAGER_RESIZE:
+					/*
+					  This means we got a resize event, so we start
+					  over from the beginning. Since it the screen got
+					  bigger, we might be able to fit all completions
+					  on-screen.
+					*/
+					i=PAGER_MAX_COLS+1;
 					break;
-			}
-		
+
+			}		
 		}
 	
 		free(prefix );

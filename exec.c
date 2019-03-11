@@ -69,6 +69,10 @@ pid_t getpgid( pid_t pid );
 */
 #define FORK_ERROR _( L"Could not create child process - exiting" )
 
+/**
+   Base open mode to pass to calls to open
+*/
+#define BASE_MASK 0666
 
 /**
    List of all pipes used by internal pipes. These must be closed in
@@ -272,7 +276,7 @@ static int handle_child_io( io_data_t *io, int exit_on_error )
 			case IO_FILE:
 			{
 				if( (tmp=wopen( io->param1.filename,
-                                io->param2.flags, 0777 ) )==-1 )
+                                io->param2.flags, BASE_MASK ) )==-1 )
 				{
 					debug( 1, 
 						   FILE_ERROR,
@@ -527,7 +531,7 @@ static io_data_t *io_transmogrify( io_data_t * in )
 		{
 			int fd;
 			
-			if( (fd=wopen( in->param1.filename, in->param2.flags, 0777 ) )==-1 )
+			if( (fd=wopen( in->param1.filename, in->param2.flags, BASE_MASK ) )==-1 )
 			{
 				debug( 1, 
 					   FILE_ERROR,
@@ -578,7 +582,7 @@ static void internal_exec_helper( const wchar_t *def,
 	*/
 	if( io && !io_internal )
 	{
-		proc_set_last_status( 1 );
+		proc_set_last_status( STATUS_EXEC_FAIL );
 		return;
 	}
 	
@@ -609,7 +613,7 @@ static int set_child_group( job_t *j, process_t *p, int print_errors )
 {
 	int res = 0;
 	
-	if( j->job_control )
+	if( job_get_flag( j, JOB_CONTROL ) )
 	{
 		if (!j->pgid)
 		{
@@ -638,7 +642,7 @@ static int set_child_group( job_t *j, process_t *p, int print_errors )
 		j->pgid = getpid();
 	}
 
-	if( j->terminal && j->fg )
+	if( job_get_flag( j, JOB_TERMINAL ) && job_get_flag( j, JOB_FOREGROUND ) )
 	{
 		if( tcsetpgrp (0, j->pgid) && print_errors )
 		{
@@ -678,12 +682,11 @@ void exec( job_t *j )
 	
 
 	CHECK( j, );
-		
+	CHECK_BLOCK();
+	
 	if( no_exec )
 		return;
 	
-	
-
 	sigemptyset( &chldset );
 	sigaddset( &chldset, SIGCHLD );
 	
@@ -735,7 +738,7 @@ void exec( job_t *j )
 		}
 		else
 		{
-			j->constructed=1;
+			job_set_flag( j, JOB_CONSTRUCTED, 1 );
 			j->first_process->completed=1;
 			return;
 		}
@@ -767,7 +770,7 @@ void exec( job_t *j )
 	  inside a pipeline.
 	*/
 	
-	if( j->job_control )
+	if( job_get_flag( j, JOB_CONTROL ) )
 	{
 		for( p=j->first_process; p; p = p->next )
 		{
@@ -869,18 +872,27 @@ void exec( job_t *j )
 		{
 			case INTERNAL_FUNCTION:
 			{
+				const wchar_t * orig_def;
+				wchar_t * def=0;
+
+				signal_unblock();
+				orig_def = function_get_definition( p->argv[0] );
+				signal_block();
 				
-				wchar_t * def = halloc_register( j, wcsdup( function_get_definition( p->argv[0] )));
+				if( orig_def )
+				{
+					def = halloc_register( j, wcsdup(orig_def) );
+				}
 				if( def == 0 )
 				{
 					debug( 0, _( L"Unknown function '%ls'" ), p->argv[0] );
 					break;
 				}
-				
+
 				parser_push_block( FUNCTION_CALL );
 				
 				current_block->param2.function_call_process = p;
-				current_block->param1.function_name = halloc_register( current_block, wcsdup( p->argv[0] ) );
+				current_block->param1.function_call_name = halloc_register( current_block, wcsdup( p->argv[0] ) );
 						
 				parse_util_set_argv( p->argv+1 );
 								
@@ -942,7 +954,7 @@ void exec( job_t *j )
 							case IO_FILE:
 							{
 								builtin_stdin=wopen( in->param1.filename,
-                                              in->param2.flags, 0777 );
+                                              in->param2.flags, BASE_MASK );
 								if( builtin_stdin == -1 )
 								{
 									debug( 1, 
@@ -992,8 +1004,8 @@ void exec( job_t *j )
 					
 					builtin_out_redirect = has_fd( j->io, 1 );
 					builtin_err_redirect = has_fd( j->io, 2 );		
-					fg = j->fg;
-					j->fg = 0;
+					fg = job_get_flag( j, JOB_FOREGROUND );
+					job_set_flag( j, JOB_FOREGROUND, 0 );
 					
 					signal_unblock();
 					
@@ -1006,7 +1018,7 @@ void exec( job_t *j )
 					  false during builtin execution so as not to confuse
 					  some job-handling builtins.
 					*/
-					j->fg = fg;
+					job_set_flag( j, JOB_FOREGROUND, fg );
 				}
 				
 				if( close_stdin )
@@ -1042,7 +1054,7 @@ void exec( job_t *j )
 					*/
 					if( p->next == 0 )
 					{
-						proc_set_last_status( j->negate?(status?0:1):status);
+						proc_set_last_status( job_get_flag( j, JOB_NEGATE )?(!status):status);
 					}
 					p->completed = 1;
 					break;
@@ -1092,7 +1104,7 @@ void exec( job_t *j )
 				{
 					if( p->next == 0 )
 					{
-						proc_set_last_status( j->negate?(status?0:1):status);
+						proc_set_last_status( job_get_flag( j, JOB_NEGATE )?(!status):status);
 					}
 					p->completed = 1;
 				}
@@ -1183,7 +1195,7 @@ void exec( job_t *j )
 					{
 						debug( 3, L"Set status of %ls to %d using short circut", j->command, p->status );
 						
-						proc_set_last_status( j->negate?(p->status?0:1):p->status );
+						proc_set_last_status( job_get_flag( j, JOB_NEGATE )?(!p->status):p->status );
 					}
 					break;
 					
@@ -1317,9 +1329,9 @@ void exec( job_t *j )
 	for( tmp = block_io; tmp; tmp=tmp->next )
 		j->io = io_remove( j->io, tmp );
 	
-	j->constructed = 1;
+	job_set_flag( j, JOB_CONSTRUCTED, 1 );
 
-	if( !j->fg )
+	if( !job_get_flag( j, JOB_FOREGROUND ) )
 	{
 		proc_last_bg_pid = j->pgid;
 	}
@@ -1345,7 +1357,7 @@ int exec_subshell( const wchar_t *cmd,
 		debug( 1, 
 			   _( L"Sent null command to subshell. This is a fish bug. If it can be reproduced, please send a bug report to %s." ), 
 			   PACKAGE_BUGREPORT );		
-		return 0;		
+		return -1;		
 	}
 	
 	is_subshell=1;	
@@ -1353,11 +1365,17 @@ int exec_subshell( const wchar_t *cmd,
 	
 	prev_status = proc_get_last_status();
 	
-	eval( cmd, io_buffer, SUBST );
+	if( eval( cmd, io_buffer, SUBST ) )
+	{
+		status = -1;
+	}
+	else
+	{
+		status = proc_get_last_status();
+	}
 	
 	io_buffer_read( io_buffer );
 	
-	status = proc_get_last_status();
 	proc_set_last_status( prev_status );
 	
 	is_subshell = prev_subshell;

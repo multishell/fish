@@ -1,12 +1,12 @@
-
-\section or or - Conditionally execute a command
+\section or or - conditionally execute a command
 
 \subsection or-synopsis Synopsis
  <tt>COMMAND1; or COMMAND2</tt>
 
 \subsection or-description Description
 
-The \c or builtin is used to execute a command if the current exit status (as set by the last previous command) is non-zero
+The \c or builtin is used to execute a command if the current exit
+status (as set by the last previous command) is not 0.
 
 The or command does not change the current exit status.
 

@@ -123,14 +123,17 @@ static const wchar_t *name_arr[] =
 	L"kill-word",
 	L"backward-kill-word",
 	L"dump-functions",
-	L"clear-screen",
+	L"winch",
 	L"exit",
 	L"history-token-search-backward",
 	L"history-token-search-forward",
 	L"self-insert",
 	L"null",
 	L"eof",
-	L"vi-arg-digit"
+	L"vi-arg-digit",
+	L"execute",
+	L"beginning-of-buffer",
+	L"end-of-buffer"
 }
 	;
 
@@ -200,14 +203,17 @@ static const wchar_t code_arr[] =
 	R_KILL_WORD,
 	R_BACKWARD_KILL_WORD,
 	R_DUMP_FUNCTIONS,
-	R_CLEAR_SCREEN,
+	R_WINCH,
 	R_EXIT,
 	R_HISTORY_TOKEN_SEARCH_BACKWARD,
 	R_HISTORY_TOKEN_SEARCH_FORWARD,
 	R_SELF_INSERT,
 	R_NULL,
 	R_EOF,
-	R_VI_ARG_DIGIT
+	R_VI_ARG_DIGIT,
+	R_EXECUTE,
+	R_BEGINNING_OF_BUFFER,
+	R_END_OF_BUFFER,
 }
 	;
 
@@ -1222,6 +1228,14 @@ static void add_common_bindings()
 	*/
 	for( i=0; i<3; i++ )
 	{
+		add_mapping( name[i], L"\n", L"Execute contents of commandline", L"execute" );
+		
+		/*
+		  This will make Meta-newline insert a newline, since
+		  self-insert ignored the escape character unless it is the
+		  only character of the sequence.
+		*/
+		add_mapping( name[i], L"\e\n", L"Meta-newline", L"self-insert" );
 		/*
 		  We need alternative keybidnings for arrowkeys, since
 		  terminfo sometimes specifies a different sequence than what
@@ -1287,6 +1301,7 @@ static void add_common_bindings()
 		add_escaped_mapping( name[i], (L"\\C-y"), L"Control-y", L"yank" );
 		add_mapping( name[i], L"", L"Any key", L"self-insert" );
 	}		
+
 }
 
 /**
@@ -1310,6 +1325,8 @@ static void add_emacs_bindings()
 	add_escaped_mapping( L"emacs", (L"\ed"), L"Alt-d", L"forward-kill-word" );
 	add_terminfo_mapping( L"emacs", (key_ppage), L"Page Up", L"beginning-of-history" );
 	add_terminfo_mapping( L"emacs", (key_npage), L"Page Down", L"end-of-history" );
+	add_escaped_mapping( L"emacs", (L"\e<"), L"Alt-<", L"beginning-of-buffer" );
+	add_escaped_mapping( L"emacs", (L"\e>"), L"Alt->", L"end-of-buffer" );
 }
 
 /**
@@ -1390,7 +1407,7 @@ static int interrupt_handler()
 	/*
 	  Tell the reader an event occured
 	*/
-	if( reader_interupted() )
+	if( reader_interrupted() )
 	{
 		/*
 		  Return 3, i.e. the character read by a Control-C.
@@ -1398,7 +1415,7 @@ static int interrupt_handler()
 		return 3;
 	}
 
-	return 0;	
+	return R_WINCH;	
 }
 
 int input_init()
@@ -1411,7 +1428,7 @@ int input_init()
 	is_init = 1;
 
 	input_common_init( &interrupt_handler );
-	
+
 	if( setupterm( 0, STDOUT_FILENO, 0) == ERR )
 	{
 		debug( 0, _( L"Could not set up terminal" ) );
@@ -1509,6 +1526,7 @@ static wint_t input_exec_binding( mapping *m, const wchar_t *seq )
 	{				
 		switch( code )
 		{
+
 			case R_DUMP_FUNCTIONS:
 			{
 				for( i=0; i<repeat_count; i++ )
@@ -1519,10 +1537,17 @@ static wint_t input_exec_binding( mapping *m, const wchar_t *seq )
 
 			case R_SELF_INSERT:
 			{
+				int idx = 0;
+
+				if( seq[0] == L'\e' && seq[1] )
+				{
+					idx = 1;
+				}
+				
 				for( i=1; i<repeat_count; i++ )
-					input_unreadch( seq[0] );							
+					input_unreadch( seq[idx] );							
 				repeat_count = 1;				
-				return seq[0];							
+				return seq[idx];							
 			}
 
 			case R_VI_ARG_DIGIT:
@@ -1654,7 +1679,7 @@ wint_t input_readch()
 	/*
 	  Clear the interrupted flag
 	*/
-	reader_interupted();
+	reader_interrupted();
 
 	/*
 	  Search for sequence in various mapping tables

@@ -44,10 +44,6 @@ typedef struct
 	   Line where definition started
 	*/
 	int definition_offset;	
-	/**
-	   Flag for specifying functions which are actually key bindings
-	*/
-	int is_binding;
 	
 	/**
 	   Flag for specifying that this function was automatically loaded
@@ -169,8 +165,7 @@ void function_destroy()
 void function_add( const wchar_t *name, 
 				   const wchar_t *val,
 				   const wchar_t *desc,
-				   array_list_t *events,
-				   int is_binding )
+				   array_list_t *events )
 {
 	int i;
 	wchar_t *cmd_end;
@@ -186,13 +181,8 @@ void function_add( const wchar_t *name,
 	d->cmd = wcsdup( val );
 	
 	cmd_end = d->cmd + wcslen(d->cmd)-1;
-	while( (cmd_end>d->cmd) && wcschr( L"\n\r\t ", *cmd_end ) )
-	{
-		*cmd_end-- = 0;
-	}
 	
 	d->desc = desc?wcsdup( desc ):0;
-	d->is_binding = is_binding;
 	d->definition_file = intern(reader_current_filename());
 	d->is_autoload = is_autoload;
 		
@@ -319,9 +309,7 @@ static void get_names_internal( void *key,
 								void *aux )
 {
 	wchar_t *name = (wchar_t *)key;
-	function_data_t *f = (function_data_t *)val;
-	
-	if( name[0] != L'_' && !f->is_binding && !al_contains_str( (array_list_t *)aux, name ) )
+	if( name[0] != L'_' && !al_contains_str( (array_list_t *)aux, name ) )
 	{
 		al_push( (array_list_t *)aux, name );
 	}
@@ -365,7 +353,6 @@ const wchar_t *function_get_definition_file( const wchar_t *argv )
 
 	CHECK( argv, 0 );
 		
-	load( argv );
 	data = (function_data_t *)hash_get( &function, argv );
 	if( data == 0 )
 		return 0;
@@ -380,7 +367,6 @@ int function_get_definition_offset( const wchar_t *argv )
 
 	CHECK( argv, -1 );
 		
-	load( argv );
 	data = (function_data_t *)hash_get( &function, argv );
 	if( data == 0 )
 		return -1;

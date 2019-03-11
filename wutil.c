@@ -84,7 +84,7 @@ static struct wdirent my_wdirent;
 /**
    For wgettext: Number of string_buffer_t in the ring of buffers
 */
-#define BUFF_COUNT 64
+#define BUFF_COUNT 4
 
 /**
    For wgettext: The ring of string_buffer_t
@@ -404,7 +404,7 @@ wchar_t *wrealpath(const wchar_t *pathname, wchar_t *resolved_path)
 #endif
 
 
-wchar_t *wdirname( const wchar_t *path )
+wchar_t *wdirname( wchar_t *path )
 {
 	static string_buffer_t *sb = 0;
 	if( sb )
@@ -418,7 +418,8 @@ wchar_t *wdirname( const wchar_t *path )
 		return 0;
 	
 	sb_printf( sb, L"%s", narrow_res );
-	return (wchar_t *)sb->buff;
+	wcscpy( path, (wchar_t *)sb->buff );
+	return path;
 }
 
 wchar_t *wbasename( const wchar_t *path )
@@ -543,3 +544,20 @@ wchar_t *wgetenv( const wchar_t *name )
 	
 }
 
+int wmkdir( const wchar_t *name, int mode )
+{
+	char *name_narrow =wutil_wcs2str(name);
+	return mkdir( name_narrow, mode );
+}
+
+int wrename( const wchar_t *old, const wchar_t *new )
+{
+	char *old_narrow =wutil_wcs2str(old);
+	char *new_narrow =wcs2str(new);
+	int res;
+	
+	res = rename( old_narrow, new_narrow );
+	free( new_narrow );
+
+	return res;
+}

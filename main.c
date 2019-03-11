@@ -1,9 +1,9 @@
 /*
-Copyright (C) 2005 Axel Liljencrantz
+Copyright (C) 2005-2006 Axel Liljencrantz
 
-This program is free software; you can redistribute it and/or
-modify it under the terms of the GNU General Public License
-as published by the Free Software Foundation.
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License version 2 as
+published by the Free Software Foundation.
 
 This program is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -58,9 +58,10 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #include "exec.h"
 #include "event.h"
 #include "output.h"
-
+#include "halloc.h"
 #include "halloc_util.h"
 #include "history.h"
+#include "path.h"
 
 /**
    The string describing the single-character options accepted by the main fish binary
@@ -75,23 +76,42 @@ static int read_init()
 	char cwd[4096];
 	wchar_t *wcwd;
 
+	wchar_t *config_dir;
+	wchar_t *config_dir_escaped;
+	void *context;
+	string_buffer_t *eval_buff;
+	
 	if( !getcwd( cwd, 4096 ) )
 	{
 		wperror( L"getcwd" );		
 		return 0;
 	}
 
-	eval( L"builtin cd " DATADIR L"/fish 2>/dev/null; and builtin . fish 2>/dev/null", 0, TOP );
-	eval( L"builtin cd " SYSCONFDIR L" 2>/dev/null; and builtin . fish 2>/dev/null", 0, TOP );
-	eval( L"builtin cd 2>/dev/null; and builtin . .fish 2>/dev/null", 0, TOP );
-
+	eval( L"builtin cd " DATADIR L"/fish 2>/dev/null; and builtin . config.fish 2>/dev/null", 0, TOP );
+	eval( L"builtin cd " SYSCONFDIR L"/fish 2>/dev/null; and builtin . config.fish 2>/dev/null", 0, TOP );
+	
+	/*
+	  We need to get the configuration directory before we can source the user configuration file
+	*/
+	context = halloc( 0, 0 );
+	eval_buff = sb_halloc( context );
+	config_dir = path_get_config( context );
+	config_dir_escaped = escape( config_dir, 1 );
+	sb_printf( eval_buff, L"builtin cd %ls 2>/dev/null; and builtin . config.fish 2>/dev/null", config_dir_escaped );
+	eval( (wchar_t *)eval_buff->buff, 0, TOP );
+	
+	halloc_free( context );
+	free( config_dir_escaped );
+	
 	if( chdir( cwd ) == -1 )
 	{
 		/*
-		  If we can't change back to previos directory, we'll stay in
+		  If we can't change back to previos directory, we go to
 		  ~. Should be a sane default behavior.
 		*/
+		eval( L"builtin cd", 0, TOP );
 	}	
+	
 	wcwd = str2wcs( cwd );
 	if( wcwd )
 	{
@@ -102,24 +122,12 @@ static int read_init()
 	return 1;
 }
 
-/**
-   Calls a bunch of init functions, parses the init files and then
-   parses commands from stdin or files, depending on arguments
-*/
 
-int main( int argc, char **argv )
+static int fish_parse_opt( int argc, char **argv, char **cmd_ptr )
 {
-	int res=1;
-	int force_interactive=0;
 	int my_optind;
+	int force_interactive=0;
 	
-	char *cmd=0;	
-
-	halloc_util_init();	
-
-	wsetlocale( LC_ALL, L"" );
-	is_interactive_session=1;
-	program_name=L"fish";
 	
 	while( 1 )
 	{
@@ -184,7 +192,7 @@ int main( int argc, char **argv )
 			
 			case 'c':		
 			{
-				cmd = optarg;				
+				*cmd_ptr = optarg;				
 				is_interactive_session = 0;
 				break;
 			}
@@ -207,7 +215,7 @@ int main( int argc, char **argv )
 			
 			case 'h':
 			{
-				cmd = "help";
+				*cmd_ptr = "help";
 				break;
 			}
 			
@@ -246,7 +254,7 @@ int main( int argc, char **argv )
 			
 			case '?':
 			{
-				return 1;
+				exit( 1 );
 			}
 			
 		}		
@@ -256,10 +264,33 @@ int main( int argc, char **argv )
 	
 	is_login |= (strcmp( argv[0], "-fish") == 0);
 		
-	is_interactive_session &= (cmd == 0);
+	is_interactive_session &= (*cmd_ptr == 0);
 	is_interactive_session &= (my_optind == argc);
 	is_interactive_session &= isatty(STDIN_FILENO);	
 	is_interactive_session |= force_interactive;
+
+	return my_optind;
+}
+
+
+/**
+   Calls a bunch of init functions, parses the init files and then
+   parses commands from stdin or files, depending on arguments
+*/
+
+int main( int argc, char **argv )
+{
+	int res=1;
+	char *cmd=0;
+	int my_optind=0;
+
+	halloc_util_init();	
+
+	wsetlocale( LC_ALL, L"" );
+	is_interactive_session=1;
+	program_name=L"fish";
+
+	my_optind = fish_parse_opt( argc, argv, &cmd );
 
 	/*
 	  No-exec is prohibited when in interactive mode
@@ -280,6 +311,7 @@ int main( int argc, char **argv )
 	env_init();
 	reader_init();
 	history_init();
+
 
 	if( read_init() )
 	{
