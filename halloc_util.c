@@ -1,4 +1,4 @@
-/** \file halloc.c
+/** \file halloc_util.c
 
     A hierarchical memory allocation system. Works just like talloc
 	used in Samba, except that an arbitrary block allocated with
@@ -35,7 +35,7 @@ array_list_t *al_halloc( void *context )
 {
 	array_list_t *res = halloc( context, sizeof( array_list_t ) );
 	if( !res )
-		die_mem();
+		DIE_MEM();
 	al_init( res );
 	halloc_register_function( context, (void (*)(void *)) &al_destroy, res );
 	return res;
@@ -45,12 +45,15 @@ string_buffer_t *sb_halloc( void *context )
 {
 	string_buffer_t *res = halloc( context, sizeof( string_buffer_t ) );
 	if( !res )
-		die_mem();
+		DIE_MEM();
 	sb_init( res );
 	halloc_register_function( context, (void (*)(void *)) &sb_destroy, res );
 	return res;
 }
 
+/**
+   A function that takes a single parameter, which is a function pointer, and calls it.
+*/
 static void halloc_passthrough( void *f )
 {
 	void (*func)() = (void (*)() )f;
@@ -71,14 +74,14 @@ void *halloc_register( void *context, void *data )
 	return data;
 }
 
-wchar_t *halloc_wcsdup( void *context, wchar_t *in )
+wchar_t *halloc_wcsdup( void *context, const wchar_t *in )
 {
 	size_t len=wcslen(in);
 	wchar_t *out = halloc( context, sizeof( wchar_t)*(len+1));
 	
 	if( out == 0 )
 	{
-		die_mem();
+		DIE_MEM();
 	}
 	memcpy( out, in, sizeof( wchar_t)*(len+1));
 	return out;
@@ -89,7 +92,7 @@ wchar_t *halloc_wcsndup( void * context, const wchar_t *in, int c )
 	wchar_t *res = halloc( context, sizeof(wchar_t)*(c+1) );
 	if( res == 0 )
 	{
-		die_mem();
+		DIE_MEM();
 	}
 	wcslcpy( res, in, c+1 );
 	res[c] = L'\0';	

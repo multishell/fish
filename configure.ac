@@ -1,5 +1,5 @@
 # Process this file with autoconf to produce a configure script.
-AC_INIT(fish,1.21.8,fish-users@lists.sf.net)
+AC_INIT(fish,1.21.9,fish-users@lists.sf.net)
 
 # If needed, run autoconf to regenerate the configure file
 AC_MSG_CHECKING([if autoconf needs to be run])
@@ -276,7 +276,7 @@ AC_CHECK_HEADER([regex.h],
 # Check for presense of various functions
 AC_CHECK_FUNCS( wcsdup wcsndup wcslen wcscasecmp wcsncasecmp gettext fwprintf )
 AC_CHECK_FUNCS( futimes wcwidth wcswidth getopt_long wcstok fputwc fgetwc )
-AC_CHECK_FUNCS( wcstol dcgettext wcslcat wcslcpy )
+AC_CHECK_FUNCS( wcstol dcgettext wcslcat wcslcpy lrand48_r)
 
 # Here follows a list of small programs used to test for various
 # features that Autoconf doesn't tell us about
@@ -361,4 +361,4 @@ AC_CONFIG_FILES([Makefile fish.spec doc_src/fish.1 doc_src/Doxyfile etc/fish etc
 AC_OUTPUT
 
 echo "fish is now configured."
-echo "Use 'make' and 'make install' to built and install fish."
+echo "Use 'make' and 'make install' to build and install fish."

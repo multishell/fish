@@ -61,6 +61,11 @@ parts of fish.
 #include "wildcard.h"
 #include "parser.h"
 
+#include "util.c"
+#include "halloc.c"
+#include "halloc_util.c"
+#include "fallback.c"
+
 /**
    The number of milliseconds to wait between polls when attempting to acquire 
    a lockfile
@@ -68,8 +73,6 @@ parts of fish.
 #define LOCKPOLLINTERVAL 10
 
 struct termios shell_modes;      
-
-int error_max=1;
 
 wchar_t ellipsis_char;
 
@@ -89,27 +92,13 @@ static struct winsize termsize;
 */
 static string_buffer_t *setlocale_buff=0;
 
-void common_destroy()
-{
-	
-	if( setlocale_buff )
-	{
-		sb_destroy( setlocale_buff );
-		free( setlocale_buff );
-	}
-}
-
-void common_init()
-{
-}
-
 wchar_t **list_to_char_arr( array_list_t *l )
 {
 	wchar_t ** res = malloc( sizeof(wchar_t *)*(al_get_count( l )+1) );
 	int i;
 	if( res == 0 )
 	{
-		die_mem();
+		DIE_MEM();
 	}
 	for( i=0; i<al_get_count( l ); i++ )
 	{		
@@ -126,12 +115,6 @@ int fgetws2( wchar_t **b, int *len, FILE *f )
 	
 	wchar_t *buff = *b;
 
-	/*
-	  This is a kludge: We block SIGCHLD while reading, since I can't
-	  get getwc to perform reliably when signals are flying. Even when
-	  watching for EINTR errors, bytes are lost. 
-	*/
-
 	while( 1 )
 	{
 		/* Reallocate the buffer if necessary */
@@ -141,7 +124,7 @@ int fgetws2( wchar_t **b, int *len, FILE *f )
 			buff = realloc( buff, sizeof(wchar_t)*new_len );
 			if( buff == 0 )
 			{
-				die_mem();
+				DIE_MEM();
 			}
 			else
 			{
@@ -213,7 +196,7 @@ wchar_t *str2wcs( const char *in )
 
 	if( !out )
 	{
-		die_mem();
+		DIE_MEM();
 	}
 
 	return str2wcs_internal( in, out );
@@ -225,8 +208,13 @@ wchar_t *str2wcs_internal( const char *in, wchar_t *out )
 	int in_pos=0;
 	int out_pos = 0;
 	mbstate_t state;
-	size_t len = strlen(in);
-	
+	size_t len;
+
+	CHECK( in, 0 );
+	CHECK( out, 0 );
+		
+	len = strlen(in);
+
 	memset( &state, 0, sizeof(state) );
 	
 	while( in[in_pos] )
@@ -237,12 +225,12 @@ wchar_t *str2wcs_internal( const char *in, wchar_t *out )
 		{
 			case (size_t)(-2):
 			case (size_t)(-1):
-			{
-				out[out_pos] = ENCODE_DIRECT_BASE + (unsigned char)in[in_pos];
-				in_pos++;
-				memset( &state, 0, sizeof(state) );
-				break;
-			}
+				{
+					out[out_pos] = ENCODE_DIRECT_BASE + (unsigned char)in[in_pos];
+					in_pos++;
+					memset( &state, 0, sizeof(state) );
+					break;
+				}
 				
 			case 0:
 			{
@@ -270,7 +258,7 @@ char *wcs2str( const wchar_t *in )
 
 	if( !out )
 	{
-		die_mem();
+		DIE_MEM();
 	}
 
 	return wcs2str_internal( in, out );
@@ -282,6 +270,10 @@ char *wcs2str_internal( const wchar_t *in, char *out )
 	int in_pos=0;
 	int out_pos = 0;
 	mbstate_t state;
+
+	CHECK( in, 0 );
+	CHECK( out, 0 );
+	
 	memset( &state, 0, sizeof(state) );
 	
 	while( in[in_pos] )
@@ -322,7 +314,7 @@ char **wcsv2strv( const wchar_t **in )
 	char **res = malloc( sizeof( char *)*(count+1));
 	if( res == 0 )
 	{
-		die_mem();		
+		DIE_MEM();		
 	}
 
 	for( i=0; i<count; i++ )
@@ -336,7 +328,7 @@ char **wcsv2strv( const wchar_t **in )
 
 wchar_t *wcsdupcat( const wchar_t *a, const wchar_t *b )
 {
-	return wcsdupcat2( a, b, 0 );
+	return wcsdupcat2( a, b, (void *)0 );
 }
 
 wchar_t *wcsdupcat2( const wchar_t *a, ... )
@@ -357,7 +349,7 @@ wchar_t *wcsdupcat2( const wchar_t *a, ... )
 	wchar_t *res = malloc( sizeof(wchar_t)*(len +1 ));
 	if( res == 0 )
 	{
-		die_mem();
+		DIE_MEM();
 	}
 	
 	wcscpy( res, a );
@@ -383,7 +375,7 @@ wchar_t **strv2wcsv( const char **in )
 	wchar_t **res = malloc( sizeof( wchar_t *)*(count+1));
 	if( res == 0 )
 	{
-		die_mem();
+		DIE_MEM();
 	}
 
 	for( i=0; i<count; i++ )
@@ -408,6 +400,11 @@ wchar_t *wcsvarname( wchar_t *str )
 	return 0;
 }
 
+int wcsvarchr( wchar_t chr )
+{
+	return ( (iswalnum(chr)) || (chr == L'_' ));
+}
+
 
 /** 
 	The glibc version of wcswidth seems to hang on some strings. fish uses this replacement.
@@ -428,26 +425,28 @@ int my_wcswidth( const wchar_t *c )
 	return res;
 }
 
-const wchar_t *quote_end( const wchar_t *pos )
+wchar_t *quote_end( const wchar_t *pos )
 {
 	wchar_t c = *pos;
 	
 	while( 1 )
 	{
 		pos++;
-
+		
 		if( !*pos )
 			return 0;
 		
 		if( *pos == L'\\')
 		{
 			pos++;
+			if( !*pos )
+				return 0;
 		}
 		else
 		{
 			if( *pos == c )
 			{
-				return pos;
+				return (wchar_t *)pos;
 			}
 		}
 	}
@@ -475,8 +474,7 @@ const wchar_t *wsetlocale(int category, const wchar_t *locale)
 	
 	if( !setlocale_buff )
 	{
-		setlocale_buff = malloc( sizeof(string_buffer_t) );
-		sb_init( setlocale_buff);
+		setlocale_buff = sb_halloc( global_context);
 	}
 	
 	sb_clear( setlocale_buff );
@@ -491,11 +489,7 @@ int contains_str( const wchar_t *a, ... )
 	va_list va;
 	int res = 0;
 
-	if( !a )
-	{
-		debug( 1, L"Warning: Called contains_str with null argument. This is a bug." );		
-		return 0;
-	}
+	CHECK( a, 0 );
 	
 	va_start( va, a );
 	while( (arg=va_arg(va, wchar_t *) )!= 0 ) 
@@ -524,24 +518,14 @@ int read_blocked(int fd, void *buf, size_t count)
 	return res;	
 }
 
-
-void die_mem()
-{
-	/*
-	  Do not translate this message, and do not send it through the
-	  usual channels. This increases the odds that the message gets
-	  through correctly, even if we are out of memory.
-	*/
-	fwprintf( stderr, L"Out of memory, shutting down fish.\n" );
-	exit(1);
-}
-
 void debug( int level, const wchar_t *msg, ... )
 {
 	va_list va;
 	string_buffer_t sb;
 	string_buffer_t sb2;
 	
+	CHECK( msg, );
+		
 	if( level > debug_level )
 		return;
 
@@ -568,6 +552,9 @@ void write_screen( const wchar_t *msg, string_buffer_t *buff )
 	int tok_width = 0;
 	int screen_width = common_get_width();
 	
+	CHECK( msg, );
+	CHECK( buff, );
+		
 	if( screen_width )
 	{
 		start = pos = msg;
@@ -636,8 +623,10 @@ void write_screen( const wchar_t *msg, string_buffer_t *buff )
 			  Break on end of string
 			*/
 			if( !*pos )
+			{
 				break;
-		
+			}
+			
 			start=pos;
 		}
 	}
@@ -651,10 +640,20 @@ void write_screen( const wchar_t *msg, string_buffer_t *buff )
 wchar_t *escape( const wchar_t *in, 
 				 int escape_all )
 {
-	wchar_t *out = malloc( sizeof(wchar_t)*(wcslen(in)*4 + 1));
-	wchar_t *pos=out;
+	wchar_t *out;
+	wchar_t *pos;
+
+	if( !in )
+	{
+		debug( 0, L"%s called with null input", __func__ );
+		exit(1);
+	}
+	
+	out = malloc( sizeof(wchar_t)*(wcslen(in)*4 + 1));
+	pos = out;
+	
 	if( !out )
-		die_mem();
+		DIE_MEM();
 	
 	while( *in != 0 )
 	{
@@ -678,74 +677,80 @@ wchar_t *escape( const wchar_t *in,
 		else
 		{
 			
-		switch( *in )
-		{
-			case L'\t':
-				*(pos++) = L'\\';
-				*(pos++) = L't';					
-				break;
+			switch( *in )
+			{
+				case L'\t':
+					*(pos++) = L'\\';
+					*(pos++) = L't';					
+					break;
 					
-			case L'\n':
-				*(pos++) = L'\\';
-				*(pos++) = L'n';					
-				break;
+				case L'\n':
+					*(pos++) = L'\\';
+					*(pos++) = L'n';					
+					break;
 					
-			case L'\b':
-				*(pos++) = L'\\';
-				*(pos++) = L'b';					
-				break;
+				case L'\b':
+					*(pos++) = L'\\';
+					*(pos++) = L'b';					
+					break;
 					
-			case L'\r':
-				*(pos++) = L'\\';
-				*(pos++) = L'r';					
-				break;
+				case L'\r':
+					*(pos++) = L'\\';
+					*(pos++) = L'r';					
+					break;
 					
-			case L'\e':
-				*(pos++) = L'\\';
-				*(pos++) = L'e';					
-				break;
+				case L'\e':
+					*(pos++) = L'\\';
+					*(pos++) = L'e';					
+					break;
 					
-			case L'\\':
-			case L'&':
-			case L'$':
-			case L' ':
-			case L'#':
-			case L'^':
-			case L'<':
-			case L'>':
-			case L'(':
-			case L')':
-			case L'[':
-			case L']':
-			case L'{':
-			case L'}':
-			case L'?':
-			case L'*':
-			case L'|':
-			case L';':
-			case L':':
-			case L'\'':
-			case L'"':
-			case L'%':
-			case L'~':
-				if( escape_all )
-					*pos++ = L'\\';
-				*pos++ = *in;
-				break;
-					
-			default:
-				if( *in < 32 )
+				case L'\\':
+				case L'&':
+				case L'$':
+				case L' ':
+				case L'#':
+				case L'^':
+				case L'<':
+				case L'>':
+				case L'(':
+				case L')':
+				case L'[':
+				case L']':
+				case L'{':
+				case L'}':
+				case L'?':
+				case L'*':
+				case L'|':
+				case L';':
+				case L':':
+				case L'\'':
+				case L'"':
+				case L'%':
+				case L'~':
 				{
-					int tmp = (*in)%16;
-					*pos++ = L'\\';
-					*pos++ = L'x';
-					*pos++ = ((*in>15)? L'1' : L'0');
-					*pos++ = tmp > 9? L'a'+(tmp-10):L'0'+tmp;
-				}
-				else
+					if( escape_all )
+						*pos++ = L'\\';
 					*pos++ = *in;
-				break;
-		}
+					break;
+				}
+				
+				default:
+				{
+					if( *in < 32 )
+					{
+						int tmp = (*in)%16;
+						*pos++ = L'\\';
+						*pos++ = L'x';
+						*pos++ = ((*in>15)? L'1' : L'0');
+						*pos++ = tmp > 9? L'a'+(tmp-10):L'0'+tmp;
+					}
+					else
+					{
+						*pos++ = *in;
+					}
+					break;
+				}
+			}
 		}
 		
 		in++;
@@ -759,13 +764,19 @@ wchar_t *unescape( const wchar_t * orig, int unescape_special )
 {
 	
 	int mode = 0; 
-	int in_pos, out_pos, len = wcslen( orig );
+	int in_pos, out_pos, len;
 	int c;
 	int bracket_count=0;
 	wchar_t prev=0;	
-	wchar_t *in = wcsdup(orig);
+	wchar_t *in;
+
+	CHECK( orig, 0 );
+		
+	len = wcslen( orig );
+	in = wcsdup( orig );
+
 	if( !in )
-		die_mem();
+		DIE_MEM();
 	
 	for( in_pos=0, out_pos=0; 
 		 in_pos<len; 
@@ -1273,13 +1284,13 @@ static char *gen_unique_nfs_filename( const char *filename )
 	pidlen = sprint_pid_t( getpid(), newname + orglen + 1 + hnlen + 1 );
 	newname[orglen + 1 + hnlen + 1 + pidlen] = '\0';
 /*	debug( 1, L"gen_unique_nfs_filename returning with: newname = \"%s\"; "
-	L"HOST_NAME_MAX = %d; hnlen = %d; orglen = %d; "
-	L"sizeof(pid_t) = %d; maxpiddigits = %d; malloc'd size: %d", 
-	newname, (int)HOST_NAME_MAX, hnlen, orglen, 
-	(int)sizeof(pid_t), 
-	(int)(0.31 * sizeof(pid_t) * CHAR_BIT + 1),
-	(int)(orglen + 1 + hnlen + 1 + 
-	(int)(0.31 * sizeof(pid_t) * CHAR_BIT + 1) + 1) ); */
+  L"HOST_NAME_MAX = %d; hnlen = %d; orglen = %d; "
+  L"sizeof(pid_t) = %d; maxpiddigits = %d; malloc'd size: %d", 
+  newname, (int)HOST_NAME_MAX, hnlen, orglen, 
+  (int)sizeof(pid_t), 
+  (int)(0.31 * sizeof(pid_t) * CHAR_BIT + 1),
+  (int)(orglen + 1 + hnlen + 1 + 
+  (int)(0.31 * sizeof(pid_t) * CHAR_BIT + 1) + 1) ); */
 	return newname;
 }
 
@@ -1306,6 +1317,9 @@ int acquire_lock_file( const char *lockfile, const int timeout, int force )
 		debug( 1, L"acquire_lock_file: open: %s", strerror( errno ) );
 		goto done;
 	}
+	/*
+	  Don't need to check exit status of close on read-only file descriptors
+	*/
 	close( fd );
 	if( stat( linkfile, &statbuf ) != 0 )
 	{
@@ -1414,7 +1428,7 @@ void tokenize_variable_array( const wchar_t *val, array_list_t *out )
 
 		if( !cpy )
 		{
-			die_mem();
+			DIE_MEM();
 		}
 
 		for( start=pos=cpy; *pos; pos++ )

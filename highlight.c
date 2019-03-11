@@ -30,6 +30,13 @@
 #include "common.h"
 #include "complete.h"
 #include "output.h"
+#include "halloc.h"
+#include "halloc_util.h"
+
+/**
+   Number of elements in the highlight_var array
+*/
+#define VAR_COUNT ( sizeof(highlight_var)/sizeof(wchar_t *) )
 
 static void highlight_universal_internal( wchar_t * buff, 
 										  int *color, 
@@ -43,39 +50,178 @@ static void highlight_universal_internal( wchar_t * buff,
 static wchar_t *highlight_var[] = 
 {
 	L"fish_color_normal",
-	L"fish_color_command",
-	L"fish_color_redirection",
-	L"fish_color_end",
 	L"fish_color_error",
+	L"fish_color_command",
+	L"fish_color_end",
 	L"fish_color_param",
 	L"fish_color_comment",
 	L"fish_color_match",
 	L"fish_color_search_match",
 	L"fish_color_operator",
 	L"fish_color_escape",
-	L"fish_color_quote"
+	L"fish_color_quote",
+	L"fish_color_redirection",
+	L"fish_color_valid_path"
 }
 	;
 
-#define VAR_COUNT ( sizeof(highlight_var)/sizeof(wchar_t *) )
+/**
+   Tests if the specified string is the prefix of any valid path in the system. 
+
+   \return zero it this is not a valid prefix, non-zero otherwise
+*/
+static int is_potential_path( const wchar_t *path )
+{
+	wchar_t *tilde, *unescaped;
+	wchar_t *in, *out;
+	int has_magic = 0;
+	int res = 0;
+
+	void *context = halloc( 0, 0 );
+
+	tilde = expand_tilde( wcsdup(path) );
+	if( tilde )
+	{
+		halloc_register( context, tilde );
+	
+		unescaped = unescape( tilde, 1 );
+		if( unescaped )
+		{
+			
+//	debug( 1, L"%ls -> %ls ->%ls", path, tilde, unescaped );
+			
+			halloc_register( context, unescaped );
+			
+			for( in = out = unescaped; *in; in++ )
+			{
+				switch( *in )
+				{
+					case PROCESS_EXPAND:
+					case VARIABLE_EXPAND:
+					case VARIABLE_EXPAND_SINGLE:
+					case BRACKET_BEGIN:
+					case BRACKET_END:
+					case BRACKET_SEP:
+					{
+						has_magic = 1;
+						break;		
+					}
+				
+					case INTERNAL_SEPARATOR:
+					{
+						break;
+					}
+				
+					default:
+					{
+						*(out++) = *in;
+						break;
+					}
+				
+				}
+			
+			}
+			*out = 0;
+		
+			if( !has_magic && wcslen( unescaped ) )
+			{
+				int must_be_dir = 0;
+				DIR *dir;
+				must_be_dir = unescaped[wcslen(unescaped)-1] == L'/';
+				if( must_be_dir )
+				{
+					dir = wopendir( unescaped );
+					res = !!dir;
+					closedir( dir );
+				}
+				else
+				{
+					wchar_t *dir_name, *base;
+					struct wdirent *ent;
+				
+					dir_name = wdirname( halloc_wcsdup(context, unescaped) );
+					base = wbasename( halloc_wcsdup(context, unescaped) );			
+			
+					if( (wcscmp( dir_name, L"/" ) == 0 ) &&
+						(wcscmp( base, L"/" ) == 0 ) )
+					{
+						res = 1;
+					}
+					else if( (dir = wopendir( dir_name )) )
+					{
+					
+						while( (ent = wreaddir( dir )) )
+						{
+							if( wcsncmp( ent->d_name, base, wcslen(base) ) == 0 )
+							{
+								res = 1;
+								break;
+							}
+						}
+					
+						closedir( dir );
+					}
+				}
+			
+			}
+		}
+	}
+	
+	halloc_free( context );
+		
+	return res;
+	
+}
+
+
 
 int highlight_get_color( int highlight )
 {
+	int i;
+	int idx=0;
+	int result = 0;
+	
 	if( highlight < 0 )
 		return FISH_COLOR_NORMAL;
-	if( highlight >= VAR_COUNT )
+	if( highlight >= (1<<VAR_COUNT) )
 		return FISH_COLOR_NORMAL;
-	
-	wchar_t *val = env_get( highlight_var[highlight]);
-	if( val == 0 )
-		val = env_get( highlight_var[HIGHLIGHT_NORMAL]);
-	
-	if( val == 0 )
+
+	for( i=0; i<(VAR_COUNT-1); i++ )
 	{
-		return FISH_COLOR_NORMAL;
+		if( highlight & (1<<i ))
+		{
+			idx = i;
+			break;
+		}
 	}
+		
+	wchar_t *val = env_get( highlight_var[idx]);
+
+//	debug( 1, L"%d -> %d -> %ls", highlight, idx, val );	
 	
-	return output_color_code( val );
+	if( val == 0 )
+		val = env_get( highlight_var[0]);
+	
+	if( val )
+		result = output_color_code( val );
+	
+	if( highlight & HIGHLIGHT_VALID_PATH )
+	{
+		wchar_t *val2 = env_get( L"fish_color_valid_path" );
+		int result2 = output_color_code( val2 );
+		if( result == FISH_COLOR_NORMAL )
+			result = result2;
+		else 
+		{
+			if( result2 & FISH_COLOR_BOLD )
+				result |= FISH_COLOR_BOLD;
+			if( result2 & FISH_COLOR_UNDERLINE )
+				result |= FISH_COLOR_UNDERLINE;
+		}
+		
+	}
+	return result;
+	
 }
 
 /**
@@ -92,6 +238,7 @@ static void highlight_param( const wchar_t * buff,
 	int in_pos, len = wcslen( buff );
 	int bracket_count=0;
 	wchar_t c;
+	int normal_status = *color;
 	
 	for( in_pos=0;
 		 in_pos<len; 
@@ -116,7 +263,7 @@ static void highlight_param( const wchar_t * buff,
 						if( in_pos == 1 )
 						{
 							color[start_pos] = HIGHLIGHT_ESCAPE;
-							color[in_pos+1] = HIGHLIGHT_NORMAL;
+							color[in_pos+1] = normal_status;
 						}
 					}
 					else if( buff[in_pos]==L',' )
@@ -124,13 +271,13 @@ static void highlight_param( const wchar_t * buff,
 						if( bracket_count )
 						{
 							color[start_pos] = HIGHLIGHT_ESCAPE;
-							color[in_pos+1] = HIGHLIGHT_NORMAL;
+							color[in_pos+1] = normal_status;
 						}
 					}
 					else if( wcschr( L"nrtbe*?$(){}'\"<>^ \\#;|&", buff[in_pos] ) )
 					{
 						color[start_pos]=HIGHLIGHT_ESCAPE;
-						color[in_pos+1]=HIGHLIGHT_NORMAL;
+						color[in_pos+1]=normal_status;
 					}
 					else if( wcschr( L"uUxX01234567", buff[in_pos] ) )
 					{
@@ -195,12 +342,12 @@ static void highlight_param( const wchar_t * buff,
 						if( (res <= max_val) )
 						{
 							color[start_pos] = HIGHLIGHT_ESCAPE;
-							color[in_pos+1] = HIGHLIGHT_NORMAL;								
+							color[in_pos+1] = normal_status;								
 						}
 						else
 						{	
 							color[start_pos] = HIGHLIGHT_ERROR;
-							color[in_pos+1] = HIGHLIGHT_NORMAL;								
+							color[in_pos+1] = normal_status;								
 						}
 					}
 
@@ -214,26 +361,34 @@ static void highlight_param( const wchar_t * buff,
 							if( in_pos == 0 )
 							{
 								color[in_pos] = HIGHLIGHT_OPERATOR;
-								color[in_pos+1] = HIGHLIGHT_NORMAL;
+								color[in_pos+1] = normal_status;
 							}
 							break;
 						}
 
+						case L'$':
+						{
+							wchar_t n = buff[in_pos+1];							
+							color[in_pos] = (n==L'$'||wcsvarchr(n))? HIGHLIGHT_OPERATOR:HIGHLIGHT_ERROR;
+							color[in_pos+1] = normal_status;								
+							break;
+						}
+
+
 						case L'*':
 						case L'?':
-						case L'$':
 						case L'(':
 						case L')':
 						{
 							color[in_pos] = HIGHLIGHT_OPERATOR;
-							color[in_pos+1] = HIGHLIGHT_NORMAL;
+							color[in_pos+1] = normal_status;
 							break;
 						}
 						
 						case L'{':
 						{
 							color[in_pos] = HIGHLIGHT_OPERATOR;
-							color[in_pos+1] = HIGHLIGHT_NORMAL;
+							color[in_pos+1] = normal_status;
 							bracket_count++;
 							break;					
 						}
@@ -241,7 +396,7 @@ static void highlight_param( const wchar_t * buff,
 						case L'}':
 						{
 							color[in_pos] = HIGHLIGHT_OPERATOR;
-							color[in_pos+1] = HIGHLIGHT_NORMAL;
+							color[in_pos+1] = normal_status;
 							bracket_count--;
 							break;						
 						}
@@ -251,7 +406,7 @@ static void highlight_param( const wchar_t * buff,
 							if( bracket_count )
 							{
 								color[in_pos] = HIGHLIGHT_OPERATOR;
-								color[in_pos+1] = HIGHLIGHT_NORMAL;
+								color[in_pos+1] = normal_status;
 							}
 
 							break;					
@@ -305,7 +460,7 @@ static void highlight_param( const wchar_t * buff,
 				if( c == L'\'' )
 				{
 					mode = 0;
-					color[in_pos+1] = HIGHLIGHT_NORMAL;
+					color[in_pos+1] = normal_status;
 				}
 				
 				break;
@@ -321,7 +476,7 @@ static void highlight_param( const wchar_t * buff,
 					case '"':
 					{
 						mode = 0;
-						color[in_pos+1] = HIGHLIGHT_NORMAL;
+						color[in_pos+1] = normal_status;
 						break;
 					}
 				
@@ -349,8 +504,9 @@ static void highlight_param( const wchar_t * buff,
 					
 					case '$':
 					{
-						color[in_pos] = HIGHLIGHT_OPERATOR;
-						color[in_pos+1] = HIGHLIGHT_QUOTE;
+						wchar_t n = buff[in_pos+1];
+						color[in_pos] = (n==L'$'||wcsvarchr(n))? HIGHLIGHT_OPERATOR:HIGHLIGHT_ERROR;
+						color[in_pos+1] = HIGHLIGHT_QUOTE;								
 						break;
 					}
 				
@@ -372,10 +528,20 @@ void highlight_shell( wchar_t * buff,
 	int i;
 	int last_val;
 	wchar_t *last_cmd=0;
-	int len = wcslen(buff);
+	int len;
+
+	void *context;
+	wchar_t *cmd=0;
+	
+	CHECK( buff, );
+	CHECK( color, );
+	
+	len = wcslen(buff);
 	
 	if( !len )
 		return;
+	
+	context = halloc( 0, 0 );
 	
 	for( i=0; buff[i] != 0; i++ )
 		color[i] = -1;
@@ -387,6 +553,7 @@ void highlight_shell( wchar_t * buff,
 		int last_type = tok_last_type( &tok );
 		int prev_argc=0;
 		
+				
 		switch( last_type )
 		{
 			case TOK_STRING:
@@ -408,10 +575,25 @@ void highlight_shell( wchar_t * buff,
 						color[ tok_get_pos( &tok ) ] = HIGHLIGHT_PARAM;
 					}					
 
+					if( cmd && (wcscmp( cmd, L"cd" ) == 0) )
+					{
+						wchar_t *dir = expand_one( context, 
+												   wcsdup(tok_last( &tok )),
+												   EXPAND_SKIP_SUBSHELL );
+						if( dir )
+						{
+							if( !parser_cdpath_get( context, dir ) )
+							{
+								color[ tok_get_pos( &tok ) ] = HIGHLIGHT_ERROR;							
+							}
+						}
+					}
+					
 					highlight_param( param,
 									 &color[tok_get_pos( &tok )],
 									 pos-tok_get_pos( &tok ), 
 									 error );
+					
 
 				}
 				else
@@ -421,9 +603,9 @@ void highlight_shell( wchar_t * buff,
 					/*
 					  Command. First check that the command actually exists.
 					*/
-					wchar_t *cmd = expand_one( 0, 
-											   wcsdup(tok_last( &tok )),
-											   EXPAND_SKIP_SUBSHELL | EXPAND_SKIP_VARIABLES);
+					cmd = expand_one( context, 
+									  wcsdup(tok_last( &tok )),
+									  EXPAND_SKIP_SUBSHELL | EXPAND_SKIP_VARIABLES);
 					
 					if( cmd == 0 )
 					{
@@ -431,7 +613,6 @@ void highlight_shell( wchar_t * buff,
 					}
 					else
 					{
-						wchar_t *tmp;
 						int is_cmd = 0;
 						int is_subcommand = 0;
 						int mark = tok_get_pos( &tok );
@@ -440,8 +621,9 @@ void highlight_shell( wchar_t * buff,
 						if( parser_is_subcommand( cmd ) )
 						{
 							tok_next( &tok );
-							if(( wcscmp( L"-h", tok_last( &tok ) ) == 0 ) ||
-							   ( wcscmp( L"--help", tok_last( &tok ) ) == 0 ) )							
+							if( ( ! parser_is_block( cmd ) ) &&
+								( ( wcscmp( L"-h", tok_last( &tok ) ) == 0 ) ||
+								  ( wcsncmp( L"--help", tok_last( &tok ), wcslen( tok_last( &tok ) ) ) == 0 && wcslen( tok_last( &tok ) ) >= 3 ) ) )							
 							{
 								/* 
 								   The builtin and command builtins
@@ -460,31 +642,37 @@ void highlight_shell( wchar_t * buff,
 
 						if( !is_subcommand )
 						{
+							wchar_t *tmp;
 							/*
 							  OK, this is a command, it has been
 							  successfully expanded and everything
 							  looks ok. Lets check if the command
 							  exists.
 							*/
+
+							/*
+							  First check if it is a builtin or
+							  function, since we don't have to stat
+							  any files for that
+							*/
 							is_cmd |= builtin_exists( cmd );
 							is_cmd |= function_exists( cmd );
-							is_cmd |= (tmp=get_filename( cmd )) != 0;
+
+							/*
+							  Moving on to expensive tests
+							*/
+
+							/*
+							  Check if this is a regular command
+							*/
+							is_cmd |= !!(tmp=parser_get_filename( context, cmd ));
 							
 							/* 
-							   Could not find the command. Maybe it is a path for a implicit cd command.
-							   Lets check!
+							   Could not find the command. Maybe it is
+							   a path for a implicit cd command.
 							*/
-							if( !is_cmd )
-							{
-								wchar_t *pp = parser_cdpath_get( cmd );
-								if( pp )
-								{
-									free( pp );
-									is_cmd = 1;
-								}		
-							}
-							
-							free(tmp);
+							is_cmd |= !!(tmp=parser_cdpath_get( context, cmd ));
+														
 							if( is_cmd )
 							{								
 								color[ tok_get_pos( &tok ) ] = HIGHLIGHT_COMMAND;
@@ -497,15 +685,11 @@ void highlight_shell( wchar_t * buff,
 							}
 							had_cmd = 1;
 						}
-						free(cmd);
 
 						if( had_cmd )
 						{
-							if( last_cmd )
-								free( last_cmd );
-							last_cmd = wcsdup( tok_last( &tok ) );						
-						}					
-
+							last_cmd = halloc_wcsdup( context, tok_last( &tok ) );						
+						}
 					}
 
 				}
@@ -538,7 +722,7 @@ void highlight_shell( wchar_t * buff,
 				{
 					case TOK_STRING:
 					{
-						target = expand_one( 0, wcsdup( tok_last( &tok ) ), EXPAND_SKIP_SUBSHELL);
+						target = expand_one( context, wcsdup( tok_last( &tok ) ), EXPAND_SKIP_SUBSHELL);
 						/*
 						  Redirect filename may contain a subshell. 
 						  If so, it will be ignored/not flagged.
@@ -556,7 +740,7 @@ void highlight_shell( wchar_t * buff,
 
 				if( target != 0 )
 				{
-					wchar_t *dir = wcsdup( target );
+					wchar_t *dir = halloc_wcsdup( context, target );
 					wchar_t *dir_end = wcsrchr( dir, L'/' );
 					struct stat buff;
 					/* 
@@ -572,9 +756,8 @@ void highlight_shell( wchar_t * buff,
 							if( error )
 								al_push( error, wcsdupcat2( L"Directory \'", dir, L"\' does not exist", 0 ) );
 							
-						}						
+						}
 					}
-					free( dir );
 					
 					/*
 					  If the file is read from or appended to, check
@@ -590,7 +773,6 @@ void highlight_shell( wchar_t * buff,
 								al_push( error, wcsdupcat2( L"File \'", target, L"\' does not exist", 0 ) );
 						}
 					}
-					free( target );					
 				}
 				break;
 			}
@@ -640,16 +822,13 @@ void highlight_shell( wchar_t * buff,
 		}
 	}
 
-	if( last_cmd )
-		free( last_cmd );
-	
 	tok_destroy( &tok );	
 			 
 	/*
 	  Locate and syntax highlight subshells recursively
 	*/
 
-	wchar_t *buffcpy = wcsdup( buff );
+	wchar_t *buffcpy = halloc_wcsdup( context, buff );
 	wchar_t *subpos=buffcpy;
 	int done=0;
 	
@@ -658,8 +837,8 @@ void highlight_shell( wchar_t * buff,
 		wchar_t *begin, *end;
 	
 		if( parse_util_locate_cmdsubst( subpos, 
-										(const wchar_t **)&begin, 
-										(const wchar_t **)&end,
+										&begin, 
+										&end,
 										1) <= 0)
 		{
 			break;
@@ -679,9 +858,11 @@ void highlight_shell( wchar_t * buff,
 		subpos = end+1;		
 		
 	}
-	free( buffcpy);
-	
 
+	/*
+	  The highlighting code only changes the first element when the
+	  color changes. This fills in the rest.
+	*/
 	last_val=0;
 	for( i=0; buff[i] != 0; i++ )
 	{
@@ -691,6 +872,32 @@ void highlight_shell( wchar_t * buff,
 			color[i] = last_val;
 	}
 
+	/*
+	  Color potentially valid paths in a special path color if they
+	  are the current token.
+	*/
+
+	if( pos >= 0 && pos <= len )
+	{
+		
+		wchar_t *tok_begin, *tok_end;
+		wchar_t *token;
+		
+		parse_util_token_extent( buff, pos, &tok_begin, &tok_end, 0, 0 );
+		if( tok_begin && tok_end )
+		{
+			token = halloc_wcsndup( context, tok_begin, tok_end-tok_begin );
+			
+			if( is_potential_path( token ) )
+			{
+				for( i=tok_begin-buff; i < (tok_end-buff); i++ )
+				{
+					color[i] |= HIGHLIGHT_VALID_PATH;
+				}
+			}
+		}
+	}
+	
 
 	highlight_universal_internal( buff, color, pos, error );
 
@@ -704,6 +911,9 @@ void highlight_shell( wchar_t * buff,
 			color[i]=0;
 		}
 	}
+
+	halloc_free( context );
+	
 }
 
 /**
@@ -753,15 +963,15 @@ static void highlight_universal_internal( wchar_t * buff,
 						{
 							if( prev_q == *str )
 							{
-								int pos1, pos2;
+								long pos1, pos2;
 							
 								level--;
-								pos1 = (int)al_pop( &l );
+								pos1 = (long)al_pop( &l );
 								pos2 = str-buff;
 								if( pos1==pos || pos2==pos )
 								{
-									color[pos1]|=HIGHLIGHT_MATCH<<8;
-									color[pos2]|=HIGHLIGHT_MATCH<<8;
+									color[pos1]|=HIGHLIGHT_MATCH<<16;
+									color[pos2]|=HIGHLIGHT_MATCH<<16;
 									match_found = 1;
 									
 								}
@@ -786,7 +996,7 @@ static void highlight_universal_internal( wchar_t * buff,
 			al_destroy( &l );
 		
 			if( !match_found )
-				color[pos] = HIGHLIGHT_ERROR<<8;
+				color[pos] = HIGHLIGHT_ERROR<<16;
 		}
 
 		/*
@@ -799,8 +1009,7 @@ static void highlight_universal_internal( wchar_t * buff,
 			wchar_t inc_char = buff[pos];
 			int level = 0;
 			wchar_t *str = &buff[pos];
-			int match_found=0;
-			
+			int match_found=0;			
 
 			while( (str >= buff) && *str)
 			{
@@ -811,8 +1020,8 @@ static void highlight_universal_internal( wchar_t * buff,
 				if( level == 0 )
 				{
 					int pos2 = str-buff;
-					color[pos]|=HIGHLIGHT_MATCH<<8;
-					color[pos2]|=HIGHLIGHT_MATCH<<8;
+					color[pos]|=HIGHLIGHT_MATCH<<16;
+					color[pos2]|=HIGHLIGHT_MATCH<<16;
 					match_found=1;
 					break;
 				}
@@ -820,7 +1029,7 @@ static void highlight_universal_internal( wchar_t * buff,
 			}
 			
 			if( !match_found )
-				color[pos] = HIGHLIGHT_ERROR<<8;
+				color[pos] = HIGHLIGHT_ERROR<<16;
 		}
 	}
 }
@@ -832,7 +1041,7 @@ void highlight_universal( wchar_t * buff,
 {
 	int i;
 	
-	for( i=0; buff[i] != 0; i++ )
+	for( i=0; buff[i]; i++ )
 		color[i] = 0;
 	
 	highlight_universal_internal( buff, color, pos, error );

@@ -3,8 +3,7 @@ Copyright (C) 2005 Axel Liljencrantz
 
 This program is free software; you can redistribute it and/or
 modify it under the terms of the GNU General Public License
-as published by the Free Software Foundation; either version 2
-of the License, or (at your option) any later version.
+as published by the Free Software Foundation.
 
 This program is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -90,9 +89,10 @@ static int read_init()
 
 	if( chdir( cwd ) == -1 )
 	{
-//		fwprintf( stderr, L"Invalid directory: %s\n", cwd );
-//		wperror( L"chdir" );
-//		return 0;
+		/*
+		  If we can't change back to previos directory, we'll stay in
+		  ~. Should be a sane default behavior.
+		*/
 	}	
 	wcwd = str2wcs( cwd );
 	if( wcwd )
@@ -116,6 +116,8 @@ int main( int argc, char **argv )
 	int my_optind;
 	
 	char *cmd=0;	
+
+	halloc_util_init();	
 
 	wsetlocale( LC_ALL, L"" );
 	is_interactive_session=1;
@@ -258,8 +260,6 @@ int main( int argc, char **argv )
 		no_exec = 0;
 	}
 	
-	common_init();
-	halloc_util_init();	
 
 	proc_init();	
 	event_init();	
@@ -353,7 +353,6 @@ int main( int argc, char **argv )
 	wutil_destroy();
 	event_destroy();
 
-	common_destroy();
 	halloc_util_destroy();
 	intern_free_all();
 

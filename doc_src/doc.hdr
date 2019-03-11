@@ -268,8 +268,8 @@ searches through any directories in the array variable
 loaded when needed. A function definition file must have a filename
 consisting of the name of the function plus the suffix '.fish'.  
 
-The default value for \$fish_function_path is ~/.fish.d/functions,
-/etc/fish.d/functions /usr/share/fish/functions. The exact path to the
+The default value for \$fish_function_path is \c ~/.fish.d/functions
+\c /etc/fish.d/functions \c /usr/share/fish/functions. The exact path to the
 last two of these may be slighly different depending on what install
 path prefix was chosen at configuration time. The rationale behind
 having three different directories is that the first one is for user
@@ -541,7 +541,6 @@ a string is expanded into a process id. The following expansions are
 performed:
 
 - If the string is the entire word \c self, the shells pid is the result
-- When inside a command substitution, if the string is the entire word \c caller, the job number (not the pid) of the job the created the command substitution is the result
 - Otherwise, if the string is the id of a job, the result is the process
 group id of the job.
 - Otherwise, if any child processes match the specified string, their 
@@ -620,8 +619,8 @@ Variables can be explicitly set to be universal with the \c -U or \c
 local with the \c -l or \c --local switch.  The scoping rules when
 creating or updating a variable are:
 
--# If a variable is explicitly set to either universal, global or local, that setting will be honored
--# If a variable is not explicitly set to be either universal, global or local, but has been previously defined, the variable scope is not changed
+-# If a variable is explicitly set to either universal, global or local, that setting will be honored. If a variable of the same name exists in a different scope, that variable will not be changed.
+-# If a variable is not explicitly set to be either universal, global or local, but has been previously defined, the variable scope is not changed.
 -# If a variable is not explicitly set to be either universal, global or local and has never before been defined, the variable will be local to the currently executing functions. If no function is executing, the variable will be global.
 
 There may be many variables with the same name, but different scopes.
@@ -697,9 +696,9 @@ Variables can be explicitly set to be exported with the \c -x or \c
 switch.  The exporting rules when creating or updating a variable are
 identical to the scoping rules for variables:
 
--# If a variable is explicitly set to either be exported or not exported, that setting will be honored
--# If a variable is not explicitly set to be exported or not exported, but has been previously defined, the previous exporting rule for the variable is kept
--# If a variable is not explicitly set to be either global or local and has never before been defined, the variable will not be exported
+-# If a variable is explicitly set to either be exported or not exported, that setting will be honored.
+-# If a variable is not explicitly set to be exported or not exported, but has been previously defined, the previous exporting rule for the variable is kept.
+-# If a variable is not explicitly set to be either global or local and has never before been defined, the variable will not be exported.
 
 
 \subsection variables-arrays Arrays
@@ -747,6 +746,10 @@ set -e smurf[1]
 echo $smurf
 </pre>
 
+If you specify a negative index when expanding or assigning to an
+array variable, the index will be calculated from the end of the
+array. For example, the index -1 means the last index of an array.
+
 \subsection variables-special Special variables
 
 The user can change the settings of \c fish by changing the values of
@@ -783,7 +786,7 @@ the string __FISH or __fish. These should be ignored by the user.
 The colors used by fish for syntax highlighting can be configured by
 changing the values of a various variables. The value of these
 variables can be one of the colors accepted by the <a
-href='commands.html#set_color'>\c set_color</a> command. The \c --bold
+href='commands.html#set_color'>set_color</a> command. The \c --bold
 or \c -b switches accepted by \c set_color are also accepted.
 
 The following variables are available to change the highligting colors
@@ -815,7 +818,7 @@ Example:
 
 To make errors highlighted and red, use:
 
-<code>set fish_color_error red --bold</code>D
+<code>set fish_color_error red --bold</code>
 
 \subsection variables-locale Locale variables
 
@@ -839,7 +842,7 @@ Many other shells have a large library of builtin commands. Most of
 these commands are also available as standalone commands, but have
 been implemented in the shell anyway for whatever reason. To avoid
 code duplication, and to avoid the confusion of subtly differing
-versions of the same command, \c fish only implementing builtins for
+versions of the same command, \c fish only implements builtins for
 actions which cannot be performed by a regular command.
 
 \section bundle Commands bundled with fish 
@@ -1232,7 +1235,7 @@ href='fish-users@lists.sf.net'>fish-users@lists.sf.net</a>.
 - Complete vi-mode key bindings
 - More completions (for example xterm, vim, 
 konsole, gnome-terminal, dcop, cron,
-rlogin, telnet, rsync, arch, finger, nice, locate, 
+rlogin, rsync, arch, finger, nice, locate, 
 bibtex, aspell, xpdf,
 compress, wine, xmms, dig, wine, batch, cron, 
 g++, javac, java, gcj, lpr, doxygen, whois, find)
@@ -1280,9 +1283,6 @@ report to <a href="mailto:axel@liljencrantz.se"> axel@liljencrantz.se
 Older versions of Doxygen has bugs in the man-page generation which
 cause the builtin help to render incorrectly. Version 1.2.14 is known
 to have this problem.
-
-
-
 
 */
 /** \page design Design document
@@ -2437,14 +2437,15 @@ DAMAGES.
 - <a href='#faq-cd-autocomplete'>Why does the cd command autocompletion list the subdirectories of my home directory as completions?</a>
 - <a href='#faq-cd-implicit'>I accidentally entered a directory path and fish changed directory. What happened?</a>
 - <a href='#faq-open'>The open command doesn't work.</a>
+- <a href='#faq-default'>How do I make fish my default shell?</a>
 
 <hr>
 
-\section faq-cwd-symlink Why does cd, pwd and other fish commands always resolve symlinked directories to their canonical path?
+\section faq-cwd-symlink Why does cd, $PWD and and various fish commands always resolve symlinked directories to their canonical path?
+
 <i>
-For example if I have the directory ~/images which is a symlink to
-~/Documents,/Images if I write 'cd doc', my prompt will say
-~/D/Images, not ~/images.
+For example if ~/images is a symlink to ~/Documents/Images, if I write
+'cd images', my prompt will say ~/D/Images, not ~/images.
 </i>
 
 Because it is impossible to consistently keep symlinked directories
@@ -2475,9 +2476,9 @@ silently fails in shells that don't resolve symlinked paths.
 
 Because they are completions. In fish, if you specify a relative
 directory to the cd command, i.e. any path that does not start with
-'.' or '/', the environment variable CD_PATH will be examined, and any
+either './' or '/', the environment variable CDPATH will be examined, and any
 directories in this path is used as a base direcotry. To disable this
-feature, use the command <code>set CD_PATH .</code>.
+feature, write <code>set CDPATH .</code> on the commandline.
 
 <hr>
 
@@ -2501,5 +2502,25 @@ in a nonstandard location. Please contact the <a
 href='mailto:fish-users@lists.sf.net'>fish mailing list</a>, and
 hopefully this can be resolved.
 
+\section faq-default How do I make fish my default shell?
+
+If you installed fish manually (e.g. by compiling it, not by using a
+package manager), you first need to add fish to the list of shells by
+executing the following command (assuming you installed fish in
+/usr/local) as root:
+
+<code>echo /usr/local/bin/fish >>/etc/shells</code>
+
+If you installed a prepackaged version of fish, the package manager
+should have already done this for you.
+
+In order to change your default shell, type:
+
+<code>chsh -s /usr/bin/fish</code>
+
+You may need to adjust the above path to e.g. /usr/local/bin/fish.
+
+You will need to log out and back in again for the change to take
+effect.
 
 */

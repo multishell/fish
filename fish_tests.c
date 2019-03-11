@@ -52,6 +52,11 @@
 #define LAPS 50
 
 /**
+   The result of one of the test passes
+*/
+#define NUM_ANS L"-7 99999999 1234567 deadbeef DEADBEEFDEADBEEF"
+
+/**
    Number of encountered errors
 */
 static int err_count=0;
@@ -345,8 +350,6 @@ static void sb_test()
 
 	sb_clear( &b );
 
-#define NUM_ANS L"-7 99999999 1234567 deadbeef DEADBEEFDEADBEEF"
-
 	sb_printf( &b, L"%d %u %o %x %llX", -7, 99999999, 01234567, 0xdeadbeef, 0xdeadbeefdeadbeefll );
 	if( wcscmp( (wchar_t *)b.buff,  NUM_ANS) != 0 )
 	{
@@ -483,43 +486,43 @@ static void test_parser()
 	
 	
 	say( L"Testing null input to parser" );
-	if( !parser_test( 0, 0 ) )
+	if( !parser_test( 0, 0, 0 ) )
 	{
 		err( L"Null input to parser_test undetected" );
 	}
 
 	say( L"Testing block nesting" );
-	if( !parser_test( L"if; end", 0 ) )
+	if( !parser_test( L"if; end", 0, 0 ) )
 	{
 		err( L"Incomplete if statement undetected" );			
 	}
-	if( !parser_test( L"if test; echo", 0 ) )
+	if( !parser_test( L"if test; echo", 0, 0 ) )
 	{
 		err( L"Missing end undetected" );			
 	}
-	if( !parser_test( L"if test; end; end", 0 ) )
+	if( !parser_test( L"if test; end; end", 0, 0 ) )
 	{
 		err( L"Unbalanced end undetected" );			
 	}
 
 	say( L"Testing detection of invalid use of builtin commands" );
-	if( !parser_test( L"case foo", 0 ) )
+	if( !parser_test( L"case foo", 0, 0 ) )
 	{
 		err( L"'case' command outside of block context undetected" );		
 	}
-	if( !parser_test( L"switch ggg; if true; case foo;end;end", 0 ) )
+	if( !parser_test( L"switch ggg; if true; case foo;end;end", 0, 0 ) )
 	{
 		err( L"'case' command outside of switch block context undetected" );		
 	}
-	if( !parser_test( L"else", 0 ) )
+	if( !parser_test( L"else", 0, 0 ) )
 	{
 		err( L"'else' command outside of conditional block context undetected" );		
 	}
-	if( !parser_test( L"break", 0 ) )
+	if( !parser_test( L"break", 0, 0 ) )
 	{
 		err( L"'break' command outside of loop block context undetected" );		
 	}
-	if( !parser_test( L"exec ls|less", 0 ) || !parser_test( L"echo|return", 0 ))
+	if( !parser_test( L"exec ls|less", 0, 0 ) || !parser_test( L"echo|return", 0, 0 ))
 	{
 		err( L"Invalid pipe command undetected" );		
 	}	

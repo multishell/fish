@@ -63,6 +63,9 @@ static const wchar_t *get_buffer()
 	return buff;
 }
 
+/**
+   Returns the position of the cursor
+*/
 static int get_cursor_pos()
 {
 	const wchar_t *buff = builtin_complete_get_temporary_buffer();
@@ -195,7 +198,7 @@ static void write_part( const wchar_t *begin,
    The commandline builtin. It is used for specifying a new value for
    the commandline.
 */
-int builtin_commandline( wchar_t **argv )
+static int builtin_commandline( wchar_t **argv )
 {
 
 	int buffer_part=0;
@@ -461,13 +464,13 @@ int builtin_commandline( wchar_t **argv )
 		buffer_part = STRING_MODE;
 	}
 		
-	const wchar_t *begin, *end;
+	wchar_t *begin, *end;
 	
 	switch( buffer_part )
 	{
 		case STRING_MODE:
 		{			
-			begin = get_buffer();
+			begin = (wchar_t *)get_buffer();
 			end = begin+wcslen(begin);
 			break;			
 		}

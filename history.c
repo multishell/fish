@@ -41,15 +41,20 @@ typedef struct
 	   Number of entries
 	*/
 	int count;
+
 	/**
 	   Last history item
 	*/
 	ll_node_t *last;
+
 	/**
 	   The last item loaded from file
 	*/
 	ll_node_t *last_loaded;
 
+	/**
+	   Set to one if the file containing the saved history has been loaded
+	*/
 	int is_loaded;
 }
 	history_data;
@@ -79,7 +84,9 @@ static int past_end =1;
 static int history_count=0;
 
 /**
-   The name of the current history list. The name is used to switch between history lists for different commands as sell as for deciding the name of the file to save the history in.
+   The name of the current history list. The name is used to switch
+   between history lists for different commands as sell as for
+   deciding the name of the file to save the history in.
 */
 static wchar_t *mode_name;
 
@@ -91,18 +98,24 @@ static hash_table_t history_table;
 /**
    Flag, set to 1 once the history file has been loaded
 */
-static int is_loaded;
+static int is_loaded=0;
 
 /**
    Load history from file
 */
-static void history_load()
+static int history_load()
 {
 	wchar_t *fn;
 	wchar_t *buff=0;
 	int buff_len=0;
 	FILE *in_stream;
 	hash_table_t used;
+	int res = 0;
+	
+	if( !mode_name )
+	{
+		return -1;
+	}	
 
 	is_loaded = 1;
 		
@@ -129,7 +142,7 @@ static void history_load()
 				free( fn );
 				free( buff );
 				signal_unblock();				
-				return;
+				return -1;
 			}
 
 			/*
@@ -147,7 +160,7 @@ static void history_load()
 				history_current = malloc( sizeof( ll_node_t ) );
 				if( !history_current )
 				{
-					die_mem();
+					DIE_MEM();
 					
 				}
 				
@@ -175,6 +188,8 @@ static void history_load()
 		{
 			debug( 1, L"The following non-fatal error occurred while reading command history from \'%ls\':", mode_name );
 			wperror( L"fopen" );
+			res = -1;
+			
 		}
 		
 	}	
@@ -186,6 +201,8 @@ static void history_load()
 	free( fn );
 	last_loaded = history_last;
 	signal_unblock();
+	return res;
+	
 }
 
 void history_init()
@@ -202,7 +219,7 @@ static void history_to_hash()
 {
 	history_data *d;
 	
-	if( !history_last )
+	if( !mode_name )
 		return;
 	
 
@@ -229,12 +246,22 @@ void history_set_mode( wchar_t *name )
 	
 	if( mode_name )
 	{		
+		/*
+		  Move the current history to the hashtable
+		*/
 		history_to_hash();		
 	}
+	
+	/*
+	  See if the new history already exists
+	*/
 	curr = (history_data *)hash_get( &history_table,
 									 name );
 	if( curr )
 	{
+		/*
+		  Yes. Restore it.
+		*/
 		mode_name = (wchar_t *)hash_get_key( &history_table,
 											 name );
 		history_current = history_last = curr->last;
@@ -244,6 +271,9 @@ void history_set_mode( wchar_t *name )
 	}
 	else
 	{
+		/*
+		  Nope. Create a new history list.
+		*/
 		history_count=0;
 		history_last = history_current = last_loaded=0;
 		mode_name = wcsdup( name );
@@ -295,7 +325,9 @@ static void history_save()
 	history_count=0;
 	past_end=1;
 
-	history_load();
+	if( !history_load() )
+	{
+		
 	if( real_pos != 0 )
 	{
 		/* 
@@ -353,6 +385,8 @@ static void history_save()
 		}
 		free( fn );	
 	}
+	}
+	
 	
 }
 
@@ -360,7 +394,7 @@ static void history_save()
    Save the specified mode to file
 */
 
-static void history_destroy_mode( const void *name, const void *link )
+static void history_destroy_mode( void *name, void *link )
 {
 	mode_name = (wchar_t *)name;
 	history_data *d = (history_data *)link;
@@ -370,7 +404,7 @@ static void history_destroy_mode( const void *name, const void *link )
 	past_end=1;
 
 //	fwprintf( stderr, L"Destroy history mode \'%ls\'\n", mode_name );
-		
+
 	if( history_last )
 	{
 		history_save();	
@@ -389,11 +423,12 @@ static void history_destroy_mode( const void *name, const void *link )
 
 void history_destroy()
 {
+	
 	/**
 	   Make sure current mode is in table
 	*/
 	history_to_hash();		
-
+		
 	/**
 	   Save all modes in table
 	*/
@@ -412,7 +447,13 @@ void history_destroy()
 static ll_node_t *history_find( ll_node_t *n, const wchar_t *s )
 {
 	if( !is_loaded )
-		history_load();	
+	{
+		if( history_load() )
+		{
+			return 0;
+		}
+	}
+	
 
 	if( n == 0 )
 		return 0;
@@ -431,7 +472,13 @@ void history_add( const wchar_t *str )
 	ll_node_t *old_node;
 
 	if( !is_loaded )
-		history_load();	
+	{
+		if( history_load() )
+		{
+			return;
+		}
+	}
+	
 
 	if( wcslen( str ) == 0 )
 		return;
@@ -482,13 +529,19 @@ static int history_test( const wchar_t *needle, const wchar_t *haystack )
 /*
 	return wcsncmp( haystack, needle, wcslen(needle) )==0;
 */
-	return (int)wcsstr( haystack, needle );
+	return !!wcsstr( haystack, needle );
 }
 
 const wchar_t *history_prev_match( const wchar_t *str )
 {
 	if( !is_loaded )
-		history_load();	
+	{
+		if( history_load() )
+		{
+			return 0;
+		}
+	}
+	
 
 	if( history_current == 0 )
 		return str;
@@ -512,7 +565,13 @@ const wchar_t *history_prev_match( const wchar_t *str )
 const wchar_t *history_next_match( const wchar_t *str)
 {
 	if( !is_loaded )
-		history_load();	
+	{
+		if( history_load() )
+		{
+			return 0;
+		}
+	}
+	
 
 	if( history_current == 0 )
 		return str;
@@ -550,9 +609,15 @@ wchar_t *history_get( int idx )
 {
 	ll_node_t *n;
 	int i;
+	
 	if( !is_loaded )
-		history_load();	
-
+	{
+		if( history_load() )
+		{
+			return 0;
+		}
+	}
+	
 	n = history_last;
 	
 	if( idx<0)

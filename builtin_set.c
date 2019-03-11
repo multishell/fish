@@ -159,6 +159,13 @@ static int my_env_set( const wchar_t *key, array_list_t *val, int scope )
 			retcode=1;
 			break;
 		}
+		
+		case ENV_INVALID:
+		{
+			sb_printf( sb_err, _(L"%ls: Unknown error"), L"set" );
+			retcode=1;
+			break;
+		}
 	}
 
 	sb_destroy( &sb );
@@ -172,12 +179,14 @@ static int my_env_set( const wchar_t *key, array_list_t *val, int scope )
 	\param indexes the list to insert the new indexes into
 	\param src the source string to parse
 	\param name the name of the element. Return null if the name in \c src does not match this name
+	\param var_count the number of elements in the array to parse. 
 
-	\return the number of indexes parsed, or -1 on error
+	\return the total number of indexes parsed, or -1 on error
 */
 static int parse_index( array_list_t *indexes,
 						const wchar_t *src,
-						const wchar_t *name )
+						const wchar_t *name,
+						int var_count )
 {
 	int len;
 	
@@ -224,13 +233,20 @@ static int parse_index( array_list_t *indexes,
 	{
 		wchar_t *end;
 		long l_ind = wcstol(src, &end, 10);
+		int *ind;
+		
 		if (end == src) 
 		{
 			sb_printf(sb_err, _(L"%ls: Invalid index starting at '%ls'\n"), L"set", src);
 			return 0;
 		}
+
+		if( l_ind < 0 )
+		{
+			l_ind = var_count+l_ind+1;
+		}
 		
-		int *ind = (int *) calloc(1, sizeof(int));
+		ind = (int *) calloc(1, sizeof(int));
 		*ind = (int) l_ind;
 		al_push(indexes, ind);
 		src = end;
@@ -248,8 +264,7 @@ static int parse_index( array_list_t *indexes,
    indexes. The previous entries at the specidied position will be
    free'd.
 
-   \return The number of elements in the list after the modifications
-   have been made
+   \return 0 if the operation was successfull, non-zero otherwise
 */
 static int update_values( array_list_t *list, 
 						  array_list_t *indexes,
@@ -262,11 +277,16 @@ static int update_values( array_list_t *list,
 	{
 		int ind = *(int *) al_get(indexes, i) - 1;
 		void *new = (void *) al_get(values, i);
+		if( ind <= 0 )
+		{
+			return 1;
+		}
+		
 		free((void *) al_get(list, ind));
 		al_set(list, ind, new != 0 ? wcsdup(new) : wcsdup(L""));
 	}
   
-	return al_get_count(list);
+	return 0;
 }
 
 
@@ -362,7 +382,7 @@ static void print_variables(int include_values, int esc, int scope)
    The set builtin. Creates, updates and erases environment variables
    and environemnt variable arrays.
 */
-int builtin_set( wchar_t **argv ) 
+static int builtin_set( wchar_t **argv ) 
 {
 	
 	/**
@@ -563,13 +583,13 @@ int builtin_set( wchar_t **argv )
 	if( query )
 	{
 		/*
-		  Query mode. Return the number variables that do not exist
+		  Query mode. Return the number of variables that do not exist
 		  out of the specified variables.
 		*/
 		int i;
 		for( i=woptind; i<argc; i++ )
 		{
-			if( !env_exist( argv[i] ) )
+			if( !env_exist( argv[i], scope ) )
 			{
 				retcode++;
 			}
@@ -608,10 +628,10 @@ int builtin_set( wchar_t **argv )
 		print_variables(0, 0, scope);
 		return 0;
 	} 
-	
+
 	if( !(dest = wcsdup(argv[woptind])))
 	{
-		die_mem();		
+		DIE_MEM();		
 	}
 
 	if( wcschr( dest, L'[' ) )
@@ -624,9 +644,17 @@ int builtin_set( wchar_t **argv )
 	{
 		free( dest );
 		sb_printf( sb_err, BUILTIN_ERR_VARNAME_ZERO, argv[0] );
+		builtin_print_help( argv[0], sb_err );
 		return 1;
 	}
 
+	if( slice && erase && (scope != ENV_USER) )
+	{
+		free( dest );
+		sb_printf( sb_err, _(L"%ls: Can not specify scope when erasing array slice\n"), argv[0] );
+		builtin_print_help( argv[0], sb_err );
+		return 1;
+	}
 	
 	/*
 	  set assignment can work in two modes, either using slices or
@@ -642,14 +670,19 @@ int builtin_set( wchar_t **argv )
 		int idx_count, val_count;
 		array_list_t values;
 		array_list_t indexes;
+		array_list_t result;
 		
 		al_init(&values);
 		al_init(&indexes);
+		al_init(&result);
+
+		tokenize_variable_array( env_get(dest), &result );
 	
 		for( ; woptind<argc; woptind++ )
 		{			
-			if( !parse_index( &indexes, argv[woptind], dest ) )
+			if( !parse_index( &indexes, argv[woptind], dest, al_get_count( &result ) ) )
 			{
+				builtin_print_help( argv[0], sb_err );
 				retcode = 1;
 				break;
 			}
@@ -662,6 +695,7 @@ int builtin_set( wchar_t **argv )
 				if( val_count < idx_count )
 				{
 					sb_printf( sb_err, _(BUILTIN_SET_ARG_COUNT), argv[0] );
+					builtin_print_help( argv[0], sb_err );
 					retcode=1;
 					break;
 				}
@@ -679,10 +713,6 @@ int builtin_set( wchar_t **argv )
 			  Slice indexes have been calculated, do the actual work
 			*/
 
-			array_list_t result;
-			al_init(&result);
-
-			tokenize_variable_array( env_get(dest), &result );
 			if( erase )
 			{
 				erase_values(&result, &indexes);
@@ -698,9 +728,14 @@ int builtin_set( wchar_t **argv )
 					al_push(&value, argv[woptind++]);
 				}
 
-				update_values( &result, 
-							   &indexes,
-							   &value );
+				if( update_values( &result, 
+								   &indexes,
+								   &value ) )
+				{
+					sb_printf( sb_err, L"%ls: ", argv[0] );
+					sb_printf( sb_err, ARRAY_BOUNDS_ERR );
+					sb_append( sb_err, L"\n" );
+				}
 				
 				my_env_set(dest,
 						   &result,
@@ -709,11 +744,12 @@ int builtin_set( wchar_t **argv )
 				al_destroy( &value );
 								
 			}			
-			al_foreach( &result, (void (*)(const void *))&free );
-			al_destroy( &result );
 		}
 
-		al_foreach( &indexes, (void (*)(const void *))&free );
+		al_foreach( &result, &free );
+		al_destroy( &result );
+
+		al_foreach( &indexes, &free );
 		al_destroy(&indexes);
 		al_destroy(&values);
 		
@@ -733,11 +769,12 @@ int builtin_set( wchar_t **argv )
 						   _(L"%ls: Values cannot be specfied with erase\n%ls\n"),
 						   argv[0],
 						   parser_current_line() );
+				builtin_print_help( argv[0], sb_err );
 				retcode=1;
 			}
 			else
 			{
-				env_remove( dest, ENV_USER );
+				retcode = env_remove( dest, scope );
 			}
 		}
 		else

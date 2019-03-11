@@ -113,6 +113,9 @@ static char *writestr_buff = 0;
 
 static int (*out)(char c) = &writeb_internal;
 
+/**
+   Cleanup function. Run automatically through halloc
+*/
 static void output_destroy()
 {
 	free( writestr_buff );
@@ -120,6 +123,7 @@ static void output_destroy()
 
 void output_set_writer( int (*writer)(char) )
 {
+	CHECK( writer, );
 	out = writer;
 }
 
@@ -129,18 +133,21 @@ void set_color( int c, int c2 )
 	static int last_color = FISH_COLOR_NORMAL;
 	static int last_color2 = FISH_COLOR_NORMAL;
 	static int was_bold=0;
+	static int was_underline=0;
 	int bg_set=0, last_bg_set=0;
 	char *fg = 0, *bg=0;
 
 	int is_bold = 0;
+	int is_underline = 0;
 
 	is_bold |= (c&FISH_COLOR_BOLD)!=0;
 	is_bold |= (c2&FISH_COLOR_BOLD)!=0;
 
-//	debug( 1, L"WOO %d %d %d", is_bold, c&FISH_COLOR_BOLD,c2&FISH_COLOR_BOLD);
+	is_underline |= (c&FISH_COLOR_UNDERLINE)!=0;
+	is_underline |= (c2&FISH_COLOR_UNDERLINE)!=0;
 
-	c = c&(~FISH_COLOR_BOLD);
-	c2 = c2&(~FISH_COLOR_BOLD);
+	c = c&(~(FISH_COLOR_BOLD|FISH_COLOR_UNDERLINE));
+	c2 = c2&(~(FISH_COLOR_BOLD|FISH_COLOR_UNDERLINE));
 
 	if( (set_a_foreground != 0) && (strlen( set_a_foreground) != 0 ) )
 	{
@@ -157,6 +164,7 @@ void set_color( int c, int c2 )
 	{
 		c = c2 = FISH_COLOR_NORMAL;
 		was_bold=0;
+		was_underline=0;
 		if( fg )
 		{
 			/*
@@ -179,6 +187,7 @@ void set_color( int c, int c2 )
 		last_color = FISH_COLOR_NORMAL;
 		last_color2 = FISH_COLOR_NORMAL;
 		was_bold=0;
+		was_underline=0;
 	}
 	
 	if( last_color2 != FISH_COLOR_NORMAL &&
@@ -219,6 +228,8 @@ void set_color( int c, int c2 )
 			  exit bold mode
 			*/
 			writembs( exit_attribute_mode );
+			was_bold=0;
+			was_underline=0;
 			/*
 			  We don't know if exit_attribute_mode resets colors, so
 			  we set it to something known.
@@ -242,6 +253,8 @@ void set_color( int c, int c2 )
 			writembs( exit_attribute_mode );
 
 			last_color2 = FISH_COLOR_NORMAL;
+			was_bold=0;
+			was_underline=0;
 		}
 		else if( ( c >= 0 ) && ( c < FISH_COLOR_NORMAL ) )
 		{
@@ -269,6 +282,8 @@ void set_color( int c, int c2 )
 				writembs( tparm( fg, last_color ) );
 			}
 
+			was_bold=0;
+			was_underline=0;
 			last_color2 = c2;
 		}
 		else if ( ( c2 >= 0 ) && ( c2 < FISH_COLOR_NORMAL ) )
@@ -282,7 +297,7 @@ void set_color( int c, int c2 )
 	}
 
 	/*
-	  Lastly, we set bold mode correctly
+	  Lastly, we set bold mode and underline mode correctly
 	*/
 	if( (enter_bold_mode != 0) && (strlen(enter_bold_mode) > 0) && !bg_set )
 	{
@@ -292,6 +307,18 @@ void set_color( int c, int c2 )
 		}
 		was_bold = is_bold;	
 	}
+
+	if( was_underline && !is_underline )
+	{
+		writembs( exit_underline_mode );		
+	}
+	
+	if( !was_underline && is_underline )
+	{
+		writembs( enter_underline_mode );		
+	}
+	was_underline = is_underline;
+	
 }
 
 
@@ -322,6 +349,9 @@ void move_cursor( int steps )
 	}
 }
 
+/**
+   Default output method, simply calls write() on stdout
+*/
 static int writeb_internal( char c )
 {
 	write( 1, &c, 1 );
@@ -336,6 +366,8 @@ int writeb( tputs_arg_t b )
 
 int writembs( char *str )
 {
+	CHECK( str, 1 );
+		
 	return tputs(str,1,&writeb)==ERR?1:0;
 }
 
@@ -376,6 +408,8 @@ int writech( wint_t ch )
 void writestr( const wchar_t *str )
 {
 	char *pos;
+
+	CHECK( str, );
 	
 //	while( *str )
 //		writech( *str++ );
@@ -406,7 +440,7 @@ void writestr( const wchar_t *str )
 		writestr_buff = realloc( writestr_buff, len );
 		if( !writestr_buff )
 		{
-			die_mem();
+			DIE_MEM();
 		}
 		writestr_buff_sz = len;
 	}
@@ -431,7 +465,11 @@ void writestr( const wchar_t *str )
 void writestr_ellipsis( const wchar_t *str, int max_width )
 {
 	int written=0;
-	int tot = my_wcswidth(str);
+	int tot;
+
+	CHECK( str, );
+	
+	tot = my_wcswidth(str);
 
 	if( tot <= max_width )
 	{
@@ -463,10 +501,15 @@ void writestr_ellipsis( const wchar_t *str, int max_width )
 int write_escaped_str( const wchar_t *str, int max_len )
 {
 
-	wchar_t *out = escape( str, 1 );
+	wchar_t *out;
 	int i;
-	int len = my_wcswidth( out );
+	int len;
 	int written=0;
+
+	CHECK( str, 0 );
+	
+	out = escape( str, 1 );
+	len = my_wcswidth( out );
 
 	if( max_len && (max_len < len))
 	{
@@ -519,6 +562,7 @@ int output_color_code( const wchar_t *val )
 	int j, i, color=FISH_COLOR_NORMAL;
 	array_list_t el;
 	int is_bold=0;
+	int is_underline=0;
 	
 	if( !val )
 		return FISH_COLOR_NORMAL;
@@ -531,7 +575,10 @@ int output_color_code( const wchar_t *val )
 		wchar_t *next = (wchar_t *)al_get( &el, j );
 		
 		is_bold |= (wcsncmp( next, L"--bold", wcslen(next) ) == 0 ) && wcslen(next)>=3;
-		is_bold |= wcscmp( next, L"-b" ) == 0;
+		is_bold |= wcscmp( next, L"-o" ) == 0;
+
+		is_underline |= (wcsncmp( next, L"--underline", wcslen(next) ) == 0 ) && wcslen(next)>=3;
+		is_underline |= wcscmp( next, L"-u" ) == 0;
 
 		for( i=0; i<COLORS; i++ )
 		{
@@ -544,9 +591,9 @@ int output_color_code( const wchar_t *val )
 		
 	}
 	
-	al_foreach( &el, (void (*)(const void *))&free );
+	al_foreach( &el, &free );
 	al_destroy( &el );
-	
-	return color | (is_bold?FISH_COLOR_BOLD:0);
+
+	return color | (is_bold?FISH_COLOR_BOLD:0) | (is_underline?FISH_COLOR_UNDERLINE:0);
 	
 }

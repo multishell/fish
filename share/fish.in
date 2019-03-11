@@ -19,12 +19,12 @@ for idx in (seq (count $PATH))
    set i $PATH[$idx]
    if not test -d $i
        set erase_idx $erase_idx $idx
-       printf (_ '%s: Warning: The directory %s has been removed from your PATH, because it does not exist\n') fish $i
+       printf (_ '%s: Warning: The directory %s has been removed from your PATH because it does not exist\n') fish $i
    end
 end
 
 if count $erase_idx >/dev/null
-   set -e PATH[(echo $erase_idx)]
+	set -e PATH[(echo $erase_idx)]
 end
 
 #

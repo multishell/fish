@@ -140,7 +140,7 @@ static event_t *event_copy( event_t *event, int copy_arguments )
 {
 	event_t *e = malloc( sizeof( event_t ) );
 	if( !e )
-		die_mem();
+		DIE_MEM();
 	memcpy( e, event, sizeof(event_t));
 
 	if( e->function_name )
@@ -196,6 +196,9 @@ static int event_is_blocked( event_t *e )
 
 const wchar_t *event_get_desc( event_t *e )
 {
+
+	CHECK( e, 0 );
+
 	if( !get_desc_buff )
 	{
 		get_desc_buff=sb_halloc( global_context );
@@ -253,6 +256,8 @@ void event_add_handler( event_t *event )
 {
 	event_t *e;
 
+	CHECK( event, );
+	
 	e = event_copy( event, 0 );
 
 	if( !events )
@@ -272,6 +277,8 @@ void event_remove( event_t *criterion )
 	array_list_t *new_list=0;
 	event_t e;
 	
+	CHECK( criterion, );
+
 	/*
 	  Because of concurrency issues (env_remove could remove an event
 	  that is currently being executed), env_remove does not actually
@@ -282,7 +289,7 @@ void event_remove( event_t *criterion )
 	*/
 	
 	if( !events )
-		return;	
+		return;
 
 	for( i=0; i<al_get_count( events); i++ )
 	{
@@ -330,6 +337,8 @@ int event_get( event_t *criterion, array_list_t *out )
 	
 	if( !events )
 		return 0;	
+
+	CHECK( criterion, 0 );
 	
 	for( i=0; i<al_get_count( events); i++ )
 	{
@@ -627,7 +636,7 @@ void event_destroy()
 
 	if( events )
 	{
-		al_foreach( events, (void (*)(const void *))&event_free );
+		al_foreach( events, (void (*)(void *))&event_free );
 		al_destroy( events );
 		free( events );		
 		events=0;
@@ -635,7 +644,7 @@ void event_destroy()
 
 	if( killme )
 	{
-		al_foreach( killme, (void (*)(const void *))&event_free );
+		al_foreach( killme, (void (*)(void *))&event_free );
 		al_destroy( killme );
 		free( killme );		
 		killme=0;		
@@ -644,10 +653,12 @@ void event_destroy()
 
 void event_free( event_t *e )
 {
+	CHECK( e, );
+
 	/*
 	  When apropriate, we clear the argument vector
 	*/
-	al_foreach( &e->arguments, (void (*)(const void *))&free );
+	al_foreach( &e->arguments, &free );
 	al_destroy( &e->arguments );
 
 	free( (void *)e->function_name );

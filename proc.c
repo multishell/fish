@@ -108,6 +108,9 @@ static string_buffer_t event_pid;
 */
 static string_buffer_t event_status;
 
+/**
+   A stack containing the values of is_interactive. Used by proc_push_interactive and proc_pop_interactive.
+*/
 static array_list_t *interactive_stack;
 
 void proc_init()
@@ -171,6 +174,7 @@ void proc_destroy()
 
 void proc_set_last_status( int s )
 {
+
 	last_status = s;
 	//	fwprintf( stderr, L"Set last status to %d\n", s );
 }
@@ -253,7 +257,7 @@ int job_is_stopped( const job_t *j )
 
 
 /* 
-   Return true if all processes in the job have completed.  
+   Return true if the last processes in the job has completed.  
 
    \param j the job to test
 */
@@ -261,14 +265,11 @@ int job_is_completed( const job_t *j )
 {
 	process_t *p;
 	
-	for (p = j->first_process; p; p = p->next)
-	{
-		if (!p->completed)
-		{
-			return 0;
-		}
-	}
-	return 1;
+	for (p = j->first_process; p->next; p = p->next)
+		;
+	
+	return p->completed;
+	
 }
 
 /**
@@ -691,6 +692,10 @@ unsigned long proc_get_jiffies( process_t *p )
 	{
 		return 0;
 	}
+
+	/*
+	  Don't need to check exit status of fclose on read-only streams
+	*/
 	fclose( f );
 	return utime+stime+cutime+cstime;
 	
@@ -1005,6 +1010,7 @@ void job_continue (job_t *j, int cont)
 			signal_unblock();
 		}
 	}
+	
 }
 
 void proc_sanity_check()

@@ -116,8 +116,8 @@ void env_universal_common_init( void (*cb)(int type, const wchar_t *key, const w
 /**
    Free both key and data
 */
-static void erase( const void *key,
-				   const void *data )
+static void erase( void *key,
+				   void *data )
 {
 	free( (void *)key );
 	free( (void *)data );
@@ -205,8 +205,8 @@ static void remove_entry( wchar_t *name )
 	void *k, *v;
 	hash_remove( &env_universal_var, 
 				 name,
-				 (const void **)&k,
-				 (const void **)&v );
+				 &k,
+				 &v );
 	free( k );
 	free( v );
 }
@@ -261,7 +261,7 @@ static void parse_message( wchar_t *msg,
 			var_uni_entry_t *entry = 
 				malloc( sizeof(var_uni_entry_t) + sizeof(wchar_t)*(wcslen(val)+1) );			
 			if( !entry )
-				die_mem();
+				DIE_MEM();
 			entry->export=export;
 			
 			wcscpy( entry->val, val );
@@ -433,7 +433,7 @@ message_t *create_message( int type,
 			msg = malloc( sizeof( message_t ) + sz );
 			
 			if( !msg )
-				die_mem();
+				DIE_MEM();
 			
 			strcpy( msg->body, (type==SET?SET_MBS:SET_EXPORT_MBS) );
 			strcat( msg->body, " " );
@@ -453,7 +453,7 @@ message_t *create_message( int type,
             msg = malloc( sizeof( message_t ) + sz );
 
 			if( !msg )
-				die_mem();
+				DIE_MEM();
 			
             strcpy( msg->body, ERASE_MBS " " );
             strcat( msg->body, key );
@@ -466,7 +466,7 @@ message_t *create_message( int type,
 			msg = malloc( sizeof( message_t )  + 
 						  strlen( BARRIER_MBS ) +2);
 			if( !msg )
-				die_mem();
+				DIE_MEM();
 			strcpy( msg->body, BARRIER_MBS "\n" );
 			break;
 		}
@@ -476,7 +476,7 @@ message_t *create_message( int type,
 			msg = malloc( sizeof( message_t )  +
 						  strlen( BARRIER_REPLY_MBS ) +2);
 			if( !msg )
-				die_mem();
+				DIE_MEM();
 			strcpy( msg->body, BARRIER_REPLY_MBS "\n" );
 			break;
 		}
@@ -498,8 +498,8 @@ message_t *create_message( int type,
    Function used with hash_foreach to insert keys of one table into
    another
 */
-static void add_key_to_hash( const void *key, 
-							 const void *data,
+static void add_key_to_hash( void *key, 
+							 void *data,
 							 void *aux )
 {
 	var_uni_entry_t *e = (var_uni_entry_t *)data;
@@ -546,8 +546,8 @@ int env_universal_common_get_export( const wchar_t *name )
    \param v the variable value
    \param q the queue to add the message to
 */
-static void enqueue( const void *k,
-					 const void *v,
+static void enqueue( void *k,
+					 void *v,
 					 void *q)
 {
 	const wchar_t *key = (const wchar_t *)k;

@@ -548,6 +548,9 @@ static char *get_description( const char *mimetype )
 		return 0;
 	}
 
+	/*
+	  Don't need to check exit status of close on read-only file descriptors
+	*/
 	close( fd );
 	free( fn );
 
@@ -1120,7 +1123,7 @@ static void launch( char *filter, array_list_t *files, int fileno )
 /**
    Clean up one entry from the hash table of launch files
 */
-static void clear_entry( const void *key, const void *val )
+static void clear_entry( void *key, void *val )
 {
 	/*
 	  The key is a mime value, either from the libraries internal hash

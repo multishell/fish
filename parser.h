@@ -191,10 +191,6 @@ extern block_t *current_block;
 /** Global event blocks */
 extern event_block_t *global_event_block;
 
-
-/** The current error code */
-extern int error_code;
-
 /**
    Current block level io redirections 
 */
@@ -204,9 +200,10 @@ extern io_data_t *block_io;
   Finds the full path of an executable in a newly allocated string.
   
   \param cmd The name of the executable.
+  \param context the halloc context to use for memory allocations
   \return 0 if the command can not be found, the path of the command otherwise.
 */
-wchar_t *get_filename( const wchar_t *cmd );
+wchar_t *parser_get_filename( void *context, const wchar_t *cmd );
 
 /**
   Evaluate the expressions contained in cmd.
@@ -320,7 +317,7 @@ const wchar_t *parser_get_block_desc( int block );
    contains errors, and the second bit is set if the string contains
    an unclosed block.
 */
-int parser_test( const wchar_t * buff, int babble );
+int parser_test( const wchar_t * buff, string_buffer_t *out, const wchar_t *prefix );
 
 /**
    Test if the specified string can be parsed as an argument list,
@@ -328,7 +325,7 @@ int parser_test( const wchar_t * buff, int babble );
    string contains errors, and the second bit is set if the string
    contains an unclosed block.
 */
-int parser_test_args( const wchar_t * buff, int babble );
+int parser_test_args( const wchar_t * buff, string_buffer_t *out, const wchar_t *prefix );
 
 /**
    Returns the full path of the specified directory. If the \c in is a
@@ -337,7 +334,7 @@ int parser_test_args( const wchar_t * buff, int babble );
    directories i the CDPATH, the full path is returned. If no
    directory can be found, 0 is returned.
 */
-wchar_t *parser_cdpath_get( wchar_t *in );
+wchar_t *parser_cdpath_get( void *context, wchar_t *in );
 
 /**
    Tell the parser that the specified function may not be run if not

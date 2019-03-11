@@ -10,23 +10,6 @@
 
 #include <wchar.h>
 
-enum
-{
-	HIGHLIGHT_NORMAL,
-	HIGHLIGHT_COMMAND,
-	HIGHLIGHT_REDIRECTION, 
-	HIGHLIGHT_END, 
-	HIGHLIGHT_ERROR,
-	HIGHLIGHT_PARAM,
-	HIGHLIGHT_COMMENT,
-	HIGHLIGHT_MATCH,
-	HIGHLIGHT_SEARCH_MATCH,
-	HIGHLIGHT_OPERATOR,
-	HIGHLIGHT_ESCAPE,
-	HIGHLIGHT_QUOTE,
-}
-	;
-
 /**
    Constants for various colors as used by the set_color function. 
 */
@@ -47,7 +30,14 @@ enum
 }
 ;
 
+/**
+   The value to send to set_color to tell it to use a bold font
+*/
 #define FISH_COLOR_BOLD 0x80
+/**
+   The value to send to set_color to tell it to underline the text
+*/
+#define FISH_COLOR_UNDERLINE 0x100
 
 /**
    Sets the fg and bg color. May be called as often as you like, since

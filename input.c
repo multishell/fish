@@ -1,5 +1,5 @@
 /** \file input.c
-	
+a	
 Functions for reading a character of input from stdin, using the
 inputrc information for key bindings.
 
@@ -61,6 +61,7 @@ implementation in fish is as of yet incomplete.
 #include "signal.h"
 #include "translate.h"
 #include "output.h"
+#include "intern.h"
 
 static void input_read_inputrc( wchar_t *fn );
 
@@ -71,9 +72,9 @@ static void input_read_inputrc( wchar_t *fn );
 
 typedef struct
 {
-	wchar_t *seq; /**< Character sequence which generates this event */
-	wchar_t *seq_desc; /**< Description of the character sequence suitable for printing on-screen */
-	wchar_t *command; /**< command that should be evaluated by this mapping */
+	const wchar_t *seq; /**< Character sequence which generates this event */
+	const wchar_t *seq_desc; /**< Description of the character sequence suitable for printing on-screen */
+	const wchar_t *command; /**< command that should be evaluated by this mapping */
 		
 }
 	mapping;
@@ -90,7 +91,7 @@ typedef struct
 /**
    Names of all the readline functions supported
 */
-const wchar_t *name_arr[] = 
+static const wchar_t *name_arr[] = 
 {
 	L"beginning-of-line",
 	L"end-of-line",
@@ -127,7 +128,8 @@ const wchar_t *name_arr[] =
 /**
    Description of each supported readline function
 */
-const wchar_t *desc_arr[] =
+/*
+static const wchar_t *desc_arr[] =
 {
 	L"Move to beginning of line",
 	L"Move to end of line",
@@ -160,11 +162,11 @@ const wchar_t *desc_arr[] =
 	L"End of file"
 }
 	;
-
+*/
 /**
    Internal code for each supported readline function
 */
-const wchar_t code_arr[] = 
+static const wchar_t code_arr[] = 
 {
 	R_BEGINNING_OF_LINE,
 	R_END_OF_LINE,
@@ -231,9 +233,12 @@ static int inputrc_block_count=0;
 */
 static int inputrc_error = 0;
 
+/**
+   Set to one when the input subsytem has been initialized. 
+*/
 static int is_init = 0;
 
-wchar_t input_get_code( wchar_t *name )
+wchar_t input_get_code( const wchar_t *name )
 {
 
 	int i;
@@ -336,18 +341,16 @@ void add_mapping( const wchar_t *mode,
 		mapping *m = (mapping *)al_get( mappings, i );
 		if( wcscmp( m->seq, s ) == 0 )
 		{
-			free( m->command );
-			free( m->seq_desc );
-			m->seq_desc = wcsdup(d );
-			m->command=wcsdup(c);
+			m->seq_desc = intern(d);
+			m->command = intern(c);
 			return;
 		}
 	}
 	
 	mapping *m = malloc( sizeof( mapping ) );
-	m->seq = wcsdup( s );
-	m->seq_desc = wcsdup(d );
-	m->command=wcsdup(c);
+	m->seq = intern( s );
+	m->seq_desc = intern(d );
+	m->command = intern(c);
 	al_push( mappings, m );	
 }
 
@@ -1128,6 +1131,9 @@ static void input_read_inputrc( wchar_t *fn )
 			}
 		}
 		free( buff );
+		/*
+		  Don't need to check exit status of fclose on read-only stream
+		*/
 		fclose( rc );
 	}
 	signal_unblock();
@@ -1270,7 +1276,14 @@ static void add_emacs_bindings()
 	add_escaped_mapping( L"emacs", (L"\\C-h"), L"Control-h", L"backward-delete-char" );
 	add_escaped_mapping( L"emacs", (L"\\C-e"), L"Control-e", L"end-of-line" );
 	add_escaped_mapping( L"emacs", (L"\\C-w"), L"Control-w", L"backward-kill-word" );
+	add_escaped_mapping( L"emacs", (L"\\C-p"), L"Control-p", L"history-search-backward" );
+	add_escaped_mapping( L"emacs", (L"\\C-n"), L"Control-n", L"history-search-forward" );
+	add_escaped_mapping( L"emacs", (L"\\C-f"), L"Control-f", L"forward-char" );
+	add_escaped_mapping( L"emacs", (L"\\C-b"), L"Control-b", L"backward-char" );
 	add_escaped_mapping( L"emacs", (L"\e\x7f"), L"Alt-backspace", L"backward-kill-word" );
+	add_escaped_mapping( L"emacs", (L"\eb"), L"Alt-b", L"backward-word" );
+	add_escaped_mapping( L"emacs", (L"\ef"), L"Alt-f", L"forward-word" );
+	add_escaped_mapping( L"emacs", (L"\ed"), L"Alt-d", L"forward-kill-word" );
 	add_terminfo_mapping( L"emacs", (key_ppage), L"Page Up", L"beginning-of-history" );
 	add_terminfo_mapping( L"emacs", (key_npage), L"Page Down", L"end-of-history" );
 }
@@ -1411,22 +1424,13 @@ int input_init()
 /**
    Free memory used by the specified mapping
 */
-static void destroy_mapping( const void *key, const void *val )
+static void destroy_mapping( void *key, void *val )
 {
-	int i;
 	array_list_t *mappings = (array_list_t *)val;
 	
-	for( i=0; i<al_get_count( mappings ); i++ )
-	{
-		mapping *m = (mapping *)al_get( mappings, i );
-		free( m->seq );
-		free( m->seq_desc );
-		
-		free( m->command );
-		free(m );
-	}
-		
+	al_foreach( mappings, &free );		
 	al_destroy( mappings );
+
 	free((void *)key);
 	free((void *)val);	
 }

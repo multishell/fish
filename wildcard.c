@@ -70,6 +70,12 @@ static void al_push_check( array_list_t *l, const wchar_t *new )
 int wildcard_has( const wchar_t *str, int internal )
 {
 	wchar_t prev=0;
+	if( !str )
+	{
+		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
+		return 0;		
+	}
+
 	if( internal )
 	{
 		for( ; *str; str++ )
@@ -162,19 +168,7 @@ static int wildcard_complete_internal( const wchar_t *orig,
 									   const wchar_t *(*desc_func)(const wchar_t *),
 									   array_list_t *out )
 {
-	if( !wc )
-	{
-		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
-		return 0;		
-	}
-	
-	if( !str )
-	{
-		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
-		return 0;		
-	}
-	
-	if( !orig )
+	if( !wc || !str || !orig)
 	{
 		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
 		return 0;		
@@ -296,14 +290,17 @@ static wchar_t *make_path( const wchar_t *base_dir, const wchar_t *name )
 	int base_len = wcslen( base_dir );
 	if( !(long_name= malloc( sizeof(wchar_t)*(base_len+wcslen(name)+1) )))
 	{
-		die_mem();
+		DIE_MEM();
 	}					
 	wcscpy( long_name, base_dir );
 	wcscpy(&long_name[base_len], name );
 	return long_name;
 }
 
-void get_desc( wchar_t *fn, string_buffer_t *sb, int is_cmd )
+/**
+   Get the description of the specified filename. If this is a regular file, append the filesize to the description.
+*/
+static void get_desc( wchar_t *fn, string_buffer_t *sb, int is_cmd )
 {
 	const wchar_t *desc;
 	
@@ -315,6 +312,11 @@ void get_desc( wchar_t *fn, string_buffer_t *sb, int is_cmd )
 		}
 	;
 	
+	if( !fn || !sb )
+	{
+		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
+		return;		
+	}
 	
 	sb_clear( sb );
 	
@@ -376,7 +378,7 @@ void get_desc( wchar_t *fn, string_buffer_t *sb, int is_cmd )
 	}
 }
 
-/*
+/**
   Test if the file specified by the given filename matches the
   expansion flags specified. flags can be a combination of
   EXECUTABLES_ONLY and DIRECTORIES_ONLY.
@@ -433,6 +435,12 @@ int wildcard_expand( const wchar_t *wc,
 	string_buffer_t sb_desc;
 	
 	//	debug( 3, L"WILDCARD_EXPAND %ls in %ls", wc, base_dir );
+
+	if( !wc || !base_dir || !out)
+	{
+		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
+		return 0;		
+	}
 
 	if( flags & ACCEPT_INCOMPLETE )
 	{	
@@ -629,7 +637,7 @@ int wildcard_expand( const wchar_t *wc,
 
 		if( (!new_dir) || (!wc_str) )
 		{
-			die_mem();
+			DIE_MEM();
 		}
 
 		wcscpy( new_dir, base_dir );

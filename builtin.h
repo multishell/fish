@@ -62,6 +62,9 @@ enum
 */
 #define BUILTIN_FOR_ERR_IN _( L"%ls: Second argument must be 'in'\n" )
 
+/**
+   Error message when too many arguments are supplied to a builtin
+*/
 #define BUILTIN_ERR_TOO_MANY_ARGUMENTS _( L"%ls: Too many arguments\n" )
 
 /**
@@ -133,55 +136,22 @@ void builtin_pop_io();
 */
 const wchar_t *builtin_get_desc( const wchar_t *b );
 
-/**
-   Counts the number of non null pointers in the specified array
-*/
-int builtin_count_args( wchar_t **argv );
 
 /**
-   Print help for the specified builtin. If \c b is sb_err, also print
-   the line information
+   Slightly kludgy function used with 'complete -C' in order to make
+   the commandline builtin operate on the string to complete instead
+   of operating on whatever is to be completed.
 */
-void builtin_print_help( wchar_t *cmd, string_buffer_t *b );
-
-
-/**
-   The set builtin, used for setting variables. Defined in
-   builtin_set.c.
-*/
-int builtin_set(wchar_t **argv);
-
-/**
-   The commandline builtin, used for setting and getting the contents
-   of the commandline. Defined in builtin_commandline.c.
-*/
-int builtin_commandline(wchar_t **argv);
-
-/**
-   The ulimit builtin, used for setting resource limits. Defined in
-   builtin_ulimit.c.
-*/
-int builtin_ulimit(wchar_t **argv);
-
-/**
-   The complete builtin. Used for specifying programmable
-   tab-completions. Calls the functions in complete.c for any heavy
-   lifting. Defined in builtin_complete.c
-*/
-int builtin_complete(wchar_t **argv);
-
-/**
-   The jobs builtin. Used fopr printing running jobs. Defined in builtin_jobs.c.
-*/
-int builtin_jobs(wchar_t **argv);
-
 const wchar_t *builtin_complete_get_temporary_buffer();
 
-/** 
-	This function works like wperror, but it prints its result into
-	the sb_err string_buffer_t instead of to stderr. Used by the builtin
-	commands.
+
+/**
+   Return the help text for the specified builtin command. Use
+   non-wide characters since wide characters have some issues with
+   string formating escape sequences sometimes.
+
+   \param cmd The command for which to obtain help text
 */
-void builtin_wperror( const wchar_t *s);
+char *builtin_help_get( const wchar_t *cmd );
 
 #endif

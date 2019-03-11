@@ -15,8 +15,14 @@
 #include <sys/types.h>
 #include <stdarg.h>
 
+/**
+   Wide version of the dirent data structure
+*/
 struct wdirent
 {
+	/**
+	   The name of the current directory
+	*/
 	wchar_t *d_name;
 }
 	;
@@ -97,6 +103,20 @@ int wchdir( const wchar_t * dir );
 */
 wchar_t *wrealpath(const wchar_t *pathname, wchar_t *resolved_path);
 
+/**
+   Wide character version of readdir()
+*/
 struct wdirent *wreaddir(DIR *dir );
+
+/**
+   Wide character version of dirname()
+*/
+wchar_t *wdirname( const wchar_t *path );
+
+/**
+   Wide character version of basename()
+*/
+wchar_t *wbasename( const wchar_t *path );
+
 
 #endif

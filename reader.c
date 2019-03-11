@@ -449,7 +449,7 @@ static int check_size()
 			data->color==0 ||
 			data->new_color == 0 )
 		{
-			die_mem();
+			DIE_MEM();
 
 		}
 	}
@@ -609,8 +609,8 @@ static void remove_duplicates( array_list_t *l )
 */
 static void set_color_translated( int c )
 {
-	set_color( highlight_get_color( c & 0xff ),
-			   highlight_get_color( (c>>8)&0xff ) );
+	set_color( highlight_get_color( c & 0xffff ),
+			   highlight_get_color( (c>>16)&0xffff ) );
 }
 
 int reader_interupted()
@@ -660,7 +660,7 @@ void reader_write_title()
 	}
 	proc_pop_interactive();
 		
-	al_foreach( &l, (void (*)(const void *))&free );
+	al_foreach( &l, &free );
 	al_destroy( &l );
 	set_color( FISH_COLOR_RESET, FISH_COLOR_RESET );
 }
@@ -712,7 +712,8 @@ static int calc_prompt_width( array_list_t *arr )
 				int found = 0;
 
 				/*
-				  Test these color escapes with parameter value 0..7
+				  Detect these terminfo color escapes with parameter
+				  value 0..7, all of which don't move the cursor
 				*/
 				char * esc[] =
 					{
@@ -724,7 +725,8 @@ static int calc_prompt_width( array_list_t *arr )
 				;
 
 				/*
-				  Test these regular escapes without any parameter values
+				  Detect these semi-common terminfo escapes without any
+				  parameter values, all of which don't move the cursor
 				*/
 				char *esc2[] =
 					{
@@ -734,7 +736,20 @@ static int calc_prompt_width( array_list_t *arr )
 						exit_underline_mode,
 						enter_standout_mode,
 						exit_standout_mode,
-						flash_screen
+						flash_screen,
+						enter_subscript_mode,
+						exit_subscript_mode,
+						enter_superscript_mode,
+						exit_superscript_mode,
+						enter_blink_mode,
+						enter_italics_mode,
+						exit_italics_mode,
+						enter_reverse_mode,
+						enter_shadow_mode,
+						exit_shadow_mode,
+						enter_standout_mode,
+						exit_standout_mode,
+						enter_secure_mode
 					}
 				;
 
@@ -766,13 +781,17 @@ static int calc_prompt_width( array_list_t *arr )
 					*/
 					len = maxi( try_sequence( tparm(esc2[l]), &next[j] ),
 								try_sequence( esc2[l], &next[j] ));
-
+					
 					if( len )
 					{
 						j += (len-1);
 						found = 1;
 					}
 				}
+			}
+			else if( next[j] == L'\t' )
+			{
+				res=(res+8)&~7;				
 			}
 			else
 			{
@@ -781,7 +800,6 @@ static int calc_prompt_width( array_list_t *arr )
 				*/
 				res += wcwidth( next[j] );
 			}
-
 		}
 	}
 	return res;
@@ -804,7 +822,7 @@ static void write_prompt()
 	if( data->exec_prompt )
 	{
 
-		al_foreach( &prompt_list, (void (*)(const void *))&free );
+		al_foreach( &prompt_list, &free );
 		al_truncate( &prompt_list, 0 );
 
 		if( data->prompt )
@@ -814,7 +832,7 @@ static void write_prompt()
 			if( exec_subshell( data->prompt, &prompt_list ) == -1 )
 			{
 				/* If executing the prompt fails, make sure we at least don't print any junk */
-				al_foreach( &prompt_list, (void (*)(const void *))&free );
+				al_foreach( &prompt_list, &free );
 				al_destroy( &prompt_list );
 				al_init( &prompt_list );
 			}
@@ -944,7 +962,6 @@ static void check_colors()
 static void reader_save_status()
 {
 
-#ifdef HAVE_FUTIMES
 	/*
 	  This futimes call tries to trick the system into using st_mtime
 	  as a tampering flag. This of course only works on systems where
@@ -965,9 +982,13 @@ static void reader_save_status()
 		}
 	;
 
+	/*
+	  Don't check return value on these. We don't care if they fail,
+	  really.  This is all just to make the prompt look ok, which is
+	  impossible to do 100% reliably. We try, at least.
+	*/
 	futimes( 1, t );
 	futimes( 2, t );
-#endif
 
 	fstat( 1, &prev_buff_1 );
 	fstat( 2, &prev_buff_2 );
@@ -1674,7 +1695,7 @@ static void reader_interactive_init()
 static void reader_interactive_destroy()
 {
 	kill_destroy();
-	al_foreach( &prompt_list, (void (*)(const void *))&free );
+	al_foreach( &prompt_list, &free );
 	al_destroy( &prompt_list );
 
 	writestr( L"\n" );
@@ -1697,7 +1718,7 @@ void reader_sanity_check()
 void reader_replace_current_token( wchar_t *new_token )
 {
 
-	const wchar_t *begin, *end;
+	wchar_t *begin, *end;
 	string_buffer_t sb;
 	int new_pos;
 
@@ -1764,7 +1785,7 @@ static int contains( const wchar_t *needle,
 */
 static void reset_token_history()
 {
-	const wchar_t *begin, *end;
+	wchar_t *begin, *end;
 
 	parse_util_token_extent( data->buff, data->buff_pos, &begin, &end, 0, 0 );
 	if( begin )
@@ -1776,7 +1797,7 @@ static void reset_token_history()
 
 	data->token_history_pos = -1;
 	data->search_pos=0;
-	al_foreach( &data->search_prev, (void (*)(const void *))&free );
+	al_foreach( &data->search_prev, &free );
 	al_truncate( &data->search_prev, 0 );
 	al_push( &data->search_prev, wcsdup( data->search_buff ) );
 }
@@ -2062,7 +2083,7 @@ int reader_get_cursor_pos()
 }
 
 
-void reader_run_command( wchar_t *cmd )
+void reader_run_command( const wchar_t *cmd )
 {
 
 	wchar_t *ft;
@@ -2099,10 +2120,15 @@ void reader_run_command( wchar_t *cmd )
 
 static int shell_test( wchar_t *b )
 {
-	if( parser_test( b, 0 ) )
+	if( parser_test( b, 0, 0 ) )
 	{
+		string_buffer_t sb;
+		sb_init( &sb );
+		
 		writech( L'\n' );
-		parser_test( b, 1 );
+		parser_test( b, &sb, L"fish" );
+		fwprintf( stderr, L"%ls", sb.buff );
+		sb_destroy( &sb );
 		return 1;
 	}
 	return 0;
@@ -2167,7 +2193,7 @@ void reader_pop()
 	/*
 	  Clean up after history search
 	*/
-	al_foreach( &n->search_prev, (void (*)(const void *))&free );
+	al_foreach( &n->search_prev, &free );
 	al_destroy( &n->search_prev );
     free( (void *)n->token_history_buff);
 
@@ -2233,7 +2259,7 @@ static void reader_super_highlight_me_plenty( wchar_t * buff, int *color, int po
 				*/
 				if( color[start+i]>>8 == 0 )
 				{
-					color[start+i] |= HIGHLIGHT_SEARCH_MATCH<<8;
+					color[start+i] |= HIGHLIGHT_SEARCH_MATCH<<16;
 				}
 			}
 		}
@@ -2433,7 +2459,7 @@ wchar_t *reader_readline()
 
 		if( (last_char == R_COMPLETE) && (c != R_COMPLETE) && (!comp_empty) )
 		{
-			al_foreach( &comp, (void (*)(const void *))&free );
+			al_foreach( &comp, &free );
 			al_truncate( &comp, 0 );
 			comp_empty = 1;
 		}
@@ -2489,8 +2515,8 @@ wchar_t *reader_readline()
 
  				if( comp_empty )
 				{
-					const wchar_t *begin, *end;
-					const wchar_t *token_begin, *token_end;
+					wchar_t *begin, *end;
+					wchar_t *token_begin, *token_end;
 					wchar_t *buffcpy;
 					int len;
 					int cursor_steps;
@@ -2498,11 +2524,12 @@ wchar_t *reader_readline()
 					parse_util_cmdsubst_extent( data->buff, data->buff_pos, &begin, &end );
 
 					parse_util_token_extent( begin, data->buff_pos - (begin-data->buff), &token_begin, &token_end, 0, 0 );
+					
 					cursor_steps = token_end - data->buff- data->buff_pos;
 					data->buff_pos += cursor_steps;
 					move_cursor( cursor_steps );
-					
-					len = data->buff_pos - (data->buff - begin);
+
+					len = data->buff_pos - (begin-data->buff);
 					buffcpy = wcsndup( begin, len );
 
 					reader_save_status();
@@ -2518,7 +2545,7 @@ wchar_t *reader_readline()
 				if( (comp_empty =
 					 handle_completions( &comp ) ) )
 				{
-					al_foreach( &comp, (void (*)(const void *))&free );
+					al_foreach( &comp, &free );
 					al_truncate( &comp, 0 );
 				}
 
@@ -2541,7 +2568,7 @@ wchar_t *reader_readline()
 			{
 				wchar_t *str = wcsndup( data->buff, data->buff_pos );
 				if( !str )
-					die_mem();
+					DIE_MEM();
 
 				kill_add( str );
 				free( str );
@@ -2837,13 +2864,11 @@ wchar_t *reader_readline()
 				else
 				{
 					/*
-					  Carriage returns happen - they are usually a
-					  sign of an incorrectly set terminal, but there
-					  really isn't very much we can do at this point,
-					  so we ignore them.
+					  Low priority debug message. These can happen if
+					  the user presses an unefined control
+					  sequnece. No reason to report.
 					*/
-					if( c != 13 )
-						debug( 0, _( L"Unknown keybinding %d" ), c );
+					debug( 2, _( L"Unknown keybinding %d" ), c );
 				}
 				break;
 			}
@@ -2944,18 +2969,21 @@ static int read_ni( int fd )
 
 		if( str )
 		{
-			if( !parser_test( str, 1 ) )
-			{
-				eval( str, 0, TOP );
-			}
-			else
-			{
-				/*
-				  No error reporting - parser_test did that for us
-				*/
-				res = 1;
-			}
-			free( str );
+		string_buffer_t sb;
+		sb_init( &sb );
+		
+		if( !parser_test( str, &sb, L"fish" ) )
+		{
+			eval( str, 0, TOP );
+		}
+		else
+		{
+			fwprintf( stderr, L"%ls", sb.buff );
+			res = 1;
+		}
+		sb_destroy( &sb );
+		
+		free( str );
 		}
 		else
 		{

@@ -25,14 +25,23 @@ Functions used for implementing the complete builtin.
 #include "reader.h"
 #include "translate.h"
 
+/**
+   Internal storage for the builtin_get_temporary_buffer() function.
+*/
 const static wchar_t *temporary_buffer;
 
 /*
   builtin_complete_* are a set of rather silly looping functions that
   make sure that all the proper combinations of complete_add or
-  complete_remove get called. 
+  complete_remove get called. This is needed since complete allows you
+  to specify multiple switches on a single commandline, like 'complete
+  -s a -s b -s c', but the complete_add function only accepts one
+  short switch and one long switch.
 */
 
+/**
+   Silly function
+*/
 static void	builtin_complete_add2( const wchar_t *cmd,
 								   int cmd_type,
 								   const wchar_t *short_opt,
@@ -104,6 +113,9 @@ static void	builtin_complete_add2( const wchar_t *cmd,
 	}	
 }
 
+/**
+   Silly function
+*/
 static void	builtin_complete_add( array_list_t *cmd, 
 								  array_list_t *path,
 								  const wchar_t *short_opt,
@@ -147,6 +159,9 @@ static void	builtin_complete_add( array_list_t *cmd,
 	
 }
 
+/**
+   Silly function
+*/
 static void builtin_complete_remove3( wchar_t *cmd,
 									  int cmd_type,
 									  wchar_t short_opt,
@@ -163,6 +178,9 @@ static void builtin_complete_remove3( wchar_t *cmd,
 	}	
 }
 
+/**
+   Silly function
+*/
 static void	builtin_complete_remove2( wchar_t *cmd,
 									  int cmd_type,
 									  const wchar_t *short_opt,
@@ -211,6 +229,9 @@ static void	builtin_complete_remove2( wchar_t *cmd,
 	
 }
 
+/**
+   Silly function
+*/
 static void	builtin_complete_remove( array_list_t *cmd, 
 									 array_list_t *path,
 									 const wchar_t *short_opt,
@@ -246,7 +267,12 @@ const wchar_t *builtin_complete_get_temporary_buffer()
 	return temporary_buffer;
 }
 
-int builtin_complete( wchar_t **argv )
+/**
+   The complete builtin. Used for specifying programmable
+   tab-completions. Calls the functions in complete.c for any heavy
+   lifting. Defined in builtin_complete.c
+*/
+static int builtin_complete( wchar_t **argv )
 {
 	int res=0;
 	int argc=0;
@@ -355,7 +381,7 @@ int builtin_complete( wchar_t **argv )
 		
 		int opt = wgetopt_long( argc,
 								argv, 
-								L"a:c:p:s:l:o:d:frxeun:C:h", 
+								L"a:c:p:s:l:o:d:frxeun:C::h", 
 								long_options, 
 								&opt_index );
 		if( opt == -1 )
@@ -392,12 +418,20 @@ int builtin_complete( wchar_t **argv )
 				break;
 					
 			case 'p':	
-				al_push( &cmd, unescape( woptarg, 1));
-				break;
-				
 			case 'c':
-				al_push( &cmd, unescape( woptarg, 1) );
+			{
+				wchar_t *a = unescape( woptarg, 1);
+				if( a )
+				{
+					al_push( (opt=='p'?&path:&cmd), a );
+				}
+				else
+				{
+					sb_printf( sb_err, L"%ls: Invalid token '%ls'\n", argv[0], woptarg );
+					res = 1;					
+				}				
 				break;
+			}
 				
 			case 'd':
 				desc = woptarg;
@@ -455,14 +489,14 @@ int builtin_complete( wchar_t **argv )
 	{
 		if( condition && wcslen( condition ) )
 		{
-			if( parser_test( condition, 0 ) )
+			if( parser_test( condition, 0, 0 ) )
 			{
 				sb_printf( sb_err,
 						   L"%ls: Condition '%ls' contained a syntax error\n", 
 						   argv[0],
 						   condition );
 				
-				parser_test( condition, 1 );
+				parser_test( condition, sb_err, argv[0] );
 				
 				res = 1;
 			}
@@ -473,14 +507,14 @@ int builtin_complete( wchar_t **argv )
 	{
 		if( comp && wcslen( comp ) )
 		{
-			if( parser_test_args( comp, 0 ) )
+			if( parser_test_args( comp, 0, 0 ) )
 			{
 				sb_printf( sb_err,
 						   L"%ls: Completion '%ls' contained a syntax error\n", 
 						   argv[0],
 						   comp );
 				
-				parser_test_args( comp, 1 );
+				parser_test_args( comp, sb_err, argv[0] );
 				
 				res = 1;
 			}
@@ -514,7 +548,7 @@ int builtin_complete( wchar_t **argv )
 					sb_printf( sb_out, L"%ls\n", next );
 				}
 			
-				al_foreach( &comp, (void (*)(const void *))&free );
+				al_foreach( &comp, &free );
 				al_destroy( &comp );
 				recursion_level--;
 			}
@@ -566,8 +600,8 @@ int builtin_complete( wchar_t **argv )
 		}	
 	}
 	
-	al_foreach( &cmd, (void (*)(const void *))&free );
-	al_foreach( &path, (void (*)(const void *))&free );
+	al_foreach( &cmd, &free );
+	al_foreach( &path, &free );
 
 	al_destroy( &cmd );
 	al_destroy( &path );

@@ -101,6 +101,8 @@ int expand_is_clean( const wchar_t *in )
 
 	const wchar_t * str = in;
 
+	CHECK( in, 1 );
+
 	/*
 	  Test characters that have a special meaning in the first character position
 	*/
@@ -160,6 +162,8 @@ wchar_t *expand_escape_variable( const wchar_t *in )
 
 	array_list_t l;
 	string_buffer_t buff;
+
+	CHECK( in, 0 );
 
 	al_init( &l );
 	tokenize_variable_array( in, &l );
@@ -570,6 +574,13 @@ static int expand_pid( wchar_t *in,
 					   int flags,
 					   array_list_t *out )
 {
+
+	if( !in || !out)
+	{
+		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
+		return 0;		
+	}
+
 	if( *in != PROCESS_EXPAND )
 	{
 		al_push( out, in );
@@ -663,11 +674,17 @@ static int expand_variables( wchar_t *in, array_list_t *out, int last_idx )
 	static string_buffer_t *var_tmp = 0;
 	static array_list_t *var_idx_list = 0;
 
+	if( !in || !out)
+	{
+		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
+		return 0;		
+	}
+
 	if( !var_tmp )
 	{
 		var_tmp = sb_halloc( global_context );
 		if( !var_tmp )
-			die_mem();
+			DIE_MEM();
 	}
 	else
 	{
@@ -678,7 +695,7 @@ static int expand_variables( wchar_t *in, array_list_t *out, int last_idx )
 	{
 		var_idx_list = al_halloc( global_context );
 		if( !var_idx_list )
-			die_mem();
+			DIE_MEM();
 	}
 	else
 	{
@@ -778,7 +795,7 @@ static int expand_variables( wchar_t *in, array_list_t *out, int last_idx )
 					stop_pos++;
 					while( 1 )
 					{
-						int tmp;
+						long tmp;
 
 						while( iswspace(in[stop_pos]) || (in[stop_pos]==INTERNAL_SEPARATOR))
 							stop_pos++;
@@ -814,12 +831,17 @@ static int expand_variables( wchar_t *in, array_list_t *out, int last_idx )
 						int j;
 						for( j=0; j<al_get_count( var_idx_list ); j++)
 						{
-							int tmp = (int)al_get( var_idx_list, j );
+							long tmp = (long)al_get( var_idx_list, j );
+							if( tmp < 0 )
+							{
+								tmp = al_get_count( &var_item_list)+tmp+1;
+							}
+							
 							if( tmp < 1 || tmp > al_get_count( &var_item_list ) )
 							{
 								error( SYNTAX_ERROR,
 									   -1,
-									   L"Array index out of bounds" );
+									   ARRAY_BOUNDS_ERR );
 								is_ok=0;
 								al_truncate( var_idx_list, j );
 								break;
@@ -832,7 +854,7 @@ static int expand_variables( wchar_t *in, array_list_t *out, int last_idx )
 							}
 						}
 						/* Free remaining strings in list l and truncate it */
-						al_foreach( &var_item_list, (void (*)(const void *))&free );
+						al_foreach( &var_item_list, &free );
 						al_truncate( &var_item_list, 0 );
 						/* Add items from list idx back to list l */
 						al_push_all( &var_item_list, var_idx_list );
@@ -885,7 +907,7 @@ static int expand_variables( wchar_t *in, array_list_t *out, int last_idx )
 									
 									if( !(new_in = malloc( sizeof(wchar_t)*new_len )))
 									{
-										die_mem();
+										DIE_MEM();
 									}
 									else
 									{
@@ -980,17 +1002,22 @@ static int expand_brackets( wchar_t *in, int flags, array_list_t *out )
 
 	wchar_t *item_begin;
 	int len1, len2, tot_len;
+	
+	if( !in || !out)
+	{
+		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
+		return 0;		
+	}
 
 	for( pos=in;
-		 (!bracket_end) && (*pos) && !syntax_error;
+		 (*pos) && !syntax_error;
 		 pos++ )
 	{
 		switch( *pos )
 		{
 			case BRACKET_BEGIN:
 			{
-				if(( bracket_count == 0)&&(bracket_begin==0))
-					bracket_begin = pos;
+				bracket_begin = pos;
 
 				bracket_count++;
 				break;
@@ -999,9 +1026,11 @@ static int expand_brackets( wchar_t *in, int flags, array_list_t *out )
 			case BRACKET_END:
 			{
 				bracket_count--;
-				if( (bracket_count == 0) && (bracket_end == 0) )
+				if( bracket_end < bracket_begin )
+				{
 					bracket_end = pos;
-
+				}
+				
 				if( bracket_count < 0 )
 				{
 					syntax_error = 1;
@@ -1019,7 +1048,9 @@ static int expand_brackets( wchar_t *in, int flags, array_list_t *out )
 	if( bracket_count > 0 )
 	{
 		if( !(flags & ACCEPT_INCOMPLETE) )
+		{
 			syntax_error = 1;
+		}
 		else
 		{
 
@@ -1036,9 +1067,6 @@ static int expand_brackets( wchar_t *in, int flags, array_list_t *out )
 				sb_append( &mod, in );
 				sb_append_char( &mod, BRACKET_END );
 			}
-
-
-
 
 			return expand_brackets( (wchar_t*)mod.buff, 1, out );
 		}
@@ -1103,7 +1131,7 @@ static int expand_brackets( wchar_t *in, int flags, array_list_t *out )
 */
 static int expand_subshell( wchar_t *in, array_list_t *out )
 {
-	const wchar_t *paran_begin=0, *paran_end=0;
+	wchar_t *paran_begin=0, *paran_end=0;
 	int len1, len2;
 	wchar_t prev=0;
 	wchar_t *subcmd;
@@ -1111,15 +1139,9 @@ static int expand_subshell( wchar_t *in, array_list_t *out )
 	int i, j;
 	const wchar_t *item_begin;
 
-	if( !in )
+	if( !in || !out)
 	{
 		debug( 2, L"Got null string on line %d of file %s", __LINE__, __FILE__ );
-		return 0;		
-	}
-
-	if( !out )
-	{
-		debug( 2, L"Got null pointer on line %d of file %s", __LINE__, __FILE__ );
 		return 0;		
 	}
 
@@ -1158,7 +1180,7 @@ static int expand_subshell( wchar_t *in, array_list_t *out )
 
 	if( exec_subshell( subcmd, &sub_res)==-1 )
 	{
-		al_foreach( &sub_res, (void (*)(const void *))&free );
+		al_foreach( &sub_res, &free );
 		al_destroy( &sub_res );
 		free( subcmd );
 		return 0;
@@ -1197,14 +1219,16 @@ static int expand_subshell( wchar_t *in, array_list_t *out )
 
 	al_destroy( &sub_res );
 
-	al_foreach( &tail_expand, (void (*)(const void *))&free );
+	al_foreach( &tail_expand, &free );
 	al_destroy( &tail_expand );
 
 	free( subcmd );
 	return 1;
 }
 
-
+/**
+   Wrapper around unescape funtion. Issues an error() on failiure.
+*/
 static wchar_t *expand_unescape( const wchar_t * in, int escape_special )
 {
 	wchar_t *res = unescape( in, escape_special );
@@ -1296,6 +1320,8 @@ static wchar_t * expand_tilde_internal( wchar_t *in )
 
 wchar_t *expand_tilde( wchar_t *in)
 {
+	CHECK( in, 0 );
+	
 	if( in[0] == L'~' )
 	{
 		in[0] = HOME_DIRECTORY;
@@ -1354,6 +1380,9 @@ int expand_string( void *context,
 	int res = EXPAND_OK;
 	int start_count = al_get_count( end_out );
 
+	CHECK( str, EXPAND_ERROR );
+	CHECK( end_out, EXPAND_ERROR );
+
 	if( (!(flags & ACCEPT_INCOMPLETE)) && expand_is_clean( str ) )
 	{
 		halloc_register( context, str );
@@ -1366,7 +1395,7 @@ int expand_string( void *context,
 
 	if( EXPAND_SKIP_SUBSHELL & flags )
 	{
-		const wchar_t *begin, *end;
+		wchar_t *begin, *end;
 		
 		if( parse_util_locate_cmdsubst( str,
 										&begin,
@@ -1599,6 +1628,8 @@ wchar_t *expand_one( void *context, wchar_t *string, int flags )
 	array_list_t l;
 	int res;
 	wchar_t *one;
+
+	CHECK( string, 0 );
 	
 	if( (!(flags & ACCEPT_INCOMPLETE)) &&  expand_is_clean( string ) )
 	{
@@ -1625,7 +1656,7 @@ wchar_t *expand_one( void *context, wchar_t *string, int flags )
 		}
 	}
 
-	al_foreach( &l, (void(*)(const void *))&free );
+	al_foreach( &l, &free );
 	al_destroy( &l );
 
 	halloc_register( context, one );

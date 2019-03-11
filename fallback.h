@@ -8,12 +8,26 @@
 #include <wctype.h>
 #include <wchar.h>
 #include <limits.h>
+#include <sys/time.h>
 
 #ifndef WCHAR_MAX
 /**
    This _should_ be defined by wchar.h, but e.g. OpenBSD doesn't.
 */
 #define WCHAR_MAX INT_MAX
+#endif
+
+/**
+   Make sure __func__ is defined to some string. In C99, this should
+   be the currently compiled function. If we aren't using C99 or
+   later, older versions of GCC had __FUNCTION__.
+*/
+#if __STDC_VERSION__ < 199901L
+# if __GNUC__ >= 2
+#  define __func__ __FUNCTION__
+# else
+#  define __func__ "<unknown>"
+# endif
 #endif
 
 /**
@@ -279,4 +293,37 @@ size_t wcslcpy( wchar_t *dst, const wchar_t *src, size_t siz );
 int del_curterm(TERMINAL *oterm);
 #endif
 
+#ifndef HAVE_LRAND48_R
+
+/**
+   Datastructure for the lrand48_r fallback implementation.
+*/
+struct drand48_data
+{
+	/**
+	   Seed value
+	*/
+	unsigned int seed;
+}
+	;
+
+/**
+   Fallback implementation of lrand48_r. Internally uses rand_r, so it is pretty weak.
+*/
+int lrand48_r(struct drand48_data *buffer, long int *result);
+
+/**
+   Fallback implementation of srand48_r, the seed function for lrand48_r.
+*/
+int srand48_r(long int seedval, struct drand48_data *buffer);
+
 #endif
+
+#ifndef HAVE_FUTIMES
+
+int futimes(int fd, const struct timeval *times);
+
+#endif
+
+#endif
+

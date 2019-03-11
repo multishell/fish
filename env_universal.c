@@ -182,7 +182,12 @@ static void check_connection()
 	if( env_universal_server.killme )
 	{
 		debug( 3, L"Lost connection to universal variable server." );
-		close( env_universal_server.fd );
+		
+		if( close( env_universal_server.fd ) )
+		{
+			wperror( L"close" );
+		}
+		
 		env_universal_server.fd = -1;
 		env_universal_server.killme=0;
 		sb_clear( &env_universal_server.input );	
@@ -252,7 +257,12 @@ void env_universal_destroy()
 		}
 		try_send_all( &env_universal_server );	
 	}
-	close( env_universal_server.fd );
+
+	if( close( env_universal_server.fd ) )
+	{
+		wperror( L"close" );
+	}
+	
 	env_universal_server.fd =-1;
 	q_destroy( &env_universal_server.unsent );
 	sb_destroy( &env_universal_server.input );	
@@ -295,16 +305,20 @@ wchar_t *env_universal_get( const wchar_t *name )
 {
 	if( !init)
 		return 0;
-	
-	if( !name )
-		return 0;
 
+	CHECK( name, 0 );
+	
 	debug( 3, L"env_universal_get( \"%ls\" )", name );
 	return env_universal_common_get( name );
 }
 
 int env_universal_get_export( const wchar_t *name )
 {
+	if( !init)
+		return 0;
+
+	CHECK( name, 0 );
+	
 	debug( 3, L"env_universal_get_export()" );
 	return env_universal_common_get_export( name );
 }
@@ -377,7 +391,9 @@ void env_universal_set( const wchar_t *name, const wchar_t *value, int export )
 	
 	if( !init )
 		return;
-	
+
+	CHECK( name, );
+		
 	debug( 3, L"env_universal_set( \"%ls\", \"%ls\" )", name, value );
 	
 	msg = create_message( export?SET_EXPORT:SET, 
@@ -395,11 +411,17 @@ void env_universal_set( const wchar_t *name, const wchar_t *value, int export )
 	env_universal_barrier();
 }
 
-void env_universal_remove( const wchar_t *name )
+int env_universal_remove( const wchar_t *name )
 {
+	int res;
+	
 	message_t *msg;
 	if( !init )
-		return;
+		return 1;
+		
+	CHECK( name, 1 );
+
+	res = !env_universal_common_get( name );
 	
 	debug( 3,
 		   L"env_universal_remove( \"%ls\" )",
@@ -409,12 +431,17 @@ void env_universal_remove( const wchar_t *name )
 	msg->count=1;
 	q_put( &env_universal_server.unsent, msg );
 	env_universal_barrier();
+
+	return res;
 }
 
 void env_universal_get_names( array_list_t *l,
                               int show_exported,
                               int show_unexported )
 {
+	if( !init )
+		return;
+	
 	env_universal_common_get_names( l, 
 									show_exported,
 									show_unexported );	

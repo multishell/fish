@@ -52,11 +52,6 @@ extern struct termios shell_modes;
 extern wchar_t ellipsis_char;
 
 /**
-   The maximum number of charset convertion errors to report
-*/
-extern int error_max;
-
-/**
    The verbosity of fish
 */
 extern int debug_level;
@@ -72,6 +67,35 @@ extern char *profile;
 */
 extern wchar_t *program_name;
 
+/**
+   This macro is used to check that an input argument is not null. It
+   is a bit lika a non-fatal form of assert. Instead of exit-ing on
+   failiure, the current function is ended at once. The second
+   parameter is the exit status of the current function on failiure.
+*/
+#define CHECK( arg, retval )					\
+	if( !(arg) )														\
+	{																	\
+		debug( 1,														\
+			   L"function %s called with null value for argument %s. "	\
+			   L"This is a bug. "										\
+			   L"If you can reproduce it, please send a bug report to %s.", \
+			   __func__,												\
+			   #arg,													\
+			   PACKAGE_BUGREPORT );										\
+		return retval;													\
+	}																	\
+		
+
+/**
+   Exit program at once, leaving an error message about running out of memory
+*/
+#define DIE_MEM()								\
+	{																	\
+		fwprintf( stderr, L"fish: Out of memory on line %d of file %s, shutting down fish\n", __LINE__, __FILE__ );	\
+		exit(1);														\
+	}																	\
+		
 /**
    Take an array_list_t containing wide strings and converts them to a
    single null-terminated wchar_t **. The array is allocated using
@@ -95,24 +119,47 @@ wchar_t **list_to_char_arr( array_list_t *l );
 int fgetws2( wchar_t **buff, int *len, FILE *f );
 
 /**
-   Sorts a list of wide strings according to the wcsfilecmp-function
-   from the util library
+   Sorts an array_list of wide strings according to the
+   wcsfilecmp-function from the util library
 */
 void sort_list( array_list_t *comp );
 
 /**
    Returns a newly allocated wide character string equivalent of the
    specified multibyte character string
+
+   This function encodes illegal character sequences in a reversible
+   way using the private use area.
 */
 wchar_t *str2wcs( const char *in );
+
+/**
+   Converts the narrow character string \c in into it's wide
+   equivalent, stored in \c out. \c out must have enough space to fit
+   the entire string.
+
+   This function encodes illegal character sequences in a reversible
+   way using the private use area.
+*/
 wchar_t *str2wcs_internal( const char *in, wchar_t *out );
 
 /**
    Returns a newly allocated multibyte character string equivalent of
    the specified wide character string
+
+   This function decodes illegal character sequences in a reversible
+   way using the private use area.
 */
 char *wcs2str( const wchar_t *in );
 
+/**
+   Converts the wide character string \c in into it's narrow
+   equivalent, stored in \c out. \c out must have enough space to fit
+   the entire string.
+
+   This function decodes illegal character sequences in a reversible
+   way using the private use area.
+*/
 char *wcs2str_internal( const wchar_t *in, char *out );
 
 /**
@@ -151,6 +198,14 @@ wchar_t *wcsdupcat2( const wchar_t *a, ... );
 
 wchar_t *wcsvarname( wchar_t *str );
 
+/**
+   Test if the given string is valid in a variable name 
+
+   \return 1 if this is a valid name, 0 otherwise
+*/
+
+int wcsvarchr( wchar_t chr );
+
 
 /**
    A wcswidth workalike. Fish uses this since the regular wcswidth seems flaky.
@@ -164,7 +219,7 @@ int my_wcswidth( const wchar_t *c );
 
    \param in the position of the opening quote
 */
-const wchar_t *quote_end( const wchar_t *in );
+wchar_t *quote_end( const wchar_t *in );
 
 /**
    A call to this function will reset the error counter. Some
@@ -199,20 +254,6 @@ int contains_str( const wchar_t *needle, ... );
 */
 int read_blocked(int fd, void *buf, size_t count);
 
-/**
-   Exit program at once, leaving an error message about running out of memory
-*/
-void die_mem();
-
-/**
-  Create global_context using halloc
-*/
-void common_init();
-
-/**
-   Free global_context using halloc_free
-*/
-void common_destroy();
 
 /**
    Issue a debug message with printf-style string formating and

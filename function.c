@@ -36,9 +36,22 @@ typedef struct
 	wchar_t *cmd;
 	/** Function description */
 	wchar_t *desc;	
+	/**
+	   File where this function was defined
+	*/
 	const wchar_t *definition_file;
+	/**
+	   Line where definition started
+	*/
 	int definition_offset;	
+	/**
+	   Flag for specifying functions which are actually key bindings
+	*/
 	int is_binding;
+	
+	/**
+	   Flag for specifying that this function was automatically loaded
+	*/
 	int is_autoload;
 }
 	function_data_t;
@@ -47,6 +60,12 @@ typedef struct
    Table containing all functions
 */
 static hash_table_t function;
+
+/**
+   Kludgy flag set by the load function in order to tell function_add
+   that the function being defined is autoloaded. There should be a
+   better way to do this...
+*/
 static int is_autoload = 0;
 
 /**
@@ -110,13 +129,13 @@ static void autoload_names( array_list_t *out, int get_hidden )
 				*suffix = 0;
 				dup = intern( fn );
 				if( !dup )
-					die_mem();
+					DIE_MEM();
 				al_push( out, dup );
 			}
 		}				
 		closedir(dir);
 	}
-	al_foreach( &path_list, (void (*)(const void *))&free );
+	al_foreach( &path_list, &free );
 	al_destroy( &path_list );
 }
 
@@ -124,8 +143,8 @@ static void autoload_names( array_list_t *out, int get_hidden )
 /**
    Free all contents of an entry to the function hash table
 */
-static void clear_function_entry( const void *key, 
-							   const void *data )
+static void clear_function_entry( void *key, 
+								  void *data )
 {
 	function_data_t *d = (function_data_t *)data;
 	free( (void *)d->cmd );
@@ -157,10 +176,13 @@ void function_add( const wchar_t *name,
 	wchar_t *cmd_end;
 	function_data_t *d;
 	
+	CHECK( name, );
+	CHECK( val, );
+	
 	function_remove( name );
 	
 	d = malloc( sizeof( function_data_t ) );
-	d->definition_offset = parse_util_lineno( parser_get_buffer(), current_block->tok_pos );
+	d->definition_offset = parse_util_lineno( parser_get_buffer(), current_block->tok_pos )-1;
 	d->cmd = wcsdup( val );
 	
 	cmd_end = d->cmd + wcslen(d->cmd)-1;
@@ -185,6 +207,9 @@ void function_add( const wchar_t *name,
 
 int function_exists( const wchar_t *cmd )
 {
+	
+	CHECK( cmd, 0 );
+	
 	if( parser_is_reserved(cmd) )
 		return 0;
 	
@@ -195,13 +220,15 @@ int function_exists( const wchar_t *cmd )
 void function_remove( const wchar_t *name )
 {
 	void *key;
-	const void *dv;
+	void *dv;
 	function_data_t *d;
 	event_t ev;
+	
+	CHECK( name, );
 
 	hash_remove( &function,
 				 name,
-				 (const void **) &key,
+				 &key,
 				 &dv );
 
 	d=(function_data_t *)dv;
@@ -214,11 +241,24 @@ void function_remove( const wchar_t *name )
 	event_remove( &ev );
 
 	clear_function_entry( key, d );
+
+	/*
+	  Notify the autoloader that the specified function is erased, but
+	  only if this call to fish_remove is not made by the autoloader
+	  itself.
+	*/
+	if( !is_autoload )
+	{
+		parse_util_unload( name, L"fish_function_path", 0 );
+	}
 }
 	
 const wchar_t *function_get_definition( const wchar_t *argv )
 {
 	function_data_t *data;
+	
+	CHECK( argv, 0 );
+	
 	load( argv );
 	data = (function_data_t *)hash_get( &function, argv );
 	if( data == 0 )
@@ -229,6 +269,9 @@ const wchar_t *function_get_definition( const wchar_t *argv )
 const wchar_t *function_get_desc( const wchar_t *argv )
 {
 	function_data_t *data;
+	
+	CHECK( argv, 0 );
+		
 	load( argv );
 	data = (function_data_t *)hash_get( &function, argv );
 	if( data == 0 )
@@ -240,6 +283,10 @@ const wchar_t *function_get_desc( const wchar_t *argv )
 void function_set_desc( const wchar_t *name, const wchar_t *desc )
 {
 	function_data_t *data;
+	
+	CHECK( name, );
+	CHECK( desc, );
+	
 	load( name );
 	data = (function_data_t *)hash_get( &function, name );
 	if( data == 0 )
@@ -248,6 +295,9 @@ void function_set_desc( const wchar_t *name, const wchar_t *desc )
 	data->desc =wcsdup(desc);
 }
 
+/**
+   Search arraylist of strings for specified string
+*/
 static int al_contains_str( array_list_t *list, const wchar_t * str )
 {
 	int i;
@@ -264,8 +314,8 @@ static int al_contains_str( array_list_t *list, const wchar_t * str )
 /**
    Helper function for removing hidden functions 
 */
-static void get_names_internal( const void *key,
-								const void *val,
+static void get_names_internal( void *key,
+								void *val,
 								void *aux )
 {
 	wchar_t *name = (wchar_t *)key;
@@ -280,9 +330,9 @@ static void get_names_internal( const void *key,
 /**
    Helper function for removing hidden functions 
 */
-static void get_names_internal_all( const void *key,
-								const void *val,
-								void *aux )
+static void get_names_internal_all( void *key,
+									void *val,
+									void *aux )
 {
 	wchar_t *name = (wchar_t *)key;
 	
@@ -294,6 +344,8 @@ static void get_names_internal_all( const void *key,
 
 void function_get_names( array_list_t *list, int get_hidden )
 {
+	CHECK( list, );
+		
 	autoload_names( list, get_hidden );
 	
 	if( get_hidden )
@@ -310,6 +362,9 @@ void function_get_names( array_list_t *list, int get_hidden )
 const wchar_t *function_get_definition_file( const wchar_t *argv )
 {
 	function_data_t *data;
+
+	CHECK( argv, 0 );
+		
 	load( argv );
 	data = (function_data_t *)hash_get( &function, argv );
 	if( data == 0 )
@@ -322,6 +377,9 @@ const wchar_t *function_get_definition_file( const wchar_t *argv )
 int function_get_definition_offset( const wchar_t *argv )
 {
 	function_data_t *data;
+
+	CHECK( argv, -1 );
+		
 	load( argv );
 	data = (function_data_t *)hash_get( &function, argv );
 	if( data == 0 )

@@ -18,6 +18,7 @@
 #include <dirent.h>
 #include <stdarg.h>
 #include <limits.h>
+#include <libgen.h>
 
 
 #include "fallback.h"
@@ -25,13 +26,21 @@
 
 #include "common.h"
 #include "wutil.h"
+#include "halloc.h"
+#include "halloc_util.h"
 
+/**
+   Minimum length of the internal covnersion buffers
+*/
 #define TMP_LEN_MIN 256
 
 #ifndef PATH_MAX
 #ifdef MAXPATHLEN
 #define PATH_MAX MAXPATHLEN
 #else
+/**
+   Fallback length of MAXPATHLEN. Just a hopefully sane value...
+*/
 #define PATH_MAX 4096
 #endif
 #endif
@@ -41,18 +50,30 @@
    the \c wutil_wcs2str() function.
 */
 static char *tmp=0;
-static wchar_t *tmp2=0;
+/**
+   Buffer for converting narrow results to wide ones, used by the \c
+   wutil_str2wcs() function. Avoid usign this without thinking about
+   it, since sebseuent calls will overwrite previous values.
+*/
+static wchar_t *tmp2;
 /**
    Length of the \c tmp buffer.
 */
 static size_t tmp_len=0;
-static size_t tmp2_len=0;
+
+/**
+   Length of the \c tmp2 buffer
+*/
+static size_t tmp2_len;
 
 /**
    Counts the number of calls to the wutil wrapper functions
 */
 static int wutil_calls = 0;
 
+/**
+   Storage for the wreaddir function
+*/
 static struct wdirent my_wdirent;
 
 void wutil_init()
@@ -63,6 +84,7 @@ void wutil_destroy()
 {
 	free( tmp );
 	free( tmp2 );
+
 	tmp=0;
 	tmp_len=0;
 	debug( 3, L"wutil functions called %d times", wutil_calls );
@@ -86,7 +108,7 @@ static char *wutil_wcs2str( const wchar_t *in )
 		tmp = realloc( tmp, new_sz );
 		if( !tmp )
 		{
-			die_mem();
+			DIE_MEM();
 		}
 		tmp_len = new_sz;
 	}
@@ -113,11 +135,11 @@ static wchar_t *wutil_str2wcs( const char *in )
 		tmp2 = realloc( tmp2, new_sz );
 		if( !tmp2 )
 		{
-			die_mem();
+			DIE_MEM();
 		}
 		tmp2_len = new_sz;
 	}
-
+	
 	return str2wcs_internal( in, tmp2 );
 }
 
@@ -281,11 +303,12 @@ int waccess(const wchar_t *file_name, int mode)
 
 void wperror(const wchar_t *s)
 {
+	int e = errno;
 	if( s != 0 )
 	{
 		fwprintf( stderr, L"%ls: ", s );
 	}
-	fwprintf( stderr, L"%s\n", strerror( errno ) );
+	fwprintf( stderr, L"%s\n", strerror( e ) );
 }
 
 #ifdef HAVE_REALPATH_NULL
@@ -343,3 +366,41 @@ wchar_t *wrealpath(const wchar_t *pathname, wchar_t *resolved_path)
 }
 
 #endif
+
+
+wchar_t *wdirname( const wchar_t *path )
+{
+	static string_buffer_t *sb = 0;
+	if( sb )
+		sb_clear(sb);
+	else 
+		sb = sb_halloc( global_context );
+	
+	char *tmp =wutil_wcs2str(path);
+	char *narrow_res = dirname( tmp );
+	if( !narrow_res )
+		return 0;
+	
+	sb_printf( sb, L"%s", narrow_res );
+	return (wchar_t *)sb->buff;
+}
+
+wchar_t *wbasename( const wchar_t *path )
+{
+	static string_buffer_t *sb = 0;
+	if( sb )
+		sb_clear(sb);
+	else 
+		sb = sb_halloc( global_context );
+	
+	char *tmp =wutil_wcs2str(path);
+	char *narrow_res = basename( tmp );
+	if( !narrow_res )
+		return 0;
+	
+	sb_printf( sb, L"%s", narrow_res );
+	return (wchar_t *)sb->buff;
+}
+
+
+
