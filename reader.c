@@ -93,7 +93,7 @@ commence.
 
 /**
    The maximum number of characters to read from the keyboard without
-   repainting. Note that this readahead wil only occur if new
+   repainting. Note that this readahead will only occur if new
    characters are avaialble for reading, fish will never block for
    more input without repainting.
 */
@@ -1007,12 +1007,13 @@ static int insert_str(wchar_t *str)
 	}
 	else
 	{
+		int old_len = data->buff_len;
 		
 		data->buff_len += len;
 		check_size();
 		
-		/* Insert space for extra character at the right position */
-		if( data->buff_pos < data->buff_len )
+		/* Insert space for extra characters at the right position */
+		if( data->buff_pos < old_len )
 		{
 			memmove( &data->buff[data->buff_pos+len],
 					 &data->buff[data->buff_pos],

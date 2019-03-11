@@ -22,28 +22,49 @@
 #include "common.h"
 #include "wutil.h"
 
+#define TMP_LEN_MIN 256
+
+/**
+   Buffer for converting wide arguments to narrow arguments, used by
+   the \c wutil_wcs2str() function.
+*/
 static char *tmp=0;
+/**
+   Length of the \c tmp buffer.
+*/
 static size_t tmp_len=0;
 
-int c = 0;
+/**
+   Counts the number of calls to the wutil wrapper functions
+*/
+static int wutil_calls = 0;
+
+void wutil_init()
+{
+}
 
 void wutil_destroy()
 {
 	free( tmp );
 	tmp=0;
 	tmp_len=0;
-	debug( 3, L"wutil functions called %d times", c );
+	debug( 3, L"wutil functions called %d times", wutil_calls );
 }
 
+/**
+   Convert the specified wide aharacter string to a narrow character
+   string. This function uses an internal temporary buffer for storing
+   the result so subsequent results will overwrite previous results.
+*/
 static char *wutil_wcs2str( const wchar_t *in )
 {
-	c++;
+	wutil_calls++;
 	
 	size_t new_sz =MAX_UTF8_BYTES*wcslen(in)+1;
 	if( tmp_len < new_sz )
 	{
-		free( tmp );
-		tmp = malloc( new_sz );
+		new_sz = maxi( new_sz, TMP_LEN_MIN );
+		tmp = realloc( tmp, new_sz );
 		if( !tmp )
 		{
 			die_mem();
@@ -109,14 +130,17 @@ int wopen(const wchar_t *pathname, int flags, ...)
 	
 	if( tmp )
 	{
-		va_start( argp, flags );
 		
 		if( ! (flags & O_CREAT) )
+		{
 			res = open(tmp, flags);
+		}
 		else
+		{
+			va_start( argp, flags );
 			res = open(tmp, flags, va_arg(argp, int) );
-		
-		va_end( argp );
+			va_end( argp );
+		}
 	}
 	
     return res;

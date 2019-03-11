@@ -1,5 +1,5 @@
 # Process this file with autoconf to produce a configure script.
-AC_INIT(fish,1.16.1,axel@liljencrantz.se)
+AC_INIT(fish,1.16.2,axel@liljencrantz.se)
 
 AC_CANONICAL_TARGET
 
@@ -36,20 +36,14 @@ else
 fi
 
 if [[ "$prefix" = NONE ]]; then
-   	AC_DEFINE_UNQUOTED( [PREFIX], L"/usr/local", [Installation directory])
+	AC_DEFINE_UNQUOTED( [PREFIX], L"/usr/local", [Installation directory])
 	AC_SUBST( PREFIX, /usr/local)
-   	AC_SUBST(sysconfdir,[/etc])
 	export prefix=/usr/local
 else
 	AC_DEFINE_UNQUOTED( [PREFIX], L"$prefix", [Installation directory])
 	AC_SUBST( PREFIX, [$prefix])
-   	AC_SUBST(sysconfdir,[/etc])
 fi
 
-if echo $prefix | grep \^$HOME >/dev/null; then
-  	AC_SUBST(sysconfdir,[$HOME/etc])
-	AC_MSG_NOTICE(["Install in $HOME"])
-fi
 AC_SUBST(fishdir,[/fish.d])
 AC_SUBST(fishfile,[/fish])
 AC_SUBST(fishinputfile,[/fish_inputrc])
@@ -61,7 +55,7 @@ if test -z $docdir; then
 fi
 
 AC_DEFINE_UNQUOTED( DOCDIR, [L"$(eval echo $docdir)"], [Documentation directory] )
-AC_DEFINE_UNQUOTED( SYSCONFDIR, [L"$sysconfdir"], [System configuration directory] )
+AC_DEFINE_UNQUOTED( SYSCONFDIR, [L"$(eval echo $sysconfdir)"], [System configuration directory] )
 
 # See if Linux procfs is present
 AC_CHECK_FILES([/proc/self/stat])

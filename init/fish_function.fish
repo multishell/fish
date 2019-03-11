@@ -32,7 +32,7 @@ function _contains_help -d "Helper function for contains"
 end
 
 function contains -d "Test if a key is contained in a set of values"
-	while count $argv >/dev/null
+	while set -q argv
 		switch $argv[1]
 			case '-h' '--h' '--he' '--hel' '--help'
 				_contains_help
@@ -56,8 +56,7 @@ function contains -d "Test if a key is contained in a set of values"
 		set -e argv[1]
 	end
 
-	if count $argv >/dev/null
-	else
+	if not set -q argv 
 		echo "contains: Key not specified"
 		return 1
 	end
@@ -288,18 +287,18 @@ function vared -d "Edit variable value"
 				else
 
 					printf "vared: %s is an array variable. Use " $argv
-					set_color $FISH_COLOR_COMMAND
+					set_color $fish_color_command
 					printf vared
-					set_color $FISH_COLOR_NORMAL
+					set_color $fish_color_normal
 					printf " %s[n] to edit the n:th element of %s\n" $argv $argv
 
 				end
 		end
 	else
 		printf "vared: Expected exactly one argument, got %s.\n\nSynopsis:\n\t" (count $argv)
-		set_color $FISH_COLOR_COMMAND
+		set_color $fish_color_command
 		printf vared
-		set_color $FISH_COLOR_NORMAL
+		set_color $fish_color_normal
 		printf " VARIABLE\n"
 	end
 end
@@ -927,6 +926,9 @@ end
 
 
 function psub -d "Read from stdin into a file and output the filename. Remove the file when the command that calles psub exits."
+
+	set -l filename
+	set -l funcname
 
 	if count $argv >/dev/null
 		switch $argv[1]

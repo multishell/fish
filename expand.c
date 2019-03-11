@@ -78,7 +78,43 @@ parameter expansion.
 #define LAST_STR L"last"
 
 /**
-   Return the environment variable value for the string starting at in 
+   Characters which make a string unclean if they are the first
+   character of the string. See \c is_clean().
+*/
+#define UNCLEAN_FIRST L"~%"
+/**
+   Unclean characters. See \c is_clean().
+*/
+#define UNCLEAN L"$*?\\\"'({})"
+
+/**
+   Test if the specified argument is clean, i.e. it does not contain
+   any tokens which need to be expanded or otherwise altered. Clean
+   strings can be passed through expand_string and expand_one without
+   changing them. About 90% of all strings are clean, so skipping
+   expantion on them actually does save a small amount of time.
+*/
+static int is_clean( const wchar_t *in )
+{
+	
+	const wchar_t * str = in;
+
+	if( wcschr( UNCLEAN_FIRST, *str ) )
+		return 0;
+	while( *str )
+	{
+		if( wcschr( UNCLEAN, *str ) )
+			return 0;
+		str++;
+	}
+
+//	debug( 1, L"%ls", in );
+	
+	return 1;
+}
+
+/**
+   Return the environment variable value for the string starting at \c in. 
 */
 static wchar_t *expand_var( wchar_t *in )
 {
@@ -1085,9 +1121,7 @@ static int expand_subshell( wchar_t *in, array_list_t *out )
 			
 			break;
 		
-	}
-	
-	
+	}	
 
 	len1 = (paran_begin-in);
 	len2 = wcslen(paran_end)-1;
@@ -1111,10 +1145,10 @@ static int expand_subshell( wchar_t *in, array_list_t *out )
 		free( subcmd );
 		return 0;
 	}	
-
+	
 	al_init( &tail_expand );
 	expand_subshell( wcsdup(paran_end+1), &tail_expand );
-
+	
     for( i=0; i<al_get_count( &sub_res ); i++ )
     {
         wchar_t *sub_item, *sub_item2;
@@ -1122,20 +1156,20 @@ static int expand_subshell( wchar_t *in, array_list_t *out )
         sub_item2 = expand_escape( sub_item, 1 );
 		free(sub_item);		
         int item_len = wcslen( sub_item2 );
-
+		
         for( j=0; j<al_get_count( &tail_expand ); j++ )
         {
             string_buffer_t whole_item;
             wchar_t *tail_item = (wchar_t *)al_get( &tail_expand, j );
-
+			
             sb_init( &whole_item );
-
+			
             sb_append_substring( &whole_item, in, len1 );
             sb_append_char( &whole_item, INTERNAL_SEPARATOR );
             sb_append_substring( &whole_item, sub_item2, item_len );
 			sb_append_char( &whole_item, INTERNAL_SEPARATOR );
             sb_append( &whole_item, tail_item );			
-
+			
             al_push( out, whole_item.buff );			
         }
 		
@@ -1147,7 +1181,7 @@ static int expand_subshell( wchar_t *in, array_list_t *out )
 	
 	al_foreach( &tail_expand, (void (*)(const void *))&free );
 	al_destroy( &tail_expand );
-
+	
 	free( subcmd );
 	return 1;	
 }
@@ -1210,7 +1244,7 @@ static int tilde_expand( wchar_t **ptr )
 			old_in = name_end;
 			
 			char *name_str = wcs2str( name );			
-
+			
 			struct passwd *userinfo = 
 				getpwnam( name_str );
 			
@@ -1311,7 +1345,13 @@ int expand_string( wchar_t *str,
 	
 	int i;
 	int subshell_ok = 1;
-	
+
+	if( (!(flags & ACCEPT_INCOMPLETE)) && is_clean( str ) )
+	{
+		al_push( end_out, str );
+		return 1;
+	}
+
 	al_init( &list1 );
 	al_init( &list2 );
 
@@ -1355,7 +1395,7 @@ int expand_string( wchar_t *str,
 		for( i=0; i<al_get_count( in ); i++ )
 		{
 			wchar_t *next;
-
+			
 			next = expand_unescape( (wchar_t *)al_get( in, i ), 
 									1);
 
@@ -1501,6 +1541,9 @@ wchar_t *expand_one( wchar_t *string, int flags )
 	array_list_t l;
 	int res;
 	wchar_t *one;
+
+	if( (!(flags & ACCEPT_INCOMPLETE)) &&  is_clean( string ) )
+		return string;	
 	
 	al_init( &l );
 	res = expand_string( string, &l, flags );
@@ -1520,7 +1563,7 @@ wchar_t *expand_one( wchar_t *string, int flags )
 			al_set( &l, 0, 0 );
 		}
 	}
-	
+
 	al_foreach( &l, (void(*)(const void *))&free );
 	al_destroy( &l );
 	return one;
