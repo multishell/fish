@@ -7,6 +7,7 @@
 
 #include "config.h"
 
+#include <linux/limits.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <sys/types.h>
