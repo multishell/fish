@@ -266,6 +266,7 @@ int main( int argc, char **argv )
 	env_init();
 	complete_init();
 	reader_init();
+	history_init();
 
 	if( read_init() )
 	{
@@ -297,10 +298,10 @@ int main( int argc, char **argv )
 					return 1;
 				}
 
-				sb_init( &sb );
-				
 				if( *(argv+2))
 				{
+					sb_init( &sb );
+				
 					for( i=1,ptr = argv+2; *ptr; i++, ptr++ )
 					{
 						if( i != 1 )
@@ -337,6 +338,7 @@ int main( int argc, char **argv )
 
 	proc_fire_event( L"PROCESS_EXIT", EVENT_EXIT, getpid(), res );
 
+	history_destroy();
 	complete_destroy();
 	proc_destroy();
 	env_destroy();

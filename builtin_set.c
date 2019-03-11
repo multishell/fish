@@ -26,6 +26,22 @@ Functions used for implementing the set builtin.
 #include "parser.h"
 #include "translate.h"
 
+/**
+   Call env_set. On error, print a description of the problem to
+   stderr.
+*/
+static void my_env_set( const wchar_t *key, const wchar_t *val, int scope )
+{
+	switch( env_set( key, val, scope | ENV_USER ) )
+	{
+		case ENV_PERM:
+		{
+			sb_printf( sb_err, _(L"%ls: Tried to change the read-only variable '%ls'\n"), L"set", key );
+			break;
+		}
+	}
+}
+
 /** 
 	Extract the name from a destination argument of the form name[index1 index2...]
 */
@@ -114,7 +130,12 @@ static int parse_fill_indexes( array_list_t *indexes,
 
 
 /**
-   Update a list by writing the specified values at the specified indexes
+   Update a list \c list by writing copies (using wcsdup) of the
+   values specified by \c values to the indexes specified by \c
+   indexes. The previous entries at the specidied position will be
+   free'd.
+
+   \return The number of elements in the list after the modifications have been made
 */
 static int update_values( array_list_t *list, 
 						  array_list_t *indexes,
@@ -122,16 +143,12 @@ static int update_values( array_list_t *list,
 {
 	int i;
 
-	//fwprintf(stderr, L"Scan complete\n");
 	/* Replace values where needed */
 	for( i = 0; i < al_get_count(indexes); i++ ) 
 	{
 		int ind = *(int *) al_get(indexes, i) - 1;
 		void *new = (void *) al_get(values, i);
-		if (al_get(list, ind) != 0) 
-		{
-			free((void *) al_get(list, ind));
-		}
+		free((void *) al_get(list, ind));
 		al_set(list, ind, new != 0 ? wcsdup(new) : wcsdup(L""));
 	}
   
@@ -169,8 +186,6 @@ static int erase_values(array_list_t *list, array_list_t *indexes)
 	int i;
 	array_list_t result;
 
-	//fwprintf(stderr, L"Starting with %d\n", al_get_count(list));
-
 	al_init(&result);
 
 	for (i = 0; i < al_get_count(list); i++) 
@@ -189,8 +204,6 @@ static int erase_values(array_list_t *list, array_list_t *indexes)
 	al_push_all( list, &result );
 	al_destroy(&result);
 
-	//fwprintf(stderr, L"Remaining: %d\n", al_get_count(&result));
-
 	return al_get_count(list);    
 }
 
@@ -207,8 +220,6 @@ static int fill_buffer_from_list(string_buffer_t *sb, array_list_t *list)
 		wchar_t *v = (wchar_t *) al_get(list, i);
 		if (v != 0) 
 		{
-			// fwprintf(stderr, L".\n");
-			// fwprintf(stderr, L"Collecting %ls from %d\n", v, i);
 			sb_append(sb, v);
 		}    
 		if (i < al_get_count(list) - 1)
@@ -260,6 +271,10 @@ static void print_variables(int include_values, int esc, int scope)
 
 int builtin_set( wchar_t **argv ) 
 {
+	
+	/**
+	   Variables used for parsing the argument list
+	*/
 	const static struct woption
 		long_options[] = 
 		{
@@ -293,7 +308,7 @@ int builtin_set( wchar_t **argv )
 		}
 	;
 	
-	wchar_t short_options[] = L"+xglenuUq";
+	const wchar_t *short_options = L"+xglenuUq";
 
 	int argc = builtin_count_args(argv);
 
@@ -363,6 +378,15 @@ int builtin_set( wchar_t **argv )
 		}
 	}
 
+	/*
+	  Ok, all arguments have been parsed, let's validate them
+	*/
+
+	/*
+	  If we are checking the existance of a variable (-q) we can not
+	  also specify scope
+	*/
+
 	if( query && (erase || list || global || local || universal || export || unexport ) )
 	{
 		sb_printf(sb_err,
@@ -375,7 +399,7 @@ int builtin_set( wchar_t **argv )
 	}
 	
 
-	/* Check operation and modifiers sanity */
+	/* We can't both list and erase varaibles */
 	if( erase && list ) 
 	{
 		sb_printf(sb_err,
@@ -387,6 +411,9 @@ int builtin_set( wchar_t **argv )
 		return 1;
 	}
 
+	/*
+	  Variables can only have one scope
+	*/
 	if( local + global + universal > 1 ) 
 	{
 		sb_printf( sb_err,
@@ -397,6 +424,9 @@ int builtin_set( wchar_t **argv )
 		return 1;
 	}
 
+	/*
+	  Variables can only have one export status
+	*/
 	if( export && unexport ) 
 	{
 		sb_printf( sb_err,
@@ -410,13 +440,16 @@ int builtin_set( wchar_t **argv )
 	if( query )
 	{
 		/*
-		  Query mode. Return number of specified variables that do not exist.
+		  Query mode. Return the number variables that do not exist
+		  out of the specified variables.
 		*/
 		int i;
 		for( i=woptind; i<argc; i++ )
 		{
 			if( !env_exist( argv[i] ) )
+			{
 				retcode++;
+			}
 			
 		}
 		return retcode;
@@ -427,8 +460,7 @@ int builtin_set( wchar_t **argv )
 	if( woptind < argc ) 
 	{
 		dest = wcsdup(argv[woptind++]);
-		//fwprintf(stderr, L"Dest: %ls\n", dest);
-
+		
 		if( !wcslen( dest ) )
 		{
 			free( dest );
@@ -444,7 +476,6 @@ int builtin_set( wchar_t **argv )
 	while( woptind < argc ) 
 	{
 		al_push(&values, argv[woptind++]);
-		//    fwprintf(stderr, L"Val: %ls\n", argv[woptind - 1]);
 	}
 
 	/* Extract variable name and indexes */
@@ -459,8 +490,7 @@ int builtin_set( wchar_t **argv )
 	if( !retcode )
 	{
 		name = (wchar_t *) name_sb.buff;
-		//fwprintf(stderr, L"Name is %ls\n", name);
-
+		
 		al_init(&indexes);
 		retval = parse_fill_indexes(&indexes, dest);
 		if (retval < 0) 
@@ -512,7 +542,7 @@ int builtin_set( wchar_t **argv )
 				!erase &&
 				!list )
 			{
-				env_set( name, 0, scope );
+				my_env_set( name, 0, scope );
 				finished = 1;
 			}
 		}
@@ -572,7 +602,7 @@ int builtin_set( wchar_t **argv )
 					else 
 					{
 						fill_buffer_from_list(&result_sb, &val_l);
-						env_set(name, (wchar_t *) result_sb.buff, scope);
+						my_env_set(name, (wchar_t *) result_sb.buff, scope);
 					}     
 				}
 				else
@@ -585,7 +615,7 @@ int builtin_set( wchar_t **argv )
 					fill_buffer_from_list( &result_sb,
 										   &val_l );
 
-					env_set(name,
+					my_env_set(name,
 							(wchar_t *) result_sb.buff,
 							scope);
 				}
@@ -601,7 +631,7 @@ int builtin_set( wchar_t **argv )
 	}
 	
 /* Common cleanup */
-//fwprintf(stderr, L"Cleanup\n");
+
 	free(dest);		
 	sb_destroy(&name_sb);
 	al_destroy( &values );

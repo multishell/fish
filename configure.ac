@@ -1,5 +1,5 @@
 # Process this file with autoconf to produce a configure script.
-AC_INIT(fish,1.21.4,fish-users@lists.sf.net)
+AC_INIT(fish,1.21.5,fish-users@lists.sf.net)
 
 # If needed, run autoconf to regenerate the configure file
 AC_MSG_CHECKING([if autoconf needs to be run])
@@ -85,7 +85,7 @@ AC_PROG_INSTALL
 # Check for doxygen, which is needed to build
 AC_CHECK_PROG( has_doxygen, [doxygen], "true")
 
-if ! test $has_doxygen = "true"; then
+if ! test "$has_doxygen" = "true"; then
 	AC_MSG_ERROR( [cannot find the Doxygen program in your path.
 This program is needed to build fish.
 Please install it and try again.])
@@ -276,7 +276,7 @@ AC_CHECK_HEADER([regex.h],
 # Check for presense of various functions
 AC_CHECK_FUNCS( wcsdup wcsndup wcslen wcscasecmp wcsncasecmp gettext fwprintf )
 AC_CHECK_FUNCS( futimes wcwidth wcswidth getopt_long wcstok fputwc fgetwc )
-AC_CHECK_FUNCS( wcstol dcgettext )
+AC_CHECK_FUNCS( wcstol dcgettext wcslcat wcslcpy )
 
 # Here follows a list of small programs used to test for various
 # features that Autoconf doesn't tell us about
