@@ -11,7 +11,7 @@ This is the documentation for \c fish, the friendly interactive
 shell. \c fish is a user friendly commandline shell intended
 mostly for interactive use. A shell is a program used to execute other
 programs. For the latest information on \c fish, please visit the <a
-href="http://www.fishshell.org"><code>fish</code> homepage</a>.
+href="http://fishshell.com/"><code>fish</code> homepage</a>.
 
 \section syntax Syntax overview
 
@@ -48,7 +48,7 @@ Every program on your computer can be used as a command in \c fish. If
 the program file is located in one of the directories in the <a
 href="#variables-special">PATH</a>, it is sufficient to type the name
 of the program to use it. Otherwise the whole filename, including the
-directory (like \c /home/me/code/checkers/checkers or \c ../checkers)
+directory (like \c /home/me/code/checkers/checkers or <code>../checkers</code>)
 has to be used.
 
 Here is a list of some useful commands:
@@ -59,7 +59,7 @@ Here is a list of some useful commands:
 - \c mv, move (rename) files
 - \c cp, copy files
 - \c open, open files with the default application associated with each filetype
-- \c less, list the contents of files 
+- \c less, list the contents of files
 
 Commands and parameters are separated by the space character
 (&nbsp;). Every command ends with either a newline (i.e. by pressing
@@ -80,7 +80,7 @@ while '-f' will turn it off.
 
 \subsection quotes Quotes
 
-Sometimes features such as <a href="#globbing">parameter expansion</a>
+Sometimes features such as <a href="#expand">parameter expansion</a>
 and <a href="#escapes">character escapes</a> get in the way. When that
 happens, the user can write a parameter within quotes, either '
 (single quote) or " (double quote). There is one important difference
@@ -92,8 +92,9 @@ only backslash escape accepted within single quotes is \\', which
 escapes a single quote and \\\\, which escapes the backslash
 symbol. The only backslash escapes accepted within double quotes are
 \\", which escapes a double quote, \\$, which escapes a dollar
-character, and \\\\, which escapes the backslash symbol. Single quotes
-have no special meaning withing double quotes and vice versa.
+character, \\ followed by a newline, which deletes the backslash
+and the newline, and lastly \\\\, which escapes the backslash symbol.
+Single quotes have no special meaning within double quotes and vice versa.
 
 Example:
 
@@ -110,31 +111,35 @@ would remove the two files 'cumbersome' and 'filename.txt'.
 Some characters can not be written directly on the command line. For
 these characters, so called escape sequences are provided. These are:
 
-- <code>'\\a'</code>, escapes the alert character
-- <code>'\\b'</code>, escapes the backspace character
-- <code>'\\e'</code>, escapes the escape character
-- <code>'\\f'</code>, escapes the form feed character
-- <code>'\\n'</code>, escapes a newline character
-- <code>'\\r'</code>, escapes the carriage return character
-- <code>'\\t'</code>, escapes the tab character
-- <code>'\\v'</code>, escapes the vertical tab character
-- <code>'\\ '</code>, escapes the space character
-- <code>'\\$'</code>, escapes the dollar character
-- <code>'\\\\'</code>, escapes the backslash character
-- <code>'\\*'</code>, escapes the star character
-- <code>'\\?'</code>, escapes the question mark character
-- <code>'\\~'</code>, escapes the tilde character
-- <code>'\\%'</code>, escapes the percent character
-- <code>'\\#'</code>, escapes the hash character
-- <code>'\\('</code>, escapes the left parenthesis character
-- <code>'\\)'</code>, escapes the right parenthesis character
-- <code>'\\{'</code>, escapes the left curly bracket character
-- <code>'\\}'</code>, escapes the right curly bracket character
-- <code>'\\['</code>, escapes the left bracket character
-- <code>'\\]'</code>, escapes the right bracket character
-- <code>'\\\<'</code>, escapes the less than character
-- <code>'\\\>'</code>, escapes the more than character
-- <code>'\\^'</code>, escapes the circumflex character
+- <code>'\\a'</code> escapes the alert character
+- <code>'\\b'</code> escapes the backspace character
+- <code>'\\e'</code> escapes the escape character
+- <code>'\\f'</code> escapes the form feed character
+- <code>'\\n'</code> escapes a newline character
+- <code>'\\r'</code> escapes the carriage return character
+- <code>'\\t'</code> escapes the tab character
+- <code>'\\v'</code> escapes the vertical tab character
+- <code>'\\ '</code> escapes the space character
+- <code>'\\$'</code> escapes the dollar character
+- <code>'\\\\'</code> escapes the backslash character
+- <code>'\\*'</code> escapes the star character
+- <code>'\\?'</code> escapes the question mark character
+- <code>'\\~'</code> escapes the tilde character
+- <code>'\\%%'</code> escapes the percent character
+- <code>'\\#'</code> escapes the hash character
+- <code>'\\('</code> escapes the left parenthesis character
+- <code>'\\)'</code> escapes the right parenthesis character
+- <code>'\\{'</code> escapes the left curly bracket character
+- <code>'\\}'</code> escapes the right curly bracket character
+- <code>'\\['</code> escapes the left bracket character
+- <code>'\\]'</code> escapes the right bracket character
+- <code>'\\\<'</code> escapes the less than character
+- <code>'\\\>'</code> escapes the more than character
+- <code>'\\^'</code> escapes the circumflex character
+- <code>'\\&'</code> escapes the ampersand character
+- <code>'\\;'</code> escapes the semicolon character
+- <code>'\\"'</code> escapes the quote character
+- <code>'\\''</code> escapes the apostrophe character
 - <code>'\\x<i>xx</i>'</code>, where <code><i>xx</i></code> is a hexadecimal number, escapes the ascii character with the specified value. For example, \\x9 is the tab character.
 - <code>'\\X<i>xx</i>'</code>, where <code><i>xx</i></code> is a hexadecimal number, escapes a byte of data with the specified value. If you are using a mutibyte encoding, this can be used to enter invalid strings. Only use this if you know what you are doing.
 - <code>'\\<i>ooo</i>'</code>, where <code><i>ooo</i></code> is an octal number, escapes the ascii character with the specified value. For example, \\011 is the tab character.
@@ -142,12 +147,12 @@ these characters, so called escape sequences are provided. These are:
 - <code>'\\U<i>xxxxxxxx</i>'</code>, where <code><i>xxxxxxxx</i></code> is a hexadecimal number, escapes the 32-bit Unicode character with the specified value. For example, \\U9 is the tab character.
 - <code>'\\c<i>x</i>'</code>, where <code><i>x</i></code> is a letter of the alphabet, escapes the control sequence generated by pressing the control key and the specified letter. For example, \\ci is the tab character
 
-\subsection redirects IO redirection
+\subsection redirects Input/Output (IO) redirection
 
-Most program use three types of input/output (IO), each represented by
+Most programs use three input/output (IO) streams, each represented by
 a number called a file descriptor (FD). These are:
 
-- Standard input, FD 0, for reading, defaults to reading from the keyboard. 
+- Standard input, FD 0, for reading, defaults to reading from the keyboard.
 - Standard output, FD 1, for writing, defaults to writing to the screen.
 - Standard error, FD 2, for writing errors and warnings, defaults to writing to the screen.
 
@@ -158,15 +163,15 @@ Any file descriptor can be directed to a different output than its
 default through a simple mechanism called a redirection.
 
 An example of a file redirection is <code> echo hello \>output.txt</code>,
-which directs the output of the echo command to the file error.txt.
+which directs the output of the echo command to the file output.txt.
 
-- To redirect standard input, write <code>\<SOURCE_FILE</code> 
-- To redirect standard output, write <code>\>DESTINATION</code> 
-- To redirect standard error, write <code>^DESTINATION</code> 
+- To redirect standard input, write <code>\<SOURCE_FILE</code>
+- To redirect standard output, write <code>\>DESTINATION</code>
+- To redirect standard error, write <code>^DESTINATION</code>
 - To redirect standard output to a file which will be appended, write <code>\>\>DESTINATION_FILE</code>
-- To redirect standard error to a file which will be appended, write <code>^^DESTINATION_FILE</code> 
+- To redirect standard error to a file which will be appended, write <code>^^DESTINATION_FILE</code>
 
-<code>DESTINATION</code> can be one of the following: 
+<code>DESTINATION</code> can be one of the following:
 
 - A filename. The output will be written to the specified file.
 - An ampersand (\&) followed by the number of another file descriptor. The file descriptor will be a duplicate of the specified file descriptor.
@@ -182,7 +187,7 @@ Any FD can be redirected in an arbitrary way by prefixing the
 redirection with the number of the FD.
 
 - To redirect input of FD number N, write <code>N\<DESTINATION</code>
-- To redirect output of FD number N, write <code>N\>DESTINATION</code> 
+- To redirect output of FD number N, write <code>N\>DESTINATION</code>
 - To redirect output of FD number N to a file which will be appended, write <code>N\>\>DESTINATION_FILE</code>
 
 Example: <code>echo Hello 2\>-</code> and <code>echo Hello ^-</code> are
@@ -221,7 +226,7 @@ using the less pager.
 When you start a job in \c fish, \c fish itself will pause, and give
 control of the terminal to the program just started. Sometimes, you
 want to continue using the commandline, and have the job run in the
-background. To create a background job, append a \& (ampersand) to
+background. To create a background job, append an \& (ampersand) to
 your command. This will tell fish to run the job in the
 background. Background jobs are very useful when running programs that
 have a graphical user interface.
@@ -230,16 +235,16 @@ Example:
 
 <code>emacs \&</code>
 
-will start the emacs text editor in the background. 
+will start the emacs text editor in the background.
 
 \subsection syntax-job-control Job control
 
-Most programs allow you to suspend the programs execution and return
-control to \c fish by Pressing ^Z (Press and hold the Control key and
+Most programs allow you to suspend the program's execution and return
+control to \c fish by pressing ^Z (press and hold the Control key and
 press 'z'). Once back at the \c fish commandline, you can start other
-programs and do anything you want. If you then want to go back to the
-suspended command by using the <a href="commands.html#fg">fg</a>
-command.
+programs and do anything you want. If you then want you can go back to
+the suspended command by using the <a href="commands.html#fg">fg</a>
+(foreground) command.
 
 If you instead want to put a suspended job into the background, use
 the <a href="commands.html#bg">bg</a> command.
@@ -247,12 +252,14 @@ the <a href="commands.html#bg">bg</a> command.
 To get a listing of all currently started jobs, use the <a
 href="commands.html#jobs">jobs</a> command.
 
-\subsection syntax-function Shellscript functions
+\subsection syntax-function Functions
 
-Functions are used to group together commands and arguments using a
-single name. It can also be used to start a specific command with
-additional arguments. For example, the following is a function
-definition that calls the command 'ls -l' to print a detailed listing
+Functions are programs written in the fish syntax. They group together one
+or more commands and their arguments using a single name. It can also be
+used to start a specific command with additional arguments.
+
+For example, the following is a function definition that calls the command
+\c ls with the argument '-l' to print a detailed listing
 of the contents of the current directory:
 
 <pre>
@@ -261,7 +268,7 @@ function ll
 end
 </pre>
 
-The first line tells fish that a function by the name of ll is to be
+The first line tells fish that a function by the name of \c ll is to be
 defined. To use it, simply write <code>ll</code> on the
 commandline. The second line tells fish that the command <code>ls -l
 $argv</code> should be called when ll is invoked. $argv is an array
@@ -270,42 +277,44 @@ the example above, these are simply passed on to the ls command. For
 more information on functions, see the documentation for the <a
 href='commands.html#function'>function</a> builtin.
 
-\subsubsection syntax-function-wrappers Defining wrapper functions
+\subsubsection syntax-function-wrappers Defining aliases
 
-One of the most common used for functions is to slightly alter the
+One of the most common uses for functions is to slightly alter the
 behavior of an already existing command. For example, one might want
 to redefine the \c ls command to display colors. The switch for
-turning on colors on GNU systems is \c '--color=auto'. A wrapper
-around \c ls might look like this:
+turning on colors on GNU systems is \c '--color=auto'. An alias, or
+wrapper, around \c ls might look like this:
 
 <pre>function ls
-	ls --color=auto $argv
+	command ls --color=auto $argv
 end
 </pre>
 
-There are a few important things that need to be noted about wrapper
-functions:
+There are a few important things that need to be noted about aliases:
 
-- Wrappers should always take care to add the $argv variable to the list of parameters to the wrapped command. This makes sure that if the user specifies any additional parameters to the function, they are passed on to the underlying command.
-- If the wrapped command is not the first command to be called by the wrapper, it is necessary to prefix the call to the command with the word 'command' in order to tell fish that the function should not call itself, but rather a command with the same name. Failing to do so will cause infinite recursion bugs.
+- Always take care to add the \c $argv variable to the list of parameters to the wrapped command. This makes sure that if the user specifies any additional parameters to the function, they are passed on to the underlying command.
+- If the alias has the same name as the aliased command, it is necessary to prefix the call to the program with \c command in order to tell fish that the function should not call itself, but rather a command with the same name. Failing to do so will cause infinite recursion bugs.
+
+To easily create a function of this form, you can use the
+<a href="commands.html#alias">alias</a> command.
 
 \subsubsection syntax-function-autoloading Autoloading functions
 
 Functions can be defined on the commandline or in a configuration
 file, but they can also be automatically loaded. This method of
 defining functions has several advantages. An autoloaded function
-becomes available automatically to all running shells, if the function
+becomes available automatically to all running shells. If the function
 definition is changed, all running shells will automatically reload
-the altered version, startup time and memory usage is improved, etc.
+the altered version. Startup time and memory usage is improved, etc.
 
 Fish automatically searches through any directories in the array
-variable \$fish_function_path, and any functions defined are
+variable \c $fish_function_path, and any functions defined are
 automatically loaded when needed. A function definition file must have
 a filename consisting of the name of the function plus the suffix
 '.fish'.
 
-The default value for \$fish_function_path is \c ~/.config/fish/functions
-\c /etc/fish/functions \c /usr/share/fish/functions. The exact path
+The default value for \c $fish_function_path is <code>~/.config/fish/functions
+/etc/fish/functions /usr/share/fish/functions</code>. The exact path
 to the last two of these may be slightly different depending on what
 install path prefix was chosen at configuration time. The rationale
 behind having three different directories is that the first one is for
@@ -316,17 +325,17 @@ administrator can override default fish functions, and the user can
 override functions defined by the system administrator.
 
 It is very important that function definition files only contain the
-definition for the specified function and nothing else, otherwise it
+definition for the specified function and nothing else. Otherwise, it
 is possible that autoloading a function files requires that the
-function already be loaded, i.e. a circular dependency.
+function already be loaded, which creates a circular dependency.
 
-\subsection syntax-conditional Conditional execution of code
+\subsection syntax-conditional Conditional execution of code and flow control
 
 There are four fish builtins that let you execute commands only if a
-specific criterion is met. These builtins are 
-<a href="commands.html#if">if</a>, 
-<a href="commands.html#switch">switch</a>, 
-<a href="commands.html#and">and</a> and 
+specific criterion is met. These builtins are
+<a href="commands.html#if">if</a>,
+<a href="commands.html#switch">switch</a>,
+<a href="commands.html#and">and</a> and
 <a href="commands.html#or">or</a>.
 
 The \c switch command is used to execute one of possibly many blocks
@@ -335,7 +344,7 @@ for <a href="commands.html#switch">switch</a> for more information.
 
 The other conditionals use the <a href='#variables-status'>exit
 status</a> of a command to decide if a command or a block of commands
-should be executed. See the documentation for 
+should be executed. See the documentation for
 <a href="commands.html#if">if</a>, <a href="commands.html#and">and</a>
 and <a href="commands.html#or">or</a> for more information.
 
@@ -355,10 +364,13 @@ This is a short explanation of some of the commonly used words in fish.
 \section help Help
 
 \c fish has an extensive help system. Use the <a
-href="commands.html#help"><code>help</code></a> command to obtain help on
+href="commands.html#help">help</a> command to obtain help on
 a specific subject or command. For instance, writing <code>help
 syntax</code> displays the <a href="#syntax">syntax section</a> of this
 documentation.
+
+fish also has man pages for its commands. For example, <code>man set</code>
+will show the documentation for \c set as a man page.
 
 Help on a specific builtin can also be obtained with the <code>-h</code>
 parameter. For instance, to obtain help on the \c fg builtin, either
@@ -382,24 +394,24 @@ command line.
 
 These are the general purpose tab completions that \c fish provides:
 
-- Completion of commands, both builtins, functions and regular programs.
+- Completion of commands (builtins, functions and regular programs).
 - Completion of environment variable names.
 - Completion of usernames for tilde expansion.
 - Completion of filenames, even on strings with wildcards such as '*', '**' and '?'.
-- Completion of job id, job name and process names for <a href="#expand-process">process expansion</a>.
+- Completion of job ID, job name and process names for <a href="#expand-process">process expansion</a>.
 
 \c fish provides a large number of program specific completions. Most
 of these completions are simple options like the \c -l option for \c
 ls, but some are more advanced. The latter include:
 
-- The programs 'man' and 'whatis' show all installed 
+- The programs \c man and \c whatis show all installed
 manual pages as completions.
-- The 'make' program uses all targets in the Makefile in 
+- The \c make program uses all targets in the Makefile in
 the current directory as completions.
-- The 'mount' command uses all mount points specified in fstab as completions.
-- The 'ssh' command uses all hosts that are stored 
-in the known_hosts file as completions. (see the ssh documentation for more information) 
-- The 'su' command uses all users on the system as completions.
+- The \c mount command uses all mount points specified in fstab as completions.
+- The \c ssh command uses all hosts that are stored
+in the known_hosts file as completions. (See the ssh documentation for more information)
+- The \c su command uses all users on the system as completions.
 - The \c apt-get, \c rpm and \c yum commands use all installed packages as completions.
 
 \subsection completion-own Writing your own completions
@@ -415,7 +427,7 @@ this can be specified as <code>complete -c myprog -a 'start
 stop'</code>. The argument to the \c -a switch is always a single
 string. At completion time, it will be tokenized on spaces and tabs,
 and variable expansion, command substitution and other forms of
-parameter expansion will take place. 
+parameter expansion will take place.
 
 Fish has a special syntax to support specifying switches accepted by a
 command. The switches \c -s, \c -l and \c -o are used to specify a
@@ -436,7 +448,7 @@ href="commands.html#complete">complete</a> builtin, or write 'complete
 --help' inside the \c fish shell.
 
 For examples of how to write your own complex completions, study the
-completions in /usr/share/fish/completions. (The exact path depends on
+completions in \c /usr/share/fish/completions. (The exact path depends on
 your chosen installation prefix and may be slightly different)
 
 \subsection completion-func Useful functions for writing completions
@@ -503,12 +515,12 @@ Debian, rpm and Gentoo packages.
 Completions can be defined on the commandline or in a configuration
 file, but they can also be automatically loaded. Fish automatically
 searches through any directories in the array variable
-\$fish_complete_path, and any completions defined are automatically
+\c $fish_complete_path, and any completions defined are automatically
 loaded when needed. A completion file must have a filename consisting
 of the name of the command to complete and the suffix '.fish'.
 
-The default value for \$fish_complete_path is ~/.config/fish/completions,
-/etc/fish/completions and /usr/share/fish/completions. The exact
+The default value for \c $fish_complete_path is <code>~/.config/fish/completions
+/etc/fish/completions /usr/share/fish/completions</code>. The exact
 path to the last two of these may be slightly different depending on
 what install path prefix was chosen at configuration time. If a
 suitable file is found in one of these directories, it will be
@@ -518,21 +530,21 @@ user specific completions, the second one is for system-wide
 completions and the last one is for default fish completions.
 
 If you have written new completions for a common
-Unix command, please consider sharing your work by sending it to <a
-href='mailto: fish-users@lists.sf.net'>the fish mailing list</a>.
+Unix command, please consider sharing your work by submitting it via
+the instructions in <a href="#more-help">Further help and development</a>.
 
 
 \section expand Parameter expansion (Globbing)
 
 When an argument for a program is given on the commandline, it
 undergoes the process of parameter expansion before it is sent on to
-the command. Parameter expansion is a powerful set of mechanisms that
-allow you to expand the parameter in various ways, including
+the command. Parameter expansion is a powerful mechanism that
+allows you to expand the parameter in various ways, including
 performing wildcard matching on files, inserting the value of
 environment variables into the parameter or even using the output of
 another command as a parameter list.
 
-\subsection expand-wildcard Wildcards 
+\subsection expand-wildcard Wildcards
 
 If a star (*) or a question mark (?) is present in the parameter, \c
 fish attempts to match the given parameter to any files in such a
@@ -559,7 +571,7 @@ Examples:
 
 <code>**</code> matches any files and directories in the current directory and all of its subdirectories.
 
-If no matches are found for a specific wildcard, it will expand into
+Note that if no matches are found for a specific wildcard, it will expand into
 zero arguments, i.e. to nothing. If none of the wildcarded arguments
 sent to a command result in any matches, the command will not be
 executed. If this happens when using the shell interactively, a
@@ -567,24 +579,27 @@ warning will also be printed.
 
 \subsection expand-command-substitution Command substitution
 
-If a parameter contains a set of parenthesis, the text enclosed by the
+The output of a series of commands can be used as the parameters to another
+command. If a parameter contains a set of parenthesis, the text enclosed by the
 parenthesis will be interpreted as a list of commands. On expansion,
 this list is executed, and substituted by the output. If the output is
 more than one line long, each line will be expanded to a new
 parameter.
 
-A command substitution will not change the value of the <a
-href='#variables-status'>status</a> variable outside of the command
-substitution.
+The exit status of the last run command substitution is available in the <a
+href='#variables-status'>status</a> variable.
 
-Example:
+Only part of the output can be used, see <a href='#expand-index-range'>index
+range expansion</a> for details.
+
+Examples:
 
 The command <code>echo (basename image.jpg .jpg).png</code> will
 output 'image.png'.
 
 The command <code>for i in *.jpg; convert $i (basename $i .jpg).png;
-end</code> will convert all Jpeg files in the current directory to the
-PNG format.
+end</code> will convert all JPEG files in the current directory to the
+PNG format using the \c convert program.
 
 
 \subsection expand-brace Brace expansion
@@ -604,36 +619,27 @@ The command <code>mv *.{c,h} src/</code> moves all files with the suffix
 A dollar sign followed by a string of characters is expanded into the
 value of the environment variable with the same name. For an
 introduction to the concept of environment variables, read the <a
-href="#variables"> Environment variables</a> section.
+href="#variables">Environment variables</a> section.
 
-Example:
+Undefined and empty variables expand to nothing.
 
-<code> echo \$HOME</code> prints the home directory of the current
-user. 
+To separate a variable name from text it should immediately be followed by,
+encase the variable within braces.
 
-If you wish to combine environment variables with text, you can
-encase the variables within braces to embed a variable inside running
-text like <code>echo Konnichiwa {$USER}san</code>, which will print a
-personalized Japanese greeting.
+Examples:
 
-The {$USER}san syntax might need a bit of an elaboration.  Posix
-shells allow you to specify a variable name using '$VARNAME' or
-'${VARNAME}'. Fish supports the former, and has no support whatsoever
-for the latter or anything like it. So what is '{$VARNAME}' then?
-Well, '{WHATEVER}' is <a href='#brace'>brace expansion</a>, identical
-to that supported by e.g. bash.  'a{b,c}d' -> 'abd acd' works
-both in bash and on fish. So '{$VARNAME}' is a bracket-expansion with
-only a single element, i.e.  it becomes expanded to '$VARNAME', which
-will be variable expanded to the value of the variable 'VARNAME'. So
-you might think that the brackets don't actually do anything, and that
-is nearly the truth. The snag is that there once along the way was a
-'}' in there somewhere, and } is not a valid character in a variable
-name.  So anything after the otherwise pointless bracket expansion
-becomes explicitly NOT a part of the variable name, even if it happens
-to be a legal variable name character. That's why '{$USER}san' looks
-for the variable '$USER' and not for the variable '$USERsan'. It's
-simply a case of one syntax lending itself nicely to solving an
-unrelated problem in its spare time.
+<code>echo $HOME</code> prints the home directory of the current
+user.
+
+<code>echo $nonexistentvariable</code> prints no output.
+
+<code>echo The plural of $WORD is {$WORD}s</code> prints "The plural of
+cat is cats" when \c $WORD is set to cat. Note that without the braces, fish
+will try to expand a variable called <code>$WORDs</code>, which may not exist.
+
+The latter syntax works by exploiting <a href="#expand-brace">brace
+expansion</a>; care should be taken with array variables and undefined
+variables, as these behave very differently to POSIX shells.
 
 Variable expansion is the only type of expansion performed on double
 quoted strings. There is, however, an important difference in how
@@ -645,7 +651,9 @@ array of five elements, the argument $foo will expand to five
 elements. When quoted, like "$foo", a variable expansion will always
 result in exactly one argument. Undefined variables will expand to the
 empty string, and array variables will be concatenated using the space
-character.
+character. The dangers noted in the third example above can therefore be
+avoided by wrapping the variable in double quotes
+(<code>echo {"$WORD"}s</code>).
 
 There is one further notable feature of fish variable
 expansion. Consider the following code snippet:
@@ -664,12 +672,56 @@ end
 
 The above code demonstrates how to use multiple '$' symbols to expand
 the value of a variable as a variable name. One can think of
-the $-symbol as a variable dereference operator. When using this
+the $ symbol as a variable dereference operator. When using this
 feature together with array brackets, the brackets will always match
-the innermost $ dereference. Thus, $$foo[5] will always mean the fifth
-element of the foo variable should be dereferenced and never that the fifth
-element of the doubly dereferenced variable foo. The latter can
-instead be expressed as $$foo[1][5].
+the innermost $ dereference. Thus, <code>$$foo[5]</code> will always mean the fifth
+element of the \c foo variable should be dereferenced, not the fifth
+element of the doubly dereferenced variable \c foo. The latter can
+instead be expressed as <code>$$foo[1][5]</code>.
+
+\subsection expand-index-range Index range expansion
+
+Both command substitution and environment variables support accessing only 
+specific items by providing a set of indices in square brackets. It's 
+often needed to access a sequence of elements. To do this, use the range
+operator '..' for this. A range <code>'a..b'</code>, where range limits 'a'
+and 'b' are integer numbers, is expanded into a sequence of indices
+'a a+1 a+2 ... b' or 'a a-1 a-2 ... b' depending on which of 'a' or 'b' 
+is higher. The negative range limits are calculated from the end of the array
+or command substitution.
+
+Some examples:
+<pre>
+# Limit the command substitution output
+echo (seq 10)[2..5] # will use elements from 2 to 5
+# Output is:
+# 2 3 4 5
+
+# Use overlapping ranges:
+echo (seq 10)[2..5 1..3] # will take elements from 2 to 5 and then elements from 1 to 3 
+# Output is:
+# 2 3 4 5 1 2 3
+
+# Reverse output
+echo (seq 10)[-1..1] # will use elements from the last output line to the first one in reverse direction
+# Output is:
+# 10 9 8 7 6 5 4 3 2 1
+</pre>
+
+The same works when setting or expanding variables:
+<pre>
+# Reverse path variable
+set PATH $PATH[-1..1]
+# or 
+set PATH[-1..1] $PATH
+
+# Use only n last items of the PATH
+set n -3
+echo $PATH[$n..-1]
+</pre>
+
+Note that variables can be used as indices for expansion of variables, but not
+command substitution.
 
 \subsection expand-home Home directory expansion
 
@@ -681,19 +733,20 @@ directory of the process owner.
 \subsection expand-process Process expansion
 
 The \% (percent) character at the beginning of a parameter followed by
-a string is expanded into a process id. The following expansions are
+a string is expanded into a process ID (PID). The following expansions are
 performed:
 
-- If the string is the entire word \c self, the shells pid is the result
-- Otherwise, if the string is the id of a job, the result is the process
-group id of the job.
-- Otherwise, if any child processes match the specified string, their 
-pids are the result of the expansion. 
-- Otherwise, if any processes owned by the user match the specified 
-string, their pids are the result of the expansion.
+- If the string is the entire word \c self, the shell's PID is the result.
+- Otherwise, if the string is the ID of a job, the result is the process
+group ID of the job.
+- Otherwise, if any child processes match the specified string, their
+PIDs are the result of the expansion.
+- Otherwise, if any processes owned by the user match the specified
+string, their PIDs are the result of the expansion.
+- If none of these matches apply, an error is produced.
 
 This form of expansion is useful for commands like kill and fg, which
-take the process ids as an argument.
+take process IDs as arguments.
 
 Example:
 
@@ -702,7 +755,7 @@ with the letters 'ema', such as emacs, and if found, put it in the
 foreground.
 
 <code>kill -s SIGINT \%3</code> will send the SIGINT signal to the job
-with job id 3.
+with job ID 3.
 
 \subsection  combine Combining different expansions
 
@@ -730,16 +783,13 @@ will output 'abar1 abar2 abar3 afoo1 afoo2 afoo3'.
 
 \section variables Environment variables
 
-The concept of environment variables are central to any
-shell. Environment variables are variables, whose values can be set
-and used by the user. For information on how to use the current value
-of a variable, see the section on <a href='#expand-variable'>variable
-expansion</a>.
+Environment variables are named pieces of data, which can be created, deleted
+and their values changed and used by the user.
 
 To set a variable value, use the <a href="commands.html#set"> \c set
 command</a>.
 
-Example: 
+Example:
 
 To set the variable \c smurf_color to the value \c blue, use the command
 <code>set smurf_color blue</code>.
@@ -756,7 +806,7 @@ usually blue'.
 
 \subsection variables-scope Variable scope
 
-There are three kinds of variables in fish, universal, global and
+There are three kinds of variables in fish: universal, global and
 local variables. Universal variables are shared between all fish
 sessions a user is running on one computer. Global variables are
 specific to the current fish session, but are not associated with any
@@ -765,9 +815,9 @@ explicitly requests it using <code>set -e</code>. Local variables are
 specific to the current fish session, and associated with a specific
 block of commands, and is automatically erased when a specific block
 goes out of scope. A block of commands is a series of commands that
-begins with one of the commands \c 'for, \c 'while' , \c 'if', \c
-'function', \c 'begin' or \c 'switch', and ends with the command \c
-'end'. The user can specify that a variable should have either global
+begins with one of the commands \c for, \c while , \c if, \c
+function, \c begin or \c switch, and ends with the command \c
+end. The user can specify that a variable should have either global
 or local scope using the \c -g/--global or \c -l/--local switches.
 
 Variables can be explicitly set to be universal with the \c -U or \c
@@ -777,7 +827,7 @@ creating or updating a variable are:
 
 -# If a variable is explicitly set to either universal, global or local, that setting will be honored. If a variable of the same name exists in a different scope, that variable will not be changed.
 -# If a variable is not explicitly set to be either universal, global or local, but has been previously defined, the variable scope is not changed.
--# If a variable is not explicitly set to be either universal, global or local and has never before been defined, the variable will be local to the currently executing functions. If no function is executing, the variable will be global.
+-# If a variable is not explicitly set to be either universal, global or local and has never before been defined, the variable will be local to the currently executing function. Note that this is different from using the \c -l or \c --local flag. If one of those flags is used, the variable will be local to the most inner currently executing block, while without these the variable will be local to the function. If no function is executing, the variable will be global.
 
 There may be many variables with the same name, but different scopes.
 When using a variable, the variable scope will be searched from the
@@ -815,7 +865,7 @@ prompt will instantly change to blue on both terminals.
 
 \subsection variables-functions Variable scope for functions
 
-When calling a function, all non-global variables temporarily
+When calling a function, all current local variables temporarily
 disappear. This shadowing of the local scope is needed since the
 variable namespace would become cluttered, making it very easy to
 accidentally overwrite variables from another function.
@@ -868,8 +918,8 @@ echo $PATH[3]
 </pre>
 
 Note that array indices start at 1 in fish, not 0, as is more common
-in other languages. This is because many common Unix tools like seq
-are more suited to such use. 
+in other languages. This is because many common Unix tools like \c seq
+are more suited to such use.
 
 If you do not use any brackets, all the elements of the array will be
 written as separate items. This means you can easily iterate over an
@@ -906,44 +956,49 @@ If you specify a negative index when expanding or assigning to an
 array variable, the index will be calculated from the end of the
 array. For example, the index -1 means the last index of an array.
 
+A range of indices can be specified, see <a href='#expand-index-range'>index
+range expansion</a> for details.
+
+All arrays are one-dimensional and cannot contain other arrays, although
+it is possible to fake nested arrays using the dereferencing rules of
+<a href="#expand-variable">variable expansion</a>.
+
 \subsection variables-special Special variables
 
 The user can change the settings of \c fish by changing the values of
 certain environment variables.
 
-- \c BROWSER, which is the users preferred web browser. If this variable is set, fish will use the specified browser instead of the system default browser to display the fish documentation.
-- \c CDPATH, which is an array of directories in which to search for the new directory for the \c cd builtin. The fish init files defined CDPATH to be a universal variable with the values . and ~.
+- \c BROWSER, the user's preferred web browser. If this variable is set, fish will use the specified browser instead of the system default browser to display the fish documentation.
+- \c CDPATH, an array of directories in which to search for the new directory for the \c cd builtin. By default, the fish configuration defines \c CDPATH to be a universal variable with the values \c . and \c ~.
 - A large number of variable starting with the prefixes \c fish_color and \c fish_pager_color. See <a href='#variables-color'>Variables for changing highlighting colors</a> for more information.
-- \c fish_greeting, which is the greeting message printed on startup.
+- \c fish_greeting, the greeting message printed on startup.
 - \c LANG, \c LC_ALL, \c LC_COLLATE, \c LC_CTYPE, \c LC_MESSAGES, \c LC_MONETARY, \c LC_NUMERIC and \c LC_TIME set the language option for the shell and subprograms. See the section <a href='#variables-locale'>Locale variables</a> for more information.
-- \c PATH, which is an array of directories in which to search for commands
-- \c umask, which is the current file creation mask. The preferred way to change the umask variable is through the <a href="commands.html#umask">umask shellscript function</a>. An attempt to set umask to an invalid value will always fail.
+- \c fish_user_paths, an array of directories that are appended to PATH. This can be a universal variable.
+- \c PATH, an array of directories in which to search for commands
+- \c umask, the current file creation mask. The preferred way to change the umask variable is through the <a href="commands.html#umask">umask function</a>. An attempt to set umask to an invalid value will always fail.
 
 \c fish also sends additional information to the user through the
-values of certain environment variables. The user can not change the
-values of most of these variables. 
+values of certain environment variables. The user cannot change the
+values of most of these variables.
 
-- \c _, which is the name of the currently running command.
-- \c argv, which is an array of arguments to the shell or function. \c argv is only defined when inside a function call, or if fish was invoked with a list of arguments, like 'fish myscript.fish foo bar'. This variable can be changed by the user.
-- \c history, which is an array containing the last commands that where entered.
-- \c HOME, which is the users home directory. This variable can only be changed by the root user.
-- \c PWD, which is the current working directory. 
-- \c status, which is the exit status of the last foreground job to exit. If the job was terminated through a signal, the exit status will be 128 plus the signal number.
-- \c USER, which is the username. This variable can only be changed by the root user.
+- \c _, the name of the currently running command.
+- \c argv, an array of arguments to the shell or function. \c argv is only defined when inside a function call, or if fish was invoked with a list of arguments, like 'fish myscript.fish foo bar'. This variable can be changed by the user.
+- \c history, an array containing the last commands that were entered.
+- \c HOME, the user's home directory. This variable can only be changed by the root user.
+- \c PWD, the current working directory.
+- \c status, the <a href="#variables-status">exit status</a> of the last foreground job to exit. If the job was terminated through a signal, the exit status will be 128 plus the signal number.
+- \c USER, the current username. This variable can only be changed by the root user.
 
 The names of these variables are mostly derived from the csh family of
 shells and differ from the ones used by Bourne style shells such as
-bash. The csh names where chosen because Bourne style names, such as
-?, * and @ lead to significantly less readable code, and much larger
-discoverability problems, and given the existence of tab completion,
-the keystroke savings are minimal.
+bash.
 
 Variables whose name are in uppercase are exported to the commands
-started by fish, those in lowercase are not exported. This rule is not
+started by fish, while those in lowercase are not exported. This rule is not
 enforced by fish, but it is good coding practice to use casing to
 distinguish between exported and unexported variables. \c fish also
 uses several variables internally. Such variables are prefixed with
-the string __FISH or __fish. These should never be used by the
+the string \c __FISH or \c __fish. These should never be used by the
 user. Changing their value may break fish.
 
 \subsection variables-status The status variable
@@ -958,10 +1013,10 @@ some form of problem.
 Fish stores the exit status of the last process in the last job to
 exit in the \c status variable.
 
-If fish encounters a problem while executing a command, the status
+If \c fish encounters a problem while executing a command, the status
 variable may also be set to a specific value:
 
-- 1 is the generally the exit status from fish builtins if they where supplied with invalid arguments
+- 1 is the generally the exit status from fish builtin commands if they were supplied with invalid arguments
 - 124 means that the command was not executed because none of the wildcards in the command produced any matches
 - 125 means that while an executable with the specified name was located, the operating system could not actually execute the command
 - 126 means that while a file with the specified name was located, it was not executable
@@ -1001,6 +1056,7 @@ highlighting in the completion pager:
 - \c fish_pager_color_completion, the color of the completion itself
 - \c fish_pager_color_description, the color of the completion description
 - \c fish_pager_color_progress, the color of the progress bar at the bottom left corner
+- \c fish_pager_color_secondary, the background color of the every second completion
 
 Example:
 
@@ -1024,13 +1080,13 @@ variables set the specified aspect of the locale information. LANG
 is a fallback value, it will be used if none of the LC_ variables are
 specified.
 
-\section builtin-overview Builtins 
+\section builtin-overview Builtin commands
 
 Many other shells have a large library of builtin commands. Most of
 these commands are also available as standalone commands, but have
-been implemented in the shell anyway for whatever reason. To avoid
+been implemented in the shell anyway. To avoid
 code duplication, and to avoid the confusion of subtly differing
-versions of the same command, \c fish only implements builtins for
+versions of the same command, \c fish generally only implements builtins for
 actions which cannot be performed by a regular command.
 
 For a list of all builtins, functions and commands shipped with fish,
@@ -1038,34 +1094,35 @@ see the <a href="#toc-commands">table of contents</a>. The
 documentation is also available by using the <code>--help</code>
 switch of the command.
 
-\section editor Command Line editor
+\section editor Command line editor
 
 The \c fish editor features copy and paste, a searchable history and
 many editor functions that can be bound to special keyboard
-shortcuts. The most important keybinding is probably the tab key, which is bound to the complete function. 
+shortcuts.
+
 Here are some of the commands available in the editor:
 
-- Tab completes the current token
-- Home or Ctrl-a moves to the beginning of the line
-- End or Ctrl-e moves to the end of line
-- Left and right moves one character left or right
-- Alt-left and Alt-right moves one word left or right, or moves forward/backward in the directory history if the commandline is empty
-- Up and down search the command history for the previous/next command containing the string that was specified on the commandline before the search was started. If the commandline was empty when the search started, all commands match. See the <a href='#history'>history </a>section for more information on history searching.
-- Alt-up and Alt-down search the command history for the previous/next token containing the token under the cursor before the search was started. If the commandline was not on a token when the search started, all tokens match. See the <a href='#history'>history </a>section for more information on history searching.
-- Delete and backspace removes one character forwards or backwards respectively
-- Ctrl-c deletes entire line
-- Ctrl-d delete one character to the right of the cursor, unless the buffer is empty, in which case the shell will exit
-- Ctrl-k move contents from the cursor to the end of line to the <a href="#killring">killring</a>
-- Ctrl-u move contents from the beginning of line to the cursor to the <a href="#killring">killring</a>
-- Ctrl-l clear and repaint screen
-- Ctrl-w move previous word to the <a href="#killring">killring</a>
-- Alt-d move next word to the <a href="#killring">killring</a>
-- Alt-w prints a short description of the command under the cursor 
-- Alt-l lists the contents of the current directory, unless the cursor is over a directory argument, in which case the contents of that directory will be listed 
-- Alt-p adds the string '| less;' to the end of the job under the cursor. The result is that the output of the command will be paged.
+- Tab <a href="#completion">completes</a> the current token
+- Home or Ctrl-A moves to the beginning of the line
+- End or Ctrl-E moves to the end of line
+- Left and Right moves one character left or right
+- Alt-Left and Alt-Right moves one word left or right, or moves forward/backward in the directory history if the commandline is empty
+- Up and Down search the command history for the previous/next command containing the string that was specified on the commandline before the search was started. If the commandline was empty when the search started, all commands match. See the <a href='#history'>history </a>section for more information on history searching.
+- Alt-Up and Alt-Down search the command history for the previous/next token containing the token under the cursor before the search was started. If the commandline was not on a token when the search started, all tokens match. See the <a href='#history'>history </a>section for more information on history searching.
+- Delete and Backspace removes one character forwards or backwards respectively
+- Ctrl-C deletes entire line
+- Ctrl-D delete one character to the right of the cursor, unless the buffer is empty, in which case the shell will exit
+- Ctrl-K moves contents from the cursor to the end of line to the <a href="#killring">killring</a>
+- Ctrl-U moves contents from the beginning of line to the cursor to the <a href="#killring">killring</a>
+- Ctrl-L clears and repaints the screen
+- Ctrl-W moves the previous word to the <a href="#killring">killring</a>
+- Alt-D moves the next word to the <a href="#killring">killring</a>
+- Alt-W prints a short description of the command under the cursor
+- Alt-L lists the contents of the current directory, unless the cursor is over a directory argument, in which case the contents of that directory will be listed
+- Alt-P adds the string <code>'| less;'</code> to the end of the job under the cursor. The result is that the output of the command will be paged.
 
-You can change these key bindings using the 
-<a href="commands.html#bind">bind</a> builtin command. 
+You can change these key bindings using the
+<a href="commands.html#bind">bind</a> builtin command.
 
 
 - \c backward-char, moves one character to the left
@@ -1096,7 +1153,7 @@ If such a script produces output, the script needs to finish by
 calling 'commandline -f repaint' in order to tell fish that a repaint
 is in order.
 
-\subsection killring Copy and paste (Kill Ring) 
+\subsection killring Copy and paste (Kill Ring)
 
 \c fish uses an Emacs style kill ring for copy and paste
 functionality. Use Ctrl-K to cut from the current cursor position to
@@ -1105,9 +1162,9 @@ inserted into a linked list of kills, called the kill ring. To paste
 the latest value from the kill ring use Ctrl-Y. After pasting, use
 Meta-Y to rotate to the previous kill.
 
-If the environment variable DISPLAY is set, \c fish will try to
-connect to the X-windows server specified by this variable, and use
-the clipboard on the X server for copying and pasting. 
+If the environment variable DISPLAY is set and the \c xsel program is installed, \c fish will try to
+connect to the X Windows server specified by this variable, and use
+the clipboard on the X server for copying and pasting.
 
 \subsection history Searchable history
 
@@ -1118,21 +1175,26 @@ forwards and backwards in the history. If the current command line is
 not empty when starting a history search, only the commands containing
 the string entered into the command line are shown.
 
-By pressing Alt-up and Alt-down, a history search is also performed,
+By pressing Alt-Up and Alt-Down, a history search is also performed,
 but instead of searching for a complete commandline, each commandline
-is tokenized into separate elements just like it would be before
-execution, and each such token is matched against the token under the
-cursor when the search began.
+is broken into separate elements just like it would be before
+execution, and the history is searched for an element matching that under
+the cursor.
 
 History searches can be aborted by pressing the escape key.
 
-The history is stored in the file '~/.config/fish/fish_history'. It is automatically
-read on startup and merged on program exit.
+Prefixing the commandline with a space will prevent the entire line
+from being stored in the history.
 
-Example:
+The history is stored in the file <code>~/.config/fish/fish_history</code>.
 
-To search for previous entries containing the word 'make', type 'make'
+Examples:
+
+To search for previous entries containing the word \c 'make', type \c 'make'
 in the console and press the up key.
+
+If the commandline reads '<code>cd m</code>', place the cursor over the \c m
+character and press Alt-Up to search for previously typed words containing 'm'.
 
 \subsection multiline Multiline editing
 
@@ -1140,9 +1202,9 @@ The fish commandline editor can be used to work on commands that are
 several lines long. There are three ways to make a command span more
 than a single line:
 
-- Pressing the enter key while a block of commands is unclosed, i.e. when one or more block commands such as 'for', 'begin' or 'if' do not have a corresponding 'end' command.
-- Pressing Alt-enter instead of pressing the enter key.
-- By backslash escaping a newline, i.e. by inserting a backslash (\\) character before pressing the enter key.
+- Pressing the Enter key while a block of commands is unclosed, such as when one or more block commands such as \c 'for', \c 'begin' or \c 'if' do not have a corresponding \c 'end' command.
+- Pressing Alt-Enter instead of pressing the Enter key.
+- By inserting a backslash (\\) character before pressing the Enter key, escaping the newline.
 
 The fish commandline editor works exactly the same in single line mode
 and in multiline mode. To move between lines use the left and right
@@ -1158,9 +1220,13 @@ graphical user interface from the terminal, and then be able to
 continue using the shell. In such cases, there are several ways in
 which the user can change <code>fish</code>'s behavior.
 
--# By ending a command with the \& (ampersand) symbol, the user tells \c fish to put the specified command into the background. A background process will be run simultaneous with \c fish. \c fish will retain control of the terminal, so the program will not be able to read from the keyboard. 
--# By pressing ^Z, the user stops a currently running foreground  program and returns control to \c fish. Some programs do not support this feature, or remap it to another key. Gnu emacs uses ^X z to stop running.
+-# By ending a command with the \& (ampersand) symbol, the user tells \c fish to put the specified command into the background. A background process will be run simultaneous with \c fish. \c fish will retain control of the terminal, so the program will not be able to read from the keyboard.
+-# By pressing ^Z, the user stops a currently running foreground  program and returns control to \c fish. Some programs do not support this feature, or remap it to another key. GNU Emacs uses ^X z to stop running.
 -# By using the <a href="commands.html#fg">fg</a> and <a href="commands.html#bg">bg</a> builtin commands, the user can send any currently running job into the foreground or background.
+
+Note that functions cannot be started in the background. Functions that
+are stopped and then restarted in the background using the \c bg command
+will not execute correctly.
 
 \section initialization Initialization files
 
@@ -1195,9 +1261,9 @@ shell:
 end</pre>
 
 <a href="#variables-universal">Universal variables</a> are stored in
-the file .config/fish/fishd.HOSTNAME, where HOSTNAME is the name of your
-computer. Do not edit this file directly, edit them through fish
-scripts or by using fish interactively instead.
+the file .config/fish/fishd.MACHINE_ID, where MACHINE_ID is typically your
+MAC address. Do not edit this file directly, as your edits may be overwritten.
+Edit them through fish scripts or by using fish interactively instead.
 
 \section other Other features
 
@@ -1224,8 +1290,8 @@ fish_color_substitution, \c fish_color_redirection, \c fish_color_end,
 \c fish_color_error, \c fish_color_param, \c fish_color_comment, \c
 fish_color_match, \c fish_color_search_match, \c fish_color_cwd, \c
 fish_pager_color_prefix, \c fish_pager_color_completion, \c
-fish_pager_color_description and \c
-fish_pager_color_progress. Usually, the value of these variables will
+fish_pager_color_description, \c fish_pager_color_progress
+and \c fish_pager_color_secondary. Usually, the value of these variables will
 be one of \c black, \c red, \c green, \c brown, \c yellow, \c blue, \c
 magenta, \c purple, \c cyan, \c white or \c normal, but they can be an
 array containing any color options for the set_color command.
@@ -1247,7 +1313,7 @@ returning to the shell) when the \c fish_prompt function is called.
 
 Example:
 <p>
-The default \c fish title is 
+The default \c fish title is
 </p>
 <p>
 <pre>
@@ -1320,7 +1386,7 @@ translated, a future version of fish should also include translated
 manuals.
 
 To make a translation of fish, you will first need the source code,
-available from the <a href='http://www.fishshell.org'>fish
+available from the <a href='http://fishshell.com/'>fish
 homepage</a>. Download the latest version, and then extract it using a
 command like <code>tar -zxf fish-VERSION.tar.gz</code>.
 
@@ -1371,70 +1437,19 @@ are ways to avoid this, but they are too complicated for this short
 introduction. See the full manual for the printf C function for more
 information.)
 
-Once you have provided a translation for fish, please send it to <a
-href='fish-users@lists.sf.net'>fish-users@lists.sf.net</a>.
+Once you have provided a translation for fish, please submit it via
+the instructions in <a href="#more-help">Further help and development</a>.
 
-\section todo Missing features and bugs
+\section more-help Further help and development
 
-\subsection todo-features Missing features
+If you have a question not answered by this documentation, there are
+several avenues for help:
 
-- Complete vi-mode key bindings
-- More completions (for example konsole, gnome-terminal, 
-rlogin, rsync, arch, finger, bibtex, aspell, xpdf,
-compress, wine, dig, batch, 
-g++, javac, java, gcj, lpr, doxygen, whois)
-- Undo support
-- wait shellscript
-- Support for the screen clipboard
-- It should be possible to test in a script if a function is autoloaded or manually defined
-- The validator should be better about error reporting unclosed quotes. They are usually reported as something else.
+-# The official mailing list at <a href='fish-users@lists.sf.net'>fish-users@lists.sf.net</a>
+-# The Internet Relay Chat channel, \c #fish on \c irc.oftc.net
+-# The <a href="http://github.com/fish-shell/fish-shell/">project GitHub page</a>
 
-\subsection todo-possible Possible features
-
-- mouse support like zsh has with http://stchaz.free.fr/mouse.zsh 
-  installed would be awesome
-- suggest a completion on unique matches by writing it out in an understated color
-- Highlight beginning/end of block when moving over a block command
-- command specific wildcarding (use case * instead of case '*', etc.)
-- Map variables. (export only the values. When expanding with no key specified, expand to all values.)
-- Descriptions for variables using 'set -d'.
-- Parse errors should when possible honor IO redirections
-- Support for writing strings like /u/l/b/foo and have them expand to /usr/local/bin/foo - perhaps through tab expansion
-- Right-side prompt
-- Selectable completions in the pager
-- Per process output redirection
-- Reduce the space of the pager by one line to allow the commandline to remain visible.
-- down-arrow could be used to save the current command to the history. Or give the next command in-sequence. Or both.
-- History could reload itself when the file is updated. This would need to be done in a clever way to avoid chain reactions
-- The error function should probably be moved into it's own library, and be made mere general purpose.
-- The code validation functions should be moved from the parser to parse_util.
-- Try to remove more malloc calls to reduce memory usage. The time_t arrays used by the autoloader sound like a good candidate. 
-- The code validator should warn about unknown commands.
-- Auto-newlines
-- A fault injector could be written to increase robustness and testing of error recovery paths
-- The parser/validator could be more clever in order to make things like writing 'function --help' work as expected
-- Some event handler functions make much more sense as oneshots - maybe they should be automatically deleted after firing?
-- exec_subshell should be either merged with eval or moved to parser.c
-- Don't use expand_string to perform completions. wildcard_complete can be called directly, the brace expansion handling should be universal, and the process expansion can be moved to complete.c.
-- Make the history search support incremental searching
-- An automatic logout feature 
-- Make tab completions completely silent by default, i.e. kill stderr when running completion commands. This needs to be overridalbe for debugging purposes.
-- Move history to an environment variable
-
-\subsection bugs Known bugs and issues
-
-- Suspending and then resuming pipelines containing a builtin or a shellscript function is broken. Ideally, the exec function in exec.c should be able to resume execution of a partially executed job.
-- delete-word is broken on the commandline 'sudo update-alternatives --config x-'
-- Sometimes autoheader needs to be run on a fresh tarball. Fix dates before creating tarballs.
-- The completion autoloader does not remember which completions where actually autoloaded, and may unload manually specified completions. 
-- There have been stray reports of issues with strange values of the PATH variable during startup. 
-- bindings in config.fish are overwritten by default key bindings.
-- Adding 'bind -k ...' doesn't overwrite non-keybinding binds of the same sequence.
-- History file does not remove duplicates.
-- History file should apply some kind of maximum history length.
-- Older versions of Doxygen has bugs in the man-page generation which cause the builtin help to render incorrectly. Version 1.2.14 is known to have this problem.
-
-If you think you have found a bug not described here, please send a
-report to <a href="mailto:fish-users@lists.sf.net">fish-users@lists.sf.net</a>.
+If you have an improvement for fish, you can submit it via the mailing list
+or the GitHub page.
 
 */

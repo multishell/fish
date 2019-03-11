@@ -9,9 +9,9 @@ function __fish_complete_suffix -d "Complete using files"
 
 	# Variable declarations
 
-	set -l comp 
-	set -l suff 
-	set -l desc 
+	set -l comp
+	set -l suff
+	set -l desc
 	set -l files
 
 	switch (count $argv)
@@ -26,10 +26,10 @@ function __fish_complete_suffix -d "Complete using files"
 		set suff $argv[2]
 		set desc (mimedb -d $suff)
 
-		case 2
+		case 3
 		set comp $argv[1]
 		set suff $argv[2]
-		set desc $argv[2]
+		set desc $argv[3]
 
 	end
 

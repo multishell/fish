@@ -1,6 +1,6 @@
-\section fish_prompt fish_prompt - define the apperance of the command line prompt
+\section fish_prompt fish_prompt - define the appearance of the command line prompt
 
-\subsection fish_promt-synopsis Synopsis
+\subsection fish_prompt-synopsis Synopsis
 <pre>function fish_prompt
     ...
 end</pre>
@@ -10,6 +10,11 @@ end</pre>
 By defining the \c fish_prompt function, the user can choose a custom
 prompt. The \c fish_prompt function is executed when the prompt is to
 be shown, and the output is used as a prompt.
+
+The exit status of commands within \c fish_prompt will not modify the value of <a href="index.html#variables-status">$status</a> outside of the \c fish_prompt function.
+
+\c fish ships with a number of example prompts that can be chosen with the
+\c fish_config command.
 
 \subsection fish_prompt-example Example
 

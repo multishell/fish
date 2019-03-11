@@ -1,10 +1,10 @@
-/** \file function.h 
+/** \file function.h
 
     Prototypes for functions for storing and retrieving function
-	information. These functions also take care of autoloading
-	functions in the $fish_function_path. Actual function evaluation
-	is taken care of by the parser and to some degree the builtin
-	handling library.
+  information. These functions also take care of autoloading
+  functions in the $fish_function_path. Actual function evaluation
+  is taken care of by the parser and to some degree the builtin
+  handling library.
 */
 
 #ifndef FISH_FUNCTION_H
@@ -13,6 +13,11 @@
 #include <wchar.h>
 
 #include "util.h"
+#include "common.h"
+#include "event.h"
+
+class parser_t;
+class env_vars_snapshot_t;
 
 /**
    Structure describing a function. This is used by the parser to
@@ -21,87 +26,113 @@
    structure is used for that purpose. Parhaps these two should be
    merged.
   */
-typedef struct function_data
+struct function_data_t
 {
-	/**
-	   Name of function
-	 */
-	wchar_t *name;
-	/**
-	   Description of function
-	 */
-	wchar_t *description;
-	/**
-	   Function definition
-	 */
-	wchar_t *definition;
-	/**
-	   List of all event handlers for this function
-	 */
-	array_list_t *events;
-	/**
-	   List of all named arguments for this function
-	 */
-	array_list_t *named_arguments;
-	/**
-	   Set to non-zero if invoking this function shadows the variables
-	   of the underlying function.
-	 */
-	int shadows;
-}
-	function_data_t;
+    /**
+       Name of function
+     */
+    wcstring name;
+    /**
+       Description of function
+     */
+    wcstring description;
+    /**
+       Function definition
+     */
+    wchar_t *definition;
+    /**
+       List of all event handlers for this function
+     */
+    std::vector<event_t> events;
+    /**
+       List of all named arguments for this function
+     */
+    wcstring_list_t named_arguments;
+    /**
+       Set to non-zero if invoking this function shadows the variables
+       of the underlying function.
+     */
+    int shadows;
+};
+
+class function_info_t
+{
+public:
+    /** Constructs relevant information from the function_data */
+    function_info_t(const function_data_t &data, const wchar_t *filename, int def_offset, bool autoload);
+
+    /** Used by function_copy */
+    function_info_t(const function_info_t &data, const wchar_t *filename, int def_offset, bool autoload);
+
+    /** Function definition */
+    const wcstring definition;
+
+    /** Function description. Only the description may be changed after the function is created. */
+    wcstring description;
+
+    /** File where this function was defined (intern'd string) */
+    const wchar_t * const definition_file;
+
+    /** Line where definition started */
+    const int definition_offset;
+
+    /** List of all named arguments for this function */
+    const wcstring_list_t named_arguments;
+
+    /** Flag for specifying that this function was automatically loaded */
+    const bool is_autoload;
+
+    /** Set to true if invoking this function shadows the variables of the underlying function. */
+    const bool shadows;
+};
 
 
 /**
-   Initialize function data   
+   Initialize function data
 */
 void function_init();
 
-/**
-   Destroy function data
-*/
-void function_destroy();
-
-/**
-   Add an function. The parameters values are copied and should be
-   freed by the caller.
-*/
-void function_add( function_data_t *data );
+/** Add a function. */
+void function_add(const function_data_t &data, const parser_t &parser);
 
 /**
    Remove the function with the specified name.
 */
-void function_remove( const wchar_t *name );
+void function_remove(const wcstring &name);
 
 /**
-   Returns the definition of the function with the name \c name.
+   Returns by reference the definition of the function with the name \c name.
+   Returns true if successful, false if no function with the given name exists.
 */
-const wchar_t *function_get_definition( const wchar_t *name );
+bool function_get_definition(const wcstring &name, wcstring *out_definition);
 
 /**
-   Returns the description of the function with the name \c name.
+   Returns by reference the description of the function with the name \c name.
+   Returns true if the function exists and has a nonempty description, false if it does not.
 */
-const wchar_t *function_get_desc( const wchar_t *name );
+bool function_get_desc(const wcstring &name, wcstring *out_desc);
 
 /**
    Sets the description of the function with the name \c name.
 */
-void function_set_desc( const wchar_t *name, const wchar_t *desc );
+void function_set_desc(const wcstring &name, const wcstring &desc);
 
 /**
    Returns true if the function with the name name exists.
 */
-int function_exists( const wchar_t *name );
+int function_exists(const wcstring &name);
 
 /**
-   Insert all function names into l. These are not copies of the
-   strings and should not be freed after use.
-   
-   \param list the list to add the names to
+   Returns true if the function with the name name exists, without triggering autoload.
+*/
+int function_exists_no_autoload(const wcstring &name, const env_vars_snapshot_t &vars);
+
+/**
+   Returns all function names.
+
    \param get_hidden whether to include hidden functions, i.e. ones starting with an underscore
 */
-void function_get_names( array_list_t *list, 
-						 int get_hidden );
+wcstring_list_t function_get_names(int get_hidden);
 
 /**
    Returns tha absolute path of the file where the specified function
@@ -109,8 +140,10 @@ void function_get_names( array_list_t *list,
 
    This function does not autoload functions, it will only work on
    functions that have already been defined.
+
+   This returns an intern'd string.
 */
-const wchar_t *function_get_definition_file( const wchar_t *name );
+const wchar_t *function_get_definition_file(const wcstring &name);
 
 /**
    Returns the linenumber where the definition of the specified
@@ -119,16 +152,23 @@ const wchar_t *function_get_definition_file( const wchar_t *name );
    This function does not autoload functions, it will only work on
    functions that have already been defined.
 */
-int function_get_definition_offset( const wchar_t *name );
+int function_get_definition_offset(const wcstring &name);
 
 /**
    Returns a list of all named arguments of the specified function.
 */
-array_list_t *function_get_named_arguments( const wchar_t *name );
+wcstring_list_t function_get_named_arguments(const wcstring &name);
+
+/**
+   Creates a new function using the same definition as the specified function.
+   Returns true if copy is successful.
+*/
+bool function_copy(const wcstring &name, const wcstring &new_name);
+
 
 /**
    Returns whether this function shadows variables of the underlying function
 */
-int function_get_shadows( const wchar_t *name );
+int function_get_shadows(const wcstring &name);
 
 #endif

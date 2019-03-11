@@ -32,8 +32,8 @@ function __fish_config_interactive -d "Initializations that should be performed 
 			end
 
 			if test -d $configdir
-				if command mkdir $configdir/fish 
-	
+				if command mkdir $configdir/fish
+
 					# These files are sometimes overwritten to by fish, so
 					# we want backups of them in case something goes wrong
 
@@ -51,7 +51,7 @@ function __fish_config_interactive -d "Initializations that should be performed 
 					#
 					# Move the fishd stuff from another shell to avoid concurrency problems
 					#
-	
+
 					/bin/sh -c mv\ \~/.fishd.(hostname)\ $configdir/fish/fishd.(hostname)\;kill\ -9\ (echo %fishd)
 
 					# Update paths to point to new configuration locations
@@ -70,20 +70,20 @@ function __fish_config_interactive -d "Initializations that should be performed 
 
 		# Make sure this is only done once
 		set -U __fish_init_1_22_0
-   
+
 	end
 
 	#
 	# If we are starting up for the first time, set various defaults
-	# 
+	#
 
-	if not set -q __fish_init_1_23_0
+	if not set -q __fish_init_1_50_0
 		if not set -q fish_greeting
 			set -l line1 (printf (_ 'Welcome to fish, the friendly interactive shell') )
 			set -l line2 (printf (_ 'Type %shelp%s for instructions on how to use fish') (set_color green) (set_color normal))
 			set -U fish_greeting $line1\n$line2
 		end
-		set -U __fish_init_1_23_0
+		set -U __fish_init_1_50_0
 
 		#
 		# Set various defaults using these throwaway functions
@@ -91,19 +91,21 @@ function __fish_config_interactive -d "Initializations that should be performed 
 
 		function set_default -d "Set a universal variable, unless it has already been set"
 			if not set -q $argv[1]
-				set -U -- $argv	
+				set -U -- $argv
 			end
 		end
 
 		# Regular syntax highlighting colors
 		set_default fish_color_normal normal
-		set_default fish_color_command green
+		set_default fish_color_command 005fd7 purple
+		set_default fish_color_param 00afff cyan
 		set_default fish_color_redirection normal
 		set_default fish_color_comment red
 		set_default fish_color_error red --bold
 		set_default fish_color_escape cyan
 		set_default fish_color_operator cyan
 		set_default fish_color_quote brown
+		set_default fish_color_autosuggestion 555 yellow
 		set_default fish_color_valid_path --underline
 
 		set_default fish_color_cwd green
@@ -113,12 +115,12 @@ function __fish_config_interactive -d "Initializations that should be performed 
 		set_default fish_color_match cyan
 
 		# Background color for search matches
-		set_default fish_color_search_match purple
+		set_default fish_color_search_match --background=purple
 
 		# Pager colors
 		set_default fish_pager_color_prefix cyan
 		set_default fish_pager_color_completion normal
-		set_default fish_pager_color_description normal
+		set_default fish_pager_color_description 555 yellow
 		set_default fish_pager_color_progress cyan
 
 		#
@@ -127,45 +129,30 @@ function __fish_config_interactive -d "Initializations that should be performed 
 
 		set_default fish_color_history_current cyan
 
-
-		#
-		# Setup the CDPATH variable
-		#
-
-		set_default CDPATH . ~
-
 		#
 		# Remove temporary functions for setting default variable values
 		#
 
 		functions -e set_default
-	
+
 	end
 
 	#
-	# Print a greeting 
+	# Print a greeting
 	#
 
 	if functions -q fish_greeting
 		fish_greeting
 	else
 		if set -q fish_greeting
-			switch $fish_greeting
+			switch "$fish_greeting"
 				case ''
 				# If variable is empty, don't print anything, saves us a fork
-		
+
 				case '*'
 				echo $fish_greeting
 			end
 		end
-	end
-
-	#
-	# Set exit message
-	#
-
-	function fish_on_exit --description "Commands to execute when fish exits" --on-process %self
-		printf (_ "Goodbye\n")
 	end
 
 	#
@@ -189,7 +176,7 @@ function __fish_config_interactive -d "Initializations that should be performed 
 	end
 
 	#
-	# Completions for SysV startup scripts. These aren't bound to any 
+	# Completions for SysV startup scripts. These aren't bound to any
 	# specific command, so they can't be autoloaded.
 	#
 
@@ -203,13 +190,22 @@ function __fish_config_interactive -d "Initializations that should be performed 
 	if not set -q fish_key_bindings
 		set -U fish_key_bindings fish_default_key_bindings
 	end
-	
-	# Reload keybindings when binding variable change
-	function __fish_reload_key_bindings -d "Reload keybindings when binding variable change" --on-variable fish_key_bindings
-		eval $fish_key_bindings ^/dev/null
-	end 
 
-	# Load keybindings
+	# Reload key bindings when binding variable change
+	function __fish_reload_key_bindings -d "Reload key bindings when binding variable change" --on-variable fish_key_bindings
+		# Do something nasty to avoid two forks
+		if test "$fish_key_bindings" = fish_default_key_bindings
+			fish_default_key_bindings
+			#Load user key bindings if they are defined
+			if functions --query fish_user_key_bindings > /dev/null
+				fish_user_key_bindings
+			end
+		else
+			eval $fish_key_bindings ^/dev/null
+		end
+	end
+
+	# Load key bindings
 	__fish_reload_key_bindings
 
 	# Repaint screen when window changes size
@@ -217,21 +213,26 @@ function __fish_config_interactive -d "Initializations that should be performed 
 		commandline -f repaint
 	end
 
-	# If the ubuntu command-not-found package can be found, add a handler for it
-
-	# First check in /usr/lib, this is where modern Ubuntus place this command
-	if test -f /usr/lib/command-not-found 
-		function fish_command_not_found_handler --on-event fish_command_not_found
-			/usr/lib/command-not-found $argv
-		end
-	else 
-		# Ubuntu Feisty places this command in the regular path instead
-		if type -p command-not-found >/dev/null
+	# The first time a command is not found, look for command-not-found
+	# This is not cheap so we try to avoid doing it during startup
+	function fish_command_not_found_setup --on-event fish_command_not_found
+		# Remove fish_command_not_found_setup so we only execute this once
+		functions --erase fish_command_not_found_setup
+		
+		# First check in /usr/lib, this is where modern Ubuntus place this command
+		if test -f /usr/lib/command-not-found
 			function fish_command_not_found_handler --on-event fish_command_not_found
-				command-not-found $argv
+				/usr/lib/command-not-found $argv
+			end
+			fish_command_not_found_handler $argv
+		else
+			# Ubuntu Feisty places this command in the regular path instead
+			if type -p command-not-found > /dev/null 2> /dev/null
+				function fish_command_not_found_handler --on-event fish_command_not_found
+					command-not-found $argv
+				end
+				fish_command_not_found_handler $argv
 			end
 		end
 	end
-
 end
-

@@ -12,6 +12,10 @@
 #include <sys/types.h>
 #include <signal.h>
 
+/** fish's internal versions of wcwidth and wcswidth, which can use an internal implementation if the system one is busted. */
+int fish_wcwidth(wchar_t wc);
+int fish_wcswidth(const wchar_t *str, size_t n);
+
 #ifndef WCHAR_MAX
 /**
    This _should_ be defined by wchar.h, but e.g. OpenBSD doesn't.
@@ -57,16 +61,16 @@ typedef char tputs_arg_t;
 /**
    Structure used to get the size of a terminal window
  */
-struct winsize 
+struct winsize
 {
-	/**
-	   Number of rows
-	 */
-	unsigned short ws_row;	
-	/**
-	   Number of columns
-	 */
-	unsigned short ws_col;
+    /**
+       Number of rows
+     */
+    unsigned short ws_row;
+    /**
+       Number of columns
+     */
+    unsigned short ws_col;
 }
 ;
 
@@ -90,7 +94,7 @@ int tputs(const char *str, int affcnt, int (*fish_putc)(tputs_arg_t));
 */
 
 #define tparm tparm_solaris_kludge
-char *tparm_solaris_kludge( char *str, ... );
+char *tparm_solaris_kludge(char *str, ...);
 
 #endif
 
@@ -103,7 +107,7 @@ char *tparm_solaris_kludge( char *str, ... );
    strings and decimal numbers, position (%n), field width and
    precision.
 */
-int fwprintf( FILE *f, const wchar_t *format, ... );
+int fwprintf(FILE *f, const wchar_t *format, ...);
 
 
 /**
@@ -113,7 +117,7 @@ int fwprintf( FILE *f, const wchar_t *format, ... );
    strings and decimal numbers, position (%n), field width and
    precision.
 */
-int swprintf( wchar_t *str, size_t l, const wchar_t *format, ... );
+int swprintf(wchar_t *str, size_t l, const wchar_t *format, ...);
 
 /**
    Print formated string. Some operating systems (Like NetBSD) do not
@@ -122,7 +126,7 @@ int swprintf( wchar_t *str, size_t l, const wchar_t *format, ... );
    strings and decimal numbers, position (%n), field width and
    precision.
 */
-int wprintf( const wchar_t *format, ... );
+int wprintf(const wchar_t *format, ...);
 
 /**
    Print formated string. Some operating systems (Like NetBSD) do not
@@ -131,7 +135,7 @@ int wprintf( const wchar_t *format, ... );
    strings and decimal numbers, position (%n), field width and
    precision.
 */
-int vwprintf( const wchar_t *filter, va_list va );
+int vwprintf(const wchar_t *filter, va_list va);
 
 /**
    Print formated string. Some operating systems (Like NetBSD) do not
@@ -140,7 +144,7 @@ int vwprintf( const wchar_t *filter, va_list va );
    strings and decimal numbers, position (%n), field width and
    precision.
 */
-int vfwprintf( FILE *f, const wchar_t *filter, va_list va );
+int vfwprintf(FILE *f, const wchar_t *filter, va_list va);
 
 /**
    Print formated string. Some operating systems (Like NetBSD) do not
@@ -149,7 +153,7 @@ int vfwprintf( FILE *f, const wchar_t *filter, va_list va );
    strings and decimal numbers, position (%n), field width and
    precision.
 */
-int vswprintf( wchar_t *out, size_t n, const wchar_t *filter, va_list va );
+int vswprintf(wchar_t *out, size_t n, const wchar_t *filter, va_list va);
 
 #endif
 
@@ -193,7 +197,7 @@ wchar_t *wcstok(wchar_t *wcs, const wchar_t *delim, wchar_t **ptr);
 /**
    Return the number of columns used by a character. This is a libc
    function, but the prototype for this function is missing in some libc
-   implementations. 
+   implementations.
 
    Fish has a fallback implementation in case the implementation is
    missing altogether.  In locales without a native wcwidth, Unicode
@@ -201,9 +205,24 @@ wchar_t *wcstok(wchar_t *wcs, const wchar_t *delim, wchar_t **ptr);
    real wcwidth. Therefore, the fallback wcwidth assumes any printing
    character takes up one column and anything else uses 0 columns.
 */
-int wcwidth( wchar_t c );
+int wcwidth(wchar_t c);
 
 #endif
+
+
+/** On OS X, use weak linking for wcsdup and wcscasecmp. Weak linking allows you to call the function only if it exists at runtime. You can detect it by testing the function pointer against NULL. To avoid making the callers do that, redefine wcsdup to wcsdup_use_weak, and likewise with wcscasecmp. This lets us use the same binary on SnowLeopard (10.6) and Lion+ (10.7), even though these functions only exist on 10.7+.
+
+    On other platforms, use what's detected at build time.
+*/
+#if __APPLE__ && __DARWIN_C_LEVEL >= 200809L
+wchar_t *wcsdup_use_weak(const wchar_t *);
+int wcscasecmp_use_weak(const wchar_t *, const wchar_t *);
+int wcsncasecmp_use_weak(const wchar_t *s1, const wchar_t *s2, size_t n);
+#define wcsdup(a) wcsdup_use_weak((a))
+#define wcscasecmp(a, b) wcscasecmp_use_weak((a), (b))
+#define wcsncasecmp(a, b, c) wcsncasecmp_use_weak((a), (b), (c))
+
+#else
 
 #ifndef HAVE_WCSDUP
 
@@ -212,15 +231,6 @@ int wcwidth( wchar_t c );
    automatically exit if out of memory.
 */
 wchar_t *wcsdup(const wchar_t *in);
-
-#endif
-
-#ifndef HAVE_WCSLEN
-
-/**
-   Fallback for wcsen. Returns the length of the specified string.
-*/
-size_t wcslen(const wchar_t *in);
 
 #endif
 
@@ -236,9 +246,21 @@ size_t wcslen(const wchar_t *in);
    fish and guaranteed to be a sane, english word. Using wcscasecmp on
    a user-supplied string should be considered a bug.
 */
-int wcscasecmp( const wchar_t *a, const wchar_t *b );
+int wcscasecmp(const wchar_t *a, const wchar_t *b);
 
 #endif
+#endif //__APPLE__
+
+
+#ifndef HAVE_WCSLEN
+
+/**
+   Fallback for wclsen. Returns the length of the specified string.
+*/
+size_t wcslen(const wchar_t *in);
+
+#endif
+
 
 #ifndef HAVE_WCSNCASECMP
 
@@ -253,7 +275,7 @@ int wcscasecmp( const wchar_t *a, const wchar_t *b );
    fish and guaranteed to be a sane, english word. Using wcsncasecmp on
    a user-supplied string should be considered a bug.
 */
-int wcsncasecmp( const wchar_t *a, const wchar_t *b, int count );
+int wcsncasecmp(const wchar_t *a, const wchar_t *b, size_t count);
 
 /**
    Returns a newly allocated wide character string wich is a copy of
@@ -270,7 +292,7 @@ int wcsncasecmp( const wchar_t *a, const wchar_t *b, int count );
    Fallback for wcsndup function. Returns a copy of \c in, truncated
    to a maximum length of \c c.
 */
-wchar_t *wcsndup( const wchar_t *in, int c );
+wchar_t *wcsndup(const wchar_t *in, size_t c);
 
 #endif
 
@@ -279,7 +301,7 @@ wchar_t *wcsndup( const wchar_t *in, int c );
    a valid digit in the specified base, return -1. This is a helper
    function for wcstol, but it is useful itself, so it is exported.
 */
-long convert_digit( wchar_t d, int base );
+long convert_digit(wchar_t d, int base);
 
 #ifndef HAVE_WCSTOL
 
@@ -292,8 +314,8 @@ long convert_digit( wchar_t d, int base );
    supported.
 */
 long wcstol(const wchar_t *nptr,
-	    wchar_t **endptr,
-	    int base);
+            wchar_t **endptr,
+            int base);
 
 #endif
 #ifndef HAVE_WCSLCAT
@@ -309,7 +331,7 @@ long wcstol(const wchar_t *nptr,
    and renamed to reflect this change.
 
 */
-size_t wcslcat( wchar_t *dst, const wchar_t *src, size_t siz );
+size_t wcslcat(wchar_t *dst, const wchar_t *src, size_t siz);
 
 #endif
 #ifndef HAVE_WCSLCPY
@@ -320,18 +342,19 @@ size_t wcslcat( wchar_t *dst, const wchar_t *src, size_t siz );
    wcslen(src); if retval >= siz, truncation occurred.
 
    This is the OpenBSD strlcpy function, modified for wide characters,
-   and renamed to reflect this change. 
+   and renamed to reflect this change.
 */
-size_t wcslcpy( wchar_t *dst, const wchar_t *src, size_t siz );
+size_t wcslcpy(wchar_t *dst, const wchar_t *src, size_t siz);
 
 #endif
-
-#ifdef HAVE_BROKEN_DEL_CURTERM
 
 /**
    BSD del_curterm seems to do a double-free. We redefine it as a no-op
 */
-#define del_curterm(oterm) OK
+#ifdef HAVE_BROKEN_DEL_CURTERM
+#define fish_del_curterm(X) OK
+#else
+#define fish_del_curterm(X) del_curterm(X)
 #endif
 
 #ifndef HAVE_LRAND48_R
@@ -341,60 +364,44 @@ size_t wcslcpy( wchar_t *dst, const wchar_t *src, size_t siz );
 */
 struct drand48_data
 {
-	/**
-	   Seed value
-	*/
-	unsigned int seed;
+    /**
+       Seed value
+    */
+    unsigned int seed;
 }
 ;
 
 /**
    Fallback implementation of lrand48_r. Internally uses rand_r, so it is pretty weak.
 */
-int lrand48_r( struct drand48_data *buffer, long int *result );
+int lrand48_r(struct drand48_data *buffer, long int *result);
 
 /**
    Fallback implementation of srand48_r, the seed function for lrand48_r.
 */
-int srand48_r( long int seedval, struct drand48_data *buffer );
+int srand48_r(long int seedval, struct drand48_data *buffer);
 
 #endif
 
 #ifndef HAVE_FUTIMES
 
-int futimes( int fd, const struct timeval *times );
+int futimes(int fd, const struct timeval *times);
 
 #endif
 
-#ifndef HAVE_GETTEXT
+/* autoconf may fail to detect gettext (645), so don't define a function call gettext or we'll get build errors */
 
-/**
-   Fallback implementation of gettext. Just returns the original string.
-*/
-char * gettext( const char * msgid );
+/** Cover for gettext() */
+char * fish_gettext(const char * msgid);
 
-/**
-   Fallback implementation of bindtextdomain. Does nothing.
-*/
-char * bindtextdomain( const char * domainname, const char * dirname );
+/** Cover for bindtextdomain() */
+char * fish_bindtextdomain(const char * domainname, const char * dirname);
 
-/**
-   Fallback implementation of textdomain. Does nothing.
-*/
-char * textdomain( const char * domainname );
+/** Cover for textdomain() */
+char * fish_textdomain(const char * domainname);
 
-#endif
-
-#ifndef HAVE_DCGETTEXT
-
-/**
-   Fallback implementation of dcgettext. Just returns the original string.
-*/
-char * dcgettext ( const char * domainname, 
-		   const char * msgid,
-		   int category );
-
-#endif
+/* Cover for dcgettext */
+char * fish_dcgettext(const char * domainname, const char * msgid, int category);
 
 #ifndef HAVE__NL_MSG_CAT_CNTR
 
@@ -412,7 +419,7 @@ extern int _nl_msg_cat_cntr;
 /**
    Send specified signal to specified process group.
  */
-int killpg( int pgr, int sig );
+int killpg(int pgr, int sig);
 #endif
 
 
@@ -421,44 +428,44 @@ int killpg( int pgr, int sig );
 /**
    Struct describing a long getopt option
  */
-struct option 
+struct option
 {
-	/**
-	   Name of option
-	 */
-	const char *name;
-	/**
-	   Flag
-	 */
-	int has_arg;
-	/**
-	   Flag
-	 */
-	int *flag;
-	/**
-	   Return value
-	 */
-	int val;	
+    /**
+       Name of option
+     */
+    const char *name;
+    /**
+       Flag
+     */
+    int has_arg;
+    /**
+       Flag
+     */
+    int *flag;
+    /**
+       Return value
+     */
+    int val;
 }
 ;
 
 #ifndef no_argument
-#define	no_argument 0
+#define  no_argument 0
 #endif
 
 #ifndef required_argument
-#define	required_argument 1
+#define  required_argument 1
 #endif
 
 #ifndef optional_argument
-#define	optional_argument 2
+#define  optional_argument 2
 #endif
 
-int getopt_long(int argc, 
-		char * const argv[],
-		const char *optstring,
-		const struct option *longopts, 
-		int *longindex);
+int getopt_long(int argc,
+                char * const argv[],
+                const char *optstring,
+                const struct option *longopts,
+                int *longindex);
 
 #endif
 

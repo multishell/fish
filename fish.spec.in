@@ -6,12 +6,12 @@ Release:                0%{?dist}
 
 License:                GPL
 Group:                  System Environment/Shells
-URL:                    http://www.fishshell.org
+URL:                    http://fishshell.com/
 
-Source0:                http://www.fishshell.org/files/%{version}/%{name}-%{version}.tar.bz2
+Source0:                http://ridiculousfish.com/shell/files/%{version}/%{name}-%{version}.tar.bz2
 
 BuildRoot:              %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
-BuildRequires:          ncurses-devel gettext groff 
+BuildRequires:          ncurses-devel gettext groff
 
 
 # Locate correct build time-dependencies for providing X headers
@@ -50,10 +50,10 @@ BuildRequires:          %{xinclude}/X11/Intrinsic.h,  %{xinclude}/X11/Xatom.h
 %endif
 
 
-%description 
+%description
 
-fish is a shell geared towards interactive use. Its features are 
-focused on user friendliness and discoverability. The language syntax 
+fish is a shell geared towards interactive use. Its features are
+focused on user friendliness and discoverability. The language syntax
 is simple but incompatible with other shell languages.
 
 
@@ -75,7 +75,7 @@ make %{?_smp_mflags}
 
 %install
 rm -rf $RPM_BUILD_ROOT
-make install DESTDIR="$RPM_BUILD_ROOT" 
+make install DESTDIR="$RPM_BUILD_ROOT"
 
 # Find translation files
 %find_lang %{name}.\*
@@ -121,7 +121,6 @@ fi
 %_mandir/man1/fishd.1*
 %_mandir/man1/mimedb.1*
 %_mandir/man1/set_color.1*
-%_mandir/man1/xsel.1x*
 
 # The program binaries
 %attr(0755,root,root) %_bindir/fish
@@ -130,7 +129,6 @@ fi
 %attr(0755,root,root) %_bindir/fishd
 %attr(0755,root,root) %_bindir/mimedb
 %attr(0755,root,root) %_bindir/set_color
-%attr(0755,root,root) %_bindir/xsel
 
 # Configuration files
 %config %_sysconfdir/fish/config.fish

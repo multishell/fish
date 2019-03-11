@@ -7,11 +7,14 @@
 #ifndef FISH_PARSE_UTIL_H
 #define FISH_PARSE_UTIL_H
 
+#include "autoload.h"
 #include <wchar.h>
+#include <map>
+#include <set>
 
 /**
    Find the beginning and end of the first subshell in the specified string.
-   
+
    \param in the string to search for subshells
    \param begin the starting paranthesis of the subshell
    \param end the ending paranthesis of the subshell
@@ -19,10 +22,10 @@
    \return -1 on syntax error, 0 if no subshells exist and 1 on sucess
 */
 
-int parse_util_locate_cmdsubst( const wchar_t *in, 
-								wchar_t **begin, 
-								wchar_t **end,
-								int flags );
+int parse_util_locate_cmdsubst(const wchar_t *in,
+                               wchar_t **begin,
+                               wchar_t **end,
+                               int flags);
 
 /**
    Find the beginning and end of the command substitution under the
@@ -36,10 +39,10 @@ int parse_util_locate_cmdsubst( const wchar_t *in,
    \param a the start of the searched string
    \param b the end of the searched string
 */
-void parse_util_cmdsubst_extent( const wchar_t *buff,
-								 int cursor_pos,
-								 wchar_t **a, 
-								 wchar_t **b );
+void parse_util_cmdsubst_extent(const wchar_t *buff,
+                                size_t cursor_pos,
+                                const wchar_t **a,
+                                const wchar_t **b);
 
 /**
    Find the beginning and end of the process definition under the cursor
@@ -49,10 +52,10 @@ void parse_util_cmdsubst_extent( const wchar_t *buff,
    \param a the start of the searched string
    \param b the end of the searched string
 */
-void parse_util_process_extent( const wchar_t *buff,
-								int cursor_pos,
-								wchar_t **a, 
-								wchar_t **b );
+void parse_util_process_extent(const wchar_t *buff,
+                               size_t cursor_pos,
+                               const wchar_t **a,
+                               const wchar_t **b);
 
 
 /**
@@ -63,14 +66,14 @@ void parse_util_process_extent( const wchar_t *buff,
    \param a the start of the searched string
    \param b the end of the searched string
 */
-void parse_util_job_extent( const wchar_t *buff,
-							int cursor_pos,
-							wchar_t **a, 
-							wchar_t **b );
+void parse_util_job_extent(const wchar_t *buff,
+                           size_t cursor_pos,
+                           const wchar_t **a,
+                           const wchar_t **b);
 
 /**
    Find the beginning and end of the token under the cursor and the
-   toekn before the current token. Any combination of tok_begin,
+   token before the current token. Any combination of tok_begin,
    tok_end, prev_begin and prev_end may be null.
 
    \param buff the string to search for subshells
@@ -80,89 +83,62 @@ void parse_util_job_extent( const wchar_t *buff,
    \param prev_begin the start o the token before the current token
    \param prev_end the end of the token before the current token
 */
-void parse_util_token_extent( const wchar_t *buff,
-							  int cursor_pos,
-							  wchar_t **tok_begin,
-							  wchar_t **tok_end,
-							  wchar_t **prev_begin, 
-							  wchar_t **prev_end );
+void parse_util_token_extent(const wchar_t *buff,
+                             size_t cursor_pos,
+                             const wchar_t **tok_begin,
+                             const wchar_t **tok_end,
+                             const wchar_t **prev_begin,
+                             const wchar_t **prev_end);
 
 
 /**
    Get the linenumber at the specified character offset
 */
-int parse_util_lineno( const wchar_t *str, int len );
+int parse_util_lineno(const wchar_t *str, size_t len);
 
 /**
    Calculate the line number of the specified cursor position
  */
-int parse_util_get_line_from_offset( wchar_t *buff, int pos );
+int parse_util_get_line_from_offset(const wcstring &str, size_t pos);
 
 /**
    Get the offset of the first character on the specified line
  */
-int parse_util_get_offset_from_line( wchar_t *buff, int line );
+size_t parse_util_get_offset_from_line(const wcstring &str, int line);
 
 
 /**
    Return the total offset of the buffer for the cursor position nearest to the specified poition
  */
-int parse_util_get_offset( wchar_t *buff, int line, int line_offset );
-
-
-/**
-   Autoload the specified file, if it exists in the specified path. Do
-   not load it multiple times unless it's timestamp changes or
-   parse_util_unload is called.
-
-   Autoloading one file may unload another. 
-
-   \param cmd the filename to search for. The suffix '.fish' is always added to this name
-   \param path_var_name the environment variable giving  the search path
-   \param on_unload a callback function to run if a suitable file is found, which has not already been run. unload will also be called for old files which are unloaded.
-   \param reload wheter to recheck file timestamps on already loaded files
-*/
-int parse_util_load( const wchar_t *cmd,
-					 const wchar_t *path_var_name,
-					 void (*on_unload)(const wchar_t *cmd),
-					 int reload );
-
-/**
-   Reset the loader for the specified path variable. This will cause
-   all information on loaded files in the specified directory to be
-   reset.
-
-   \param path_var_name the environment variable giving  the search path
-   \param on_unload a callback function which will be called before (re)loading a file, may be used to unload the previous file.
-*/
-void parse_util_load_reset( const wchar_t *path_var_name,
-							void (*on_unload)(const wchar_t *cmd) );
-
-/**
-   Tell the autoloader that the specified file, in the specified path,
-   is no longer loaded.
-
-   \param cmd the filename to search for. The suffix '.fish' is always added to this name
-   \param path_var_name the environment variable giving  the search path
-   \param on_unload a callback function which will be called before (re)loading a file, may be used to unload the previous file.
-   \return non-zero if the file was removed, zero if the file had not yet been loaded
-*/
-int parse_util_unload( const wchar_t *cmd,
-					   const wchar_t *path_var_name,
-					   void (*on_unload)(const wchar_t *cmd) );
+size_t parse_util_get_offset(const wcstring &str, int line, long line_offset);
 
 /**
    Set the argv environment variable to the specified null-terminated
-   array of strings. 
+   array of strings.
 */
-void parse_util_set_argv( wchar_t **argv, array_list_t *named_arguments );
+void parse_util_set_argv(const wchar_t * const *argv, const wcstring_list_t &named_arguments);
 
 /**
    Make a duplicate of the specified string, unescape wildcard
    characters but not performing any other character transformation.
 */
-wchar_t *parse_util_unescape_wildcards( const wchar_t *in );
+wchar_t *parse_util_unescape_wildcards(const wchar_t *in);
 
+/**
+   Calculates information on the parameter at the specified index.
+
+   \param cmd The command to be analyzed
+   \param pos An index in the string which is inside the parameter
+   \param quote If not NULL, store the type of quote this parameter has, can be either ', " or \\0, meaning the string is not quoted.
+   \param offset If not NULL, get_param will store the offset to the beginning of the parameter.
+   \param type If not NULL, get_param will store the token type as returned by tok_last.
+*/
+void parse_util_get_parameter_info(const wcstring &cmd, const size_t pos, wchar_t *quote, size_t *offset, int *type);
+
+/**
+   Attempts to escape the string 'cmd' using the given quote type, as determined by the quote character. The quote can be a single quote or double quote, or L'\0' to indicate no quoting (and thus escaping should be with backslashes).
+*/
+wcstring parse_util_escape_string_with_quote(const wcstring &cmd, wchar_t quote);
 
 
 #endif

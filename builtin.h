@@ -1,5 +1,5 @@
 /** \file builtin.h
-	Prototypes for functions for executing builtin functions.
+  Prototypes for functions for executing builtin functions.
 */
 
 #ifndef FISH_BUILTIN_H
@@ -9,12 +9,15 @@
 
 #include "util.h"
 #include "io.h"
+#include "common.h"
+
+class parser_t;
 
 enum
 {
-	COMMAND_NOT_BUILTIN,
-	BUILTIN_REGULAR,
-	BUILTIN_FUNCTION
+    COMMAND_NOT_BUILTIN,
+    BUILTIN_REGULAR,
+    BUILTIN_FUNCTION
 }
 ;
 
@@ -46,7 +49,7 @@ enum
 /**
    Error message for unknown switch
 */
-#define BUILTIN_ERR_UNKNOWN	_( L"%ls: Unknown option '%ls'\n" )
+#define BUILTIN_ERR_UNKNOWN  _( L"%ls: Unknown option '%ls'\n" )
 
 /**
    Error message for invalid character in variable name
@@ -64,11 +67,15 @@ enum
 #define BUILTIN_FOR_ERR_IN _( L"%ls: Second argument must be 'in'\n" )
 
 /**
-   Error message for insufficient number of arguments 
+   Error message for insufficient number of arguments
 */
 #define BUILTIN_FOR_ERR_COUNT _( L"%ls: Expected at least two arguments, got %d\n")
 
 #define BUILTIN_FOR_ERR_NAME _( L"%ls: '%ls' is not a valid variable name\n" )
+
+/** Error messages for 'else if' */
+#define BUILTIN_ELSEIF_ERR_COUNT _( L"%ls: can only take 'if' and then another command as an argument\n")
+#define BUILTIN_ELSEIF_ERR_ARGUMENT _( L"%ls: any second argument must be 'if'\n")
 
 /**
    Error message when too many arguments are supplied to a builtin
@@ -86,15 +93,13 @@ enum
 #define BUILTIN_END_BLOCK_UNKNOWN _( L"%ls: Unknown block type '%ls'\n" )
 
 #define BUILTIN_ERR_NOT_NUMBER _( L"%ls: Argument '%ls' is not a number\n" )
-/**
-   Stringbuffer used to represent standard output
-*/
-extern string_buffer_t *sb_out;
 
-/**
-   Stringbuffer used to represent standard error
-*/
-extern string_buffer_t *sb_err;
+/** Get the string used to represent stdout and stderr */
+const wcstring &get_stdout_buffer();
+const wcstring &get_stderr_buffer();
+
+/** Output an error */
+void builtin_show_error(const wcstring &err);
 
 /**
    Kludge. Tells builtins if output is to screen
@@ -108,7 +113,7 @@ extern int builtin_err_redirect;
 
 
 /**
-   Initialize builtin data. 
+   Initialize builtin data.
 */
 void builtin_init();
 
@@ -120,41 +125,43 @@ void builtin_destroy();
 /**
   Is there a builtin command with the given name?
 */
-int builtin_exists( wchar_t *cmd );
+int builtin_exists(const wcstring &cmd);
 
 /**
-  Execute a builtin command 
+  Execute a builtin command
 
-  \param argv Array containing the command and parameters 
+  \param parser The parser being used
+  \param argv Array containing the command and parameters
   of the builtin.  The list is terminated by a
-  null pointer. This syntax resembles the syntax 
+  null pointer. This syntax resembles the syntax
   for exec.
   \param io the io redirections to perform on this builtin.
 
   \return the exit status of the builtin command
 */
-int builtin_run( wchar_t **argv, io_data_t *io );
+int builtin_run(parser_t &parser, const wchar_t * const *argv, const io_chain_t &io);
+
+/** Returns a list of all builtin names */
+wcstring_list_t builtin_get_names(void);
+
+/** Insert all builtin names into list. */
+void builtin_get_names(std::vector<completion_t> &list);
 
 /**
-  Insert all builtin names into l. These are not copies of the strings and should not be freed after use.
+   Pushes a new set of input/output to the stack. The new stdin is supplied, a new set of output strings is created.
 */
-void builtin_get_names( array_list_t *list );
+void builtin_push_io(parser_t &parser, int stdin_fd);
 
 /**
-   Pushes a new set of input/output to the stack. The new stdin is supplied, a new set of output string_buffer_ts is created.
+   Pops a set of input/output from the stack. The output strings are destroued, but the input file is not closed.
 */
-void builtin_push_io( int stdin_fd );
-
-/**
-   Pops a set of input/output from the stack. The output string_buffer_ts are destroued, but the input file is not closed.
-*/
-void builtin_pop_io();
+void builtin_pop_io(parser_t &parser);
 
 
 /**
-   Return a one-line description of the specified builtin
+   Return a one-line description of the specified builtin.
 */
-const wchar_t *builtin_get_desc( const wchar_t *b );
+wcstring builtin_get_desc(const wcstring &b);
 
 
 /**
@@ -167,10 +174,9 @@ const wchar_t *builtin_complete_get_temporary_buffer();
 
 /**
    Run the __fish_print_help function to obtain the help information
-   for the specified command. The resulting string will be valid until
-   the next time this function is called, and must never be free'd manually.
+   for the specified command.
 */
 
-wchar_t *builtin_help_get( const wchar_t *cmd );
+wcstring builtin_help_get(parser_t &parser, const wchar_t *cmd);
 
 #endif

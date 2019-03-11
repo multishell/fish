@@ -13,33 +13,44 @@ function __trap_switch
 	switch $argv[1]
 		case EXIT
 			echo --on-exit %self
-		
+
 		case '*'
 			echo --on-signal $argv[1]
-	end	
+	end
 
 end
 
-function trap -d 'Perform an action when the shell recives a signal'
+function trap -d 'Perform an action when the shell receives a signal'
 
 	set -l mode
-	set -l cmd 
-	set -l sig 
-	set -l shortopt
-	set -l longopt
+	set -l cmd
+	set -l sig
 
-	set -l shortopt -o lph
+	set -l options
 	set -l longopt
-	if not getopt -T >/dev/null
-		set longopt -l print,help,list-signals
+	set -l shortopt lph
+	if not getopt -T > /dev/null
+		# GNU getopt
+		set longopt print,help,list-signals
+		set options -o $shortopt -l $longopt --
+		# Verify options
+		if not getopt -n type $options $argv >/dev/null
+			return 1
+		end
+	else
+		# Old getopt, used on OS X
+		set options $shortopt
+		# Verify options
+		if not getopt $options $argv >/dev/null
+			return 1
+		end
 	end
 
-	if not getopt -n type -Q $shortopt $longopt -- $argv
-		return 1
-	end
+	# Do the real getopt invocation
+	set -l tmp (getopt $options $argv)
 
-	set -l tmp (getopt $shortopt $longopt -- $argv)
-
+	# Break tmp up into an array
+	set -l opt
 	eval set opt $tmp
 
 	while count $opt >/dev/null
@@ -47,13 +58,13 @@ function trap -d 'Perform an action when the shell recives a signal'
 			case -h --help
 				__fish_print_help trap
 				return 0
-			
+
 			case -p --print
 				set mode print
-			
+
 			case -l --list-signals
 				set mode list
-			
+
 			case --
 				 set -e opt[1]
 				 break
@@ -87,7 +98,7 @@ function trap -d 'Perform an action when the shell recives a signal'
 			for i in $opt
 				set sig (__trap_translate_signal $i)
 				if test $sig
-					functions -e __trap_handler_$sig				
+					functions -e __trap_handler_$sig
 				end
 			end
 
@@ -108,7 +119,7 @@ function trap -d 'Perform an action when the shell recives a signal'
 			end
 
 		case print
-			set -l names 
+			set -l names
 
 			if count $opt >/dev/null
 				set names $opt
@@ -130,7 +141,7 @@ function trap -d 'Perform an action when the shell recives a signal'
 
 		case list
 			kill -l
-			
+
 	end
 
 end

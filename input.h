@@ -17,38 +17,41 @@ inputrc information for key bindings.
 */
 enum
 {
-	R_BEGINNING_OF_LINE = R_NULL+10,  /* This give input_common ten slots for lowlevel keycodes */
-	R_END_OF_LINE,
-	R_FORWARD_CHAR,
-	R_BACKWARD_CHAR,
-	R_FORWARD_WORD,
-	R_BACKWARD_WORD,
-	R_HISTORY_SEARCH_BACKWARD,
-	R_HISTORY_SEARCH_FORWARD,
-	R_DELETE_CHAR,
-	R_BACKWARD_DELETE_CHAR,
-	R_KILL_LINE,
-	R_YANK,
-	R_YANK_POP,
-	R_COMPLETE,
-	R_BEGINNING_OF_HISTORY,
-	R_END_OF_HISTORY,
-	R_BACKWARD_KILL_LINE,
-	R_KILL_WHOLE_LINE,
-	R_KILL_WORD,
-	R_BACKWARD_KILL_WORD,
-	R_DUMP_FUNCTIONS,
-	R_HISTORY_TOKEN_SEARCH_BACKWARD,
-	R_HISTORY_TOKEN_SEARCH_FORWARD,
-	R_SELF_INSERT,
-	R_VI_ARG_DIGIT,
-	R_VI_DELETE_TO,
-	R_EXECUTE,
-	R_BEGINNING_OF_BUFFER,
-	R_END_OF_BUFFER,
-	R_REPAINT,
-	R_UP_LINE,
-	R_DOWN_LINE,
+    R_BEGINNING_OF_LINE = R_NULL+10,  /* This give input_common ten slots for lowlevel keycodes */
+    R_END_OF_LINE,
+    R_FORWARD_CHAR,
+    R_BACKWARD_CHAR,
+    R_FORWARD_WORD,
+    R_BACKWARD_WORD,
+    R_HISTORY_SEARCH_BACKWARD,
+    R_HISTORY_SEARCH_FORWARD,
+    R_DELETE_CHAR,
+    R_BACKWARD_DELETE_CHAR,
+    R_KILL_LINE,
+    R_YANK,
+    R_YANK_POP,
+    R_COMPLETE,
+    R_BEGINNING_OF_HISTORY,
+    R_END_OF_HISTORY,
+    R_BACKWARD_KILL_LINE,
+    R_KILL_WHOLE_LINE,
+    R_KILL_WORD,
+    R_BACKWARD_KILL_WORD,
+    R_BACKWARD_KILL_PATH_COMPONENT,
+    R_DUMP_FUNCTIONS,
+    R_HISTORY_TOKEN_SEARCH_BACKWARD,
+    R_HISTORY_TOKEN_SEARCH_FORWARD,
+    R_SELF_INSERT,
+    R_VI_ARG_DIGIT,
+    R_VI_DELETE_TO,
+    R_EXECUTE,
+    R_BEGINNING_OF_BUFFER,
+    R_END_OF_BUFFER,
+    R_REPAINT,
+    R_UP_LINE,
+    R_DOWN_LINE,
+    R_SUPPRESS_AUTOSUGGESTION,
+    R_ACCEPT_AUTOSUGGESTION
 }
 ;
 
@@ -83,9 +86,9 @@ wint_t input_readch();
 /**
    Push a character or a readline function onto the stack of unread
    characters that input_readch will return before actually reading from fd
-   0.   
+   0.
  */
-void input_unreadch( wint_t ch );
+void input_unreadch(wint_t ch);
 
 
 /**
@@ -94,51 +97,45 @@ void input_unreadch( wint_t ch );
    \param sequence the sequence to bind
    \param command an input function that will be run whenever the key sequence occurs
 */
-void input_mapping_add( const wchar_t *sequence, const wchar_t *command );
+void input_mapping_add(const wchar_t *sequence, const wchar_t *command);
 
 /**
-   Insert all mapping names into the specified array_list_t
+   Insert all mapping names into the specified wcstring_list_t
  */
-void input_mapping_get_names( array_list_t *list );
+void input_mapping_get_names(wcstring_list_t &lst);
 
 /**
    Erase binding for specified key sequence
  */
-int input_mapping_erase( const wchar_t *sequence );
+bool input_mapping_erase(const wchar_t *sequence);
 
 /**
-   Return the command bound to the specified key sequence
+   Gets the command bound to the specified key sequence. Returns true if it exists, false if not.
  */
-const wchar_t *input_mapping_get( const wchar_t *sequence );
+bool input_mapping_get(const wcstring &sequence, wcstring &cmd);
 
 /**
    Return the sequence for the terminfo variable of the specified name.
 
-   If no terminfo variable of the specified name could be found, return 0 and set errno to ENOENT.
-   If the terminfo variable does not have a value, return 0 and set errno to EILSEQ.
+   If no terminfo variable of the specified name could be found, return false and set errno to ENOENT.
+   If the terminfo variable does not have a value, return false and set errno to EILSEQ.
  */
-const wchar_t *input_terminfo_get_sequence( const wchar_t *name );
+bool input_terminfo_get_sequence(const wchar_t *name, wcstring *out_seq);
 
-/**
-   Return the name of the terminfo variable with the specified sequence
- */
-const wchar_t *input_terminfo_get_name( const wchar_t *seq );
+/** Return the name of the terminfo variable with the specified sequence */
+bool input_terminfo_get_name(const wcstring &seq, wcstring &name);
 
-/**
-   Return a list of all known terminfo names
- */
-void input_terminfo_get_names( array_list_t *lst, int skip_null );
+/** Return a list of all known terminfo names */
+wcstring_list_t input_terminfo_get_names(bool skip_null);
 
+/** Returns the input function code for the given input function name. */
+wchar_t input_function_get_code(const wcstring &name);
 
-/**
-   Returns the input function code for the given input function name.
-*/
-wchar_t input_function_get_code( const wchar_t *name );
+/** Returns a list of all existing input function names */
+wcstring_list_t input_function_get_names(void);
 
-/**
-   Returns a list of all existing input function names
- */
-void input_function_get_names( array_list_t *lst );
+/** Updates our idea of whether we support term256 */
+void update_fish_term256();
 
 
 #endif

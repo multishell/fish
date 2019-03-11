@@ -11,10 +11,18 @@ function alias --description "Legacy function for creating shellscript functions
 
 	set -l name
 	set -l body
+	set -l prefix
 	switch (count $argv)
 
+		case 0
+ 			echo "Fish implements aliases using functions. Use 'functions' builtin to see list of functions and 'functions function_name' to see function definition, type 'help alias' for more information."
+			return 1
 		case 1
-			set -l tmp (echo $argv|sed -e "s/\([^=]\)=/\1\n/")
+			# Some seds (e.g. on Mac OS X), don't support \n in the RHS
+			# Use a literal newline instead
+			# http://sed.sourceforge.net/sedfaq4.html#s4.1
+			set -l tmp (echo $argv|sed -e "s/\([^=]\)=/\1\\
+/")
 			set name $tmp[1]
 			set body $tmp[2]
 
@@ -27,5 +35,18 @@ function alias --description "Legacy function for creating shellscript functions
 			return 1
 	end
 
-	eval "function $name; $body \$argv; end"
+
+	# Prevent the alias from immediately running into an infinite recursion if
+	# $body starts with the same command as $name.
+
+	switch $body
+		case $name $name\ \* $name\t\*
+			if contains $name (builtin --names)
+				set prefix builtin
+			else
+				set prefix command
+			end
+	end
+
+	eval "function $name; $prefix $body \$argv; end"
 end

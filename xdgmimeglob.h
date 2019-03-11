@@ -16,7 +16,7 @@
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.   See the GNU
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
@@ -34,12 +34,12 @@ typedef struct XdgGlobHash XdgGlobHash;
 
 typedef enum
 {
-  XDG_GLOB_LITERAL, /* Makefile */
-  XDG_GLOB_SIMPLE,  /* *.gif */
-  XDG_GLOB_FULL     /* x*.[ch] */
+    XDG_GLOB_LITERAL, /* Makefile */
+    XDG_GLOB_SIMPLE,  /* *.gif */
+    XDG_GLOB_FULL     /* x*.[ch] */
 } XdgGlobType;
 
-  
+
 #ifdef XDG_PREFIX
 #define _xdg_mime_glob_read_from_file         XDG_ENTRY(glob_read_from_file)
 #define _xdg_glob_hash_new                    XDG_ENTRY(hash_new)
@@ -50,16 +50,16 @@ typedef enum
 #define _xdg_glob_hash_dump                   XDG_ENTRY(hash_dump)
 #endif
 
-void         _xdg_mime_glob_read_from_file   (XdgGlobHash *glob_hash,
-					      const char  *file_name);
-XdgGlobHash *_xdg_glob_hash_new              (void);
-void         _xdg_glob_hash_free             (XdgGlobHash *glob_hash);
-const char  *_xdg_glob_hash_lookup_file_name (XdgGlobHash *glob_hash,
-					      const char  *text);
-void         _xdg_glob_hash_append_glob      (XdgGlobHash *glob_hash,
-					      const char  *glob,
-					      const char  *mime_type);
-XdgGlobType  _xdg_glob_determine_type        (const char  *glob);
-void         _xdg_glob_hash_dump             (XdgGlobHash *glob_hash);
+void         _xdg_mime_glob_read_from_file(XdgGlobHash *glob_hash,
+        const char  *file_name);
+XdgGlobHash *_xdg_glob_hash_new(void);
+void         _xdg_glob_hash_free(XdgGlobHash *glob_hash);
+const char  *_xdg_glob_hash_lookup_file_name(XdgGlobHash *glob_hash,
+        const char  *text);
+void         _xdg_glob_hash_append_glob(XdgGlobHash *glob_hash,
+                                        const char  *glob,
+                                        const char  *mime_type);
+XdgGlobType  _xdg_glob_determine_type(const char  *glob);
+void         _xdg_glob_hash_dump(XdgGlobHash *glob_hash);
 
 #endif /* __XDG_MIME_GLOB_H__ */

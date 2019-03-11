@@ -5,37 +5,48 @@ function type --description "Print the type of a command"
 	set -l res 1
 	set -l mode normal
 	set -l selection all
-
+		
 	#
 	# Get options
 	#
-	set -l shortopt -o tpPafh
-	set -l longopt
-	if not getopt -T >/dev/null
-		set longopt -l type,path,force-path,all,no-functions,help
+	set -l options
+	set -l shortopt tpPafh
+	if not getopt -T > /dev/null
+		# GNU getopt
+		set -l longopt type,path,force-path,all,no-functions,help
+		set options -o $shortopt -l $longopt --
+		# Verify options
+		if not getopt -n type $options $argv >/dev/null
+			return 1
+		end
+	else
+		# Old getopt, used on OS X
+		set options $shortopt
+		# Verify options
+		if not getopt $options $argv >/dev/null
+			return 1
+		end
 	end
 
-	if not getopt -n type -Q $shortopt $longopt -- $argv
-		return 1
-	end
+	# Do the real getopt invocation
+	set -l tmp (getopt $options $argv)
 
-	set -l tmp (getopt $shortopt $longopt -- $argv)
-
+	# Break tmp up into an array
 	set -l opt
 	eval set opt $tmp
-
+	
 	for i in $opt
 		switch $i
 			case -t --type
 				set mode type
-			
+
 			case -p --path
 				set mode path
-			
-			case -P --force-path 
+
+			case -P --force-path
 				set mode path
 				set selection files
-			
+
 			case -a --all
 				set selection multi
 
@@ -54,7 +65,7 @@ function type --description "Print the type of a command"
 
 	# Check all possible types for the remaining arguments
 	for i in $argv
-		
+
 		switch $i
 			case '-*'
 				 continue
@@ -74,10 +85,10 @@ function type --description "Print the type of a command"
 						functions $i
 
 					case type
-						printf (_ 'function\n')
+						echo (_ 'function')
 
 					case path
-						 echo
+						echo
 
 				end
 				if test $selection != multi
@@ -94,7 +105,7 @@ function type --description "Print the type of a command"
 						printf (_ '%s is a builtin\n') $i
 
 					case type
-						printf (_ 'builtin\n')
+						echo (_ 'builtin')
 
 					case path
 						echo
@@ -115,7 +126,7 @@ function type --description "Print the type of a command"
 					printf (_ '%s is %s\n') $i $path
 
 					case type
-						printf (_ 'file\n')
+						echo (_ 'file')
 
 					case path
 						echo $path

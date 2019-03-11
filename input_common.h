@@ -1,5 +1,5 @@
 /** \file input_common.h
-	
+
 Header file for the low level input library
 
 */
@@ -15,20 +15,20 @@ Header file for the low level input library
 
 enum
 {
-	/**
-	   R_NULL is sometimes returned by the input when a character was
-	   requested but none could be delivered, or when an exception
-	   happened.
-	*/
-	R_NULL = INPUT_COMMON_RESERVED,
-	R_EOF
+    /**
+       R_NULL is sometimes returned by the input when a character was
+       requested but none could be delivered, or when an exception
+       happened.
+    */
+    R_NULL = INPUT_COMMON_RESERVED,
+    R_EOF
 }
-	;
+;
 
 /**
    Init the library
 */
-void input_common_init( int (*ih)() );
+void input_common_init(int (*ih)());
 
 /**
    Free memory used by the library
@@ -44,13 +44,16 @@ void input_common_destroy();
    WAIT_ON_ESCAPE milliseconds for a character to be available for
    reading before returning with the value WEOF.
 */
-wchar_t input_common_readch( int timed );
+wchar_t input_common_readch(int timed);
 
 /**
    Push a character or a readline function onto the stack of unread
    characters that input_readch will return before actually reading from fd
    0.
 */
-void input_common_unreadch( wint_t ch );
+void input_common_unreadch(wint_t ch);
+
+/** Adds a callback to be invoked at the next turn of the "event loop." The callback function will be invoked and passed arg. */
+void input_common_add_callback(void (*callback)(void *), void *arg);
 
 #endif

@@ -1,8 +1,8 @@
 /** \file complete.h
-	Prototypes for functions related to tab-completion.
+  Prototypes for functions related to tab-completion.
 
-	These functions are used for storing and retrieving tab-completion
-	data, as well as for performing tab-completion.
+  These functions are used for storing and retrieving tab-completion
+  data, as well as for performing tab-completion.
 */
 
 #ifndef FISH_COMPLETE_H
@@ -12,137 +12,167 @@
 */
 #define FISH_COMPLETE_H
 
+
 #include <wchar.h>
 
 #include "util.h"
-
-/** 
-	Use all completions 
-*/
+#include "common.h"
+/**
+ * Use all completions
+ */
 #define SHARED 0
-/** 
-	Do not use file completion 
-*/
+/**
+ * Do not use file completion
+ */
 #define NO_FILES 1
-/** 
-	Require a parameter after completion 
-*/
+/**
+ * Require a parameter after completion
+ */
 #define NO_COMMON 2
-/** 
-	Only use the argument list specifies with completion after
-	option. This is the same as (NO_FILES & NO_COMMON)
-*/
+/**
+ * Only use the argument list specifies with completion after
+ * option. This is the same as (NO_FILES & NO_COMMON)
+ */
 #define EXCLUSIVE 3
 
-/** 
-	Command is a path 
-*/
+/**
+ * Command is a path
+ */
 #define PATH 1
-/** 
-	Command is not a path 
-*/
+/**
+ * Command is not a path
+ */
 #define COMMAND 0
 
-/** 
-	Separator between completion and description
-*/
+/**
+ * Separator between completion and description
+ */
 #define COMPLETE_SEP L'\004'
 
-/** 
-	Separator between completion and description
-*/
+/**
+ * Separator between completion and description
+ */
 #define COMPLETE_SEP_STR L"\004"
 
 /**
-   Separator between completion items in fish_pager. This is used for
-   completion grouping, e.g. when putting completions with the same
-   descriptions on the same line.
-*/
+ * Separator between completion items in fish_pager. This is used for
+ * completion grouping, e.g. when putting completions with the same
+ * descriptions on the same line.
+ */
 #define COMPLETE_ITEM_SEP L'\uf500'
 
 /**
-   Character that separates the completion and description on
-   programmable completions
-*/
+ * Character that separates the completion and description on
+ * programmable completions
+ */
 #define PROG_COMPLETE_SEP L'\t'
 
-/**
-   Do not insert space afterwards if this is the only completion. (The
-   default is to try insert a space)
-*/
-#define COMPLETE_NO_SPACE 1
+enum
+{
+    /**
+       Do not insert space afterwards if this is the only completion. (The
+       default is to try insert a space)
+    */
+    COMPLETE_NO_SPACE = 1 << 0,
 
-/**
-   This compeltion is case insensitive. 
+    /** This completion is case insensitive. */
+    COMPLETE_CASE_INSENSITIVE = 1 << 1,
 
-   Warning: The contents of the completion_t structure is actually
-   different if this flag is set! Specifically, the completion string
-   contains the _entire_ completion token, not only the current
-*/
-#define COMPLETE_NO_CASE 2
+    /** This is not the suffix of a token, but replaces it entirely */
+    COMPLETE_REPLACES_TOKEN = 1 << 2,
 
-/**
-   This compeltion is the whole argument, not just the remainder. This
-   flag must never be set on completions returned from the complete()
-   function. It is strictly for internal use in the completion code.
-*/
-#define COMPLETE_WHOLE_ARGUMENT 4
+    /**
+       This completion may or may not want a space at the end - guess by
+       checking the last character of the completion.
+    */
+    COMPLETE_AUTO_SPACE = 1 << 3,
 
-/**
-   This completion may or may not want a space at the end - guess by
-   checking the last character of the completion.
-*/
-#define COMPLETE_AUTO_SPACE 8
+    /** This completion should be inserted as-is, without escaping. */
+    COMPLETE_DONT_ESCAPE = 1 << 4,
 
-/**
-   This completion should be inserted as-is, without escaping.
-*/
-#define COMPLETE_DONT_ESCAPE 16
+    /** If you do escape, don't escape tildes */
+    COMPLETE_DONT_ESCAPE_TILDES = 1 << 5
+};
+typedef int complete_flags_t;
 
 
-
-typedef struct
+class completion_t
 {
 
-	/**
-	   The completion string
-	*/
-	const wchar_t *completion;
+private:
+    /* No public default constructor */
+    completion_t();
+public:
 
-	/**
-	   The description for this completion
-	*/
-	const wchar_t *description;
+    /* Destructor. Not inlining it saves code size. */
+    ~completion_t();
 
-	/**
-	   Flags determining the completion behaviour. 
+    /**
+       The completion string
+    */
+    wcstring completion;
 
-	   Determines whether a space should be inserted after this
-	   compeltion if it is the only possible completion using the
-	   COMPLETE_NO_SPACE flag.
+    /**
+       The description for this completion
+    */
+    wcstring description;
 
-	   The COMPLETE_NO_CASE can be used to signal that this completion
-	   is case insensitive.
-	*/
-	int flags;
+    /**
+       Flags determining the completion behaviour.
 
-}
-	completion_t;
+       Determines whether a space should be inserted after this
+       completion if it is the only possible completion using the
+       COMPLETE_NO_SPACE flag.
 
+       The COMPLETE_NO_CASE can be used to signal that this completion
+       is case insensitive.
+    */
+    int flags;
+
+    bool is_case_insensitive() const
+    {
+        return !!(flags & COMPLETE_CASE_INSENSITIVE);
+    }
+
+    /* Construction. Note: defining these so that they are not inlined reduces the executable size. */
+    completion_t(const wcstring &comp, const wcstring &desc = L"", int flags_val = 0);
+    completion_t(const completion_t &);
+    completion_t &operator=(const completion_t &);
+
+    /* The following are needed for sorting and uniquing completions */
+    bool operator < (const completion_t& rhs) const;
+    bool operator == (const completion_t& rhs) const;
+    bool operator != (const completion_t& rhs) const;
+};
+
+enum
+{
+    COMPLETION_REQUEST_DEFAULT = 0,
+    COMPLETION_REQUEST_AUTOSUGGESTION = 1 << 0, // indicates the completion is for an autosuggestion
+    COMPLETION_REQUEST_DESCRIPTIONS = 1 << 1, // indicates that we want descriptions
+    COMPLETION_REQUEST_FUZZY_MATCH = 1 << 2 // indicates that we don't require a prefix match
+};
+typedef uint32_t completion_request_flags_t;
+
+/** Given a list of completions, returns a list of their completion fields */
+wcstring_list_t completions_to_wcstring_list(const std::vector<completion_t> &completions);
+
+/** Sorts a list of completions */
+void sort_completions(std::vector<completion_t> &completions);
 
 /**
 
-  Add a completion. 
+  Add a completion.
 
   All supplied values are copied, they should be freed by or otherwise
   disposed by the caller.
 
-  Examples: 
-  
+  Examples:
+
   The command 'gcc -o' requires that a file follows it, so the
   NO_COMMON option is suitable. This can be done using the following
   line:
-  
+
   complete -c gcc -s o -r
 
   The command 'grep -d' required that one of the strings 'read',
@@ -155,83 +185,83 @@ typedef struct
 
   \param cmd Command to complete.
   \param cmd_type If cmd_type is PATH, cmd will be interpreted as the absolute
-  path of the program (optionally containing wildcards), otherwise it
-  will be interpreted as the command name.
-  \param short_opt The single character name of an option. (-a is a short option, --all and  -funroll are long options)
-  \param long_opt The multi character name of an option. (-a is a short option, --all and  -funroll are long options)
-  \param long_mode Whether to use old style, single dash long options. 
+      path of the program (optionally containing wildcards), otherwise it
+      will be interpreted as the command name.
+  \param short_opt The single character name of an option. (-a is a short option,
+      --all and  -funroll are long options)
+  \param long_opt The multi character name of an option. (-a is a short option,
+      --all and  -funroll are long options)
+  \param long_mode Whether to use old style, single dash long options.
   \param result_mode Whether to search further completions when this
-  completion has been succesfully matched. If result_mode is SHARED,
-  any other completions may also be used. If result_mode is NO_FILES,
-  file completion should not be used, but other completions may be
-  used. If result_mode is NO_COMMON, on option may follow it - only a
-  parameter. If result_mode is EXCLUSIVE, no option may follow it, and
-  file completion is not performed.
+      completion has been succesfully matched. If result_mode is SHARED,
+      any other completions may also be used. If result_mode is NO_FILES,
+      file completion should not be used, but other completions may be
+      used. If result_mode is NO_COMMON, on option may follow it - only a
+      parameter. If result_mode is EXCLUSIVE, no option may follow it, and
+      file completion is not performed.
   \param comp A space separated list of completions which may contain subshells.
   \param desc A description of the completion.
-  \param condition a command to be run to check it this completion should be used. If \c condition is empty, the completion is always used.
+  \param condition a command to be run to check it this completion should be used.
+      If \c condition is empty, the completion is always used.
   \param flags A set of completion flags
 */
-void complete_add( const wchar_t *cmd, 
-		   int cmd_type, 
-		   wchar_t short_opt,
-		   const wchar_t *long_opt,
-		   int long_mode, 
-		   int result_mode, 
-		   const wchar_t *condition,
-		   const wchar_t *comp,
-		   const wchar_t *desc,
-		   int flags ); 
+void complete_add(const wchar_t *cmd,
+                  bool cmd_is_path,
+                  wchar_t short_opt,
+                  const wchar_t *long_opt,
+                  int long_mode,
+                  int result_mode,
+                  const wchar_t *condition,
+                  const wchar_t *comp,
+                  const wchar_t *desc,
+                  int flags);
 /**
   Sets whether the completion list for this command is complete. If
   true, any options not matching one of the provided options will be
   flagged as an error by syntax highlighting.
 */
-void complete_set_authoritative( const wchar_t *cmd,
-				 int cmd_type,
-				 int authoritative );
+void complete_set_authoritative(const wchar_t *cmd, bool cmd_type, bool authoritative);
 
 /**
   Remove a previously defined completion
 */
-void complete_remove( const wchar_t *cmd, 
-		      int cmd_type, 
-		      wchar_t short_opt,
-		      const wchar_t *long_opt );
+void complete_remove(const wchar_t *cmd,
+                     bool cmd_is_path,
+                     wchar_t short_opt,
+                     const wchar_t *long_opt);
+
+
+/** Find all completions of the command cmd, insert them into out. If to_load is
+ * not NULL, append all commands that we would autoload, but did not (presumably
+ * because this is not the main thread)
+ */
+void complete(const wcstring &cmd,
+              std::vector<completion_t> &comp,
+              completion_request_flags_t flags,
+              wcstring_list_t *to_load = NULL);
 
 /**
-  Find all completions of the command cmd, insert them into out. The
-  caller must free the variables returned in out.  The results are
-  returned in the array_list_t 'out', in the format of wide character
-  strings, with each element consisting of a suggested completion and
-  a description of what kind of object this completion represents,
-  separated by a separator of type COMPLETE_SEP.
+   Print a list of all current completions into the string.
 
-  Values returned by this function should be freed by the caller.
+   \param out The string to write completions to
 */
-void complete( const wchar_t *cmd, array_list_t *out );
-
-/**
-   Print a list of all current completions into the string_buffer_t. 
-
-   \param out The string_buffer_t to write completions to
-*/
-void complete_print( string_buffer_t *out );
+void complete_print(wcstring &out);
 
 /**
    Tests if the specified option is defined for the specified command
 */
-int complete_is_valid_option( const wchar_t *str, 
-							  const wchar_t *opt, 
-							  array_list_t *errors );
+int complete_is_valid_option(const wcstring &str,
+                             const wcstring &opt,
+                             wcstring_list_t *inErrorsOrNull,
+                             bool allow_autoload);
 
 /**
    Tests if the specified argument is valid for the specified option
    and command
 */
-int complete_is_valid_argument( const wchar_t *str, 
-								const wchar_t *opt, 
-								const wchar_t *arg );
+bool complete_is_valid_argument(const wcstring &str,
+                                const wcstring &opt,
+                                const wcstring &arg);
 
 
 /**
@@ -241,22 +271,24 @@ int complete_is_valid_argument( const wchar_t *str,
    with internal dependencies.
 
    \param cmd the command for which to load command-specific completions
-   \param reload should the commands completions be reloaded, even if they where previously loaded. (This is set to true on actual completions, so that changed completion are updated in running shells)
+   \param reload should the commands completions be reloaded, even if they where
+      previously loaded. (This is set to true on actual completions, so that
+      changed completion are updated in running shells)
 */
-void complete_load( const wchar_t *cmd, int reload );
+void complete_load(const wcstring &cmd, bool reload);
 
 /**
    Create a new completion entry
 
-   \param context The halloc context to use for allocating new memory
+   \param completions The array of completions to append to
    \param comp The completion string
    \param desc The description of the completion
    \param flags completion flags
-*/
-void completion_allocate( array_list_t *context,
-			  const wchar_t *comp,
-			  const wchar_t *desc,
-			  int flags );
 
+*/
+void append_completion(std::vector<completion_t> &completions, const wcstring &comp, const wcstring &desc = L"", int flags = 0);
+
+/* Function used for testing */
+void complete_set_variable_names(const wcstring_list_t *names);
 
 #endif

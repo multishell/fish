@@ -1,16 +1,14 @@
 #completion for vi/vim
 
-function __fish_complete_vi -d "Compleletions for vi and its aliases"
-
+function __fish_complete_vi -d "Compleletions for vi and its aliases" --argument-names cmd
 	set -l is_vim
-	command vi --version >/dev/null ^/dev/null; and set is_vim vim
-	
-	set -l cmds -c $argv
+	if type $cmd > /dev/null
+        eval command $cmd --version >/dev/null ^/dev/null; and set -l is_vim vim
+    end
 
 	# vim
+	set -l cmds -c $cmd
 	if test -n "$is_vim"
-
-		
 		# these don't work
 		#complete $cmds -a - --description 'The file to edit is read from stdin. Commands are read from stderr, which should be a tty'
 
@@ -26,11 +24,11 @@ function __fish_complete_vi -d "Compleletions for vi and its aliases"
 		complete $cmds -s o -r --description 'Open stacked windows for each file'
 		complete $cmds -s O -r --description 'Open side by side windows for each file'
 		complete $cmds -s p -r --description 'Open tab pages for each file'
-		complete $cmds -s q -r --description 'Start  in  quickFix  mode'
+                complete $cmds -s q -r --description 'Start in quickFix mode'
 		complete $cmds -s r -r --description 'Use swap files for recovery'
 		complete $cmds -s s -r --description 'Source and execute script file'
 		complete $cmds -s t -r --description 'Set the cursor to tag'
-		complete $cmds -s T -r --description 'Termninal name'
+                complete $cmds -s T -r --description 'Terminal name'
 		complete $cmds -s u -r --description 'Use alternative vimrc'
 		complete $cmds -s U -r --description 'Use alternative vimrc in GUI mode'
 		complete $cmds -s w -r --description 'Record all typed characters'
@@ -59,7 +57,7 @@ function __fish_complete_vi -d "Compleletions for vi and its aliases"
 		complete $cmds -s s --description 'Start in silent mode'
 		complete $cmds -s V --description 'Start in verbose mode'
 		complete $cmds -s v --description 'Start in vi mode'
-		complete $cmds -s x --description 'Use encription when writing files'
+                complete $cmds -s x --description 'Use encryption when writing files'
 		complete $cmds -s X --description 'Don\'t connect to X server'
 		complete $cmds -s y --description 'Start in easy mode'
 		complete $cmds -s Z --description 'Start in restricted mode'
@@ -94,7 +92,7 @@ function __fish_complete_vi -d "Compleletions for vi and its aliases"
 		complete $cmds -s C --description 'Encrypt/decrypt text'
 		complete $cmds -s l --description 'Set up for editing LISP programs'
 		complete $cmds -s L --description 'List saved file names after crash'
-		complete $cmds -s R --description 'Readonly mode'
+                complete $cmds -s R --description 'Read-only mode'
 		complete $cmds -s S --description 'Use linear search for tags if tag file not sorted'
 		complete $cmds -s v --description 'Start in display editing state'
 		complete $cmds -s V --description 'Verbose mode'
@@ -105,7 +103,7 @@ function __fish_complete_vi -d "Compleletions for vi and its aliases"
 		complete $cmds -r -c t --description 'Begin editing by executing the specified  editor command'
 
 	end
-	
+
 end
 
 

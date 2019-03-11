@@ -16,7 +16,7 @@
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the GNU
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.   See the GNU
  * Lesser General Public License for more details.
  *
  * You should have received a copy of the GNU Lesser General Public
@@ -31,12 +31,12 @@
 #include "xdgmime.h"
 
 
-#ifndef	FALSE
-#define	FALSE (0)
+#ifndef  FALSE
+#define  FALSE (0)
 #endif
 
-#ifndef	TRUE
-#define	TRUE (!FALSE)
+#ifndef  TRUE
+#define  TRUE (!FALSE)
 #endif
 
 /* FIXME: Needs to be configure check */
@@ -55,19 +55,19 @@ typedef unsigned int   xdg_uint32_t;
 
 #define SWAP_BE16_TO_LE16(val) (xdg_uint16_t)(((xdg_uint16_t)(val) << 8)|((xdg_uint16_t)(val) >> 8))
 
-#define SWAP_BE32_TO_LE32(val) (xdg_uint32_t)((((xdg_uint32_t)(val) & 0xFF000000U) >> 24) |	\
-					      (((xdg_uint32_t)(val) & 0x00FF0000U) >> 8) |	\
-					      (((xdg_uint32_t)(val) & 0x0000FF00U) << 8) |	\
-					      (((xdg_uint32_t)(val) & 0x000000FFU) << 24))
+#define SWAP_BE32_TO_LE32(val) (xdg_uint32_t)((((xdg_uint32_t)(val) & 0xFF000000U) >> 24) |  \
+                (((xdg_uint32_t)(val) & 0x00FF0000U) >> 8) |  \
+                (((xdg_uint32_t)(val) & 0x0000FF00U) << 8) |  \
+                (((xdg_uint32_t)(val) & 0x000000FFU) << 24))
 /* UTF-8 utils
  */
 extern const char *const _xdg_utf8_skip;
 #define _xdg_utf8_next_char(p) (char *)((p) + _xdg_utf8_skip[*(unsigned char *)(p)])
 #define _xdg_utf8_char_size(p) (int) (_xdg_utf8_skip[*(unsigned char *)(p)])
 
-xdg_unichar_t  _xdg_utf8_to_ucs4  (const char    *source);
-xdg_unichar_t  _xdg_ucs4_to_lower (xdg_unichar_t  source);
-int            _xdg_utf8_validate (const char    *source);
-const char    *_xdg_get_base_name (const char    *file_name);
+xdg_unichar_t  _xdg_utf8_to_ucs4(const char    *source);
+xdg_unichar_t  _xdg_ucs4_to_lower(xdg_unichar_t  source);
+int            _xdg_utf8_validate(const char    *source);
+const char    *_xdg_get_base_name(const char    *file_name);
 
 #endif /* __XDG_MIME_INT_H__ */

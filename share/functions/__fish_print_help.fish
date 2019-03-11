@@ -9,6 +9,11 @@ function __fish_print_help --description "Print help message for the specified f
 		set item $argv[1]
 	end
 
+	# Do nothing if the file does not exist
+	if not test -e "$__fish_datadir/man/man1/$item.1"
+		return
+	end
+
 	# These two expressions take care of underlines (Should be italic)
 	set -l cmd1 s/_\x08'\(.\)'/(set_color --underline)\\1(set_color normal)/g
 	set -l cmd2 s/'\(.\)'\x08_/(set_color --underline)\\1(set_color normal)/g
@@ -20,10 +25,10 @@ function __fish_print_help --description "Print help message for the specified f
 	set -l cmd3 s/.\x08'\(.\)'/(set_color --bold)\\1(set_color normal)/g
 
 	# Combine all expressions in a single variable
-	set -l sed_cmd -e $cmd1 -e $cmd2 -e $cmd3 
+	set -l sed_cmd -e $cmd1 -e $cmd2 -e $cmd3
 
 	# Render help output, save output into the variable 'help'
-	set -l help (nroff -man $__fish_datadir/man/$item.1)
+	set -l help (nroff -man "$__fish_datadir/man/man1/$item.1" ^ /dev/null )
 	set -l lines (count $help)
 
 	# Print an empty line first

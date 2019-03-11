@@ -1,0 +1,42 @@
+\section test test - perform tests on files and text
+
+\subsection test-synopsis Synopsis
+ <tt>test [EXPRESSION]</tt>
+
+\subsection test-description Description
+
+Tests the expression given and sets the exit status to 0 if true,
+and 1 if false.
+
+The following options are available:
+- \c -h displays a help message and then exits.
+- <tt>-L FILE</tt> returns true if \c FILE is a symbolic link.
+- <tt>-S FILE</tt> returns true if \c FILE is a socket.
+- <tt>COND1 -a COND2</tt> combines two conditions with a logical and.
+- <tt>-b FILE</tt> returns true if \c FILE is a block device.
+- <tt>-c FILE</tt> returns true if \c FILE is a character device.
+- <tt>-d FILE</tt> returns true if \c FILE is a directory.
+- <tt>-e FILE</tt> returns true if \c FILE exists.
+- <tt>-f FILE</tt> returns true if \c FILE is a regular file.
+- <tt>-f FILE</tt> returns true if \c FILE has set-group-ID bit set.
+- <tt>-n STRING</tt> returns true if the length of \c STRING is non-zero.
+- <tt>COND1 -o COND2</tt> combines two conditions with a logical or.
+- <tt>-p FILE</tt> returns true if \c FILE is a named pipe.
+- <tt>-r FILE</tt> returns true if \c FILE is readable.
+- <tt>-s FILE</tt> returns true if the size of \c FILE is non-zero.
+- <tt>-t FD</tt> returns true if \c FD is a terminal (TTY).
+- <tt>-u FILE</tt> returns true if \c FILE has set-user-ID bit set.
+- <tt>-w FILE</tt> returns true if \c FILE is writable.
+- <tt>-x FILE</tt> returns true if \c FILE is executable.
+- <tt>-z STRING</tt> returns true if \c STRING length is zero.
+
+\subsection test-example Example
+
+<pre>
+if test -d "/"
+    echo "Fish is cool"
+end
+</pre> 
+
+Because "/" is a directory, the expression will evaluate to true, and
+"Fish is cool" will be output.

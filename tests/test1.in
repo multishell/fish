@@ -1,18 +1,38 @@
 #
-#Test aliases loops and conditionals
+#Test aliases, loops, conditionals and some basic elements
 #
 
 for i in 1 2 #Comment on same line as command
-#Comment inside loop 
+#Comment inside loop
     for j in a b
 		#Double loop
         echo $i$j
 	end;
 end
 
+# Bracket expansion
+echo x-{1}
+echo x-{1,2}
+echo foo-{1,2{3,4}}
+
+# Escpaed newlines
+echo foo\ bar
+echo foo\
+bar
+echo "foo\
+bar"
+echo 'foo\
+bar'
+
+for i in \
+    a b c
+    echo $i
+end
+
+
 # Simple alias tests
 
-function foo 
+function foo
     echo >foo.txt $argv
 end
 
@@ -26,16 +46,16 @@ else
   echo Test 2 fail
 end
 
-function foo 
+function foo
     printf 'Test %s' $1; echo ' pass'
 end
 
-foo 3 
+foo 3
 
 for i in Test for continue break and switch builtins problems;
 	switch $i
 		case Test
-			printf "%s " $i 
+			printf "%s " $i
 		case "f??"
 			printf "%s " 3
 		case "c*"
@@ -51,3 +71,42 @@ for i in Test for continue break and switch builtins problems;
 	end
 end
 
+set -l sta
+if eval true
+	if eval false
+		set sta fail
+	else
+		set sta pass
+	end
+else
+	set sta fail
+end
+echo Test 4 $sta
+
+function test_builtin_status
+	return 1
+end
+test_builtin_status
+if [ $status -eq 1 ]
+	set sta pass
+else
+	set sta fail
+end
+echo Test 5 $sta
+
+# echo tests
+
+echo 'abc\ndef'
+echo -e 'abc\ndef'
+echo -e 'abc\zdef'
+echo -e 'abc\41def'
+echo -e 'abc\041def'
+echo -e 'abc\121def'
+echo -e 'abc\1212def'
+echo -e 'abc\cdef' # won't output a newline!
+echo ''
+
+echo -e Catch your breath
+
+echo -e 'abc\x21def'
+echo -e 'abc\x211def'

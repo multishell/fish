@@ -1,5 +1,5 @@
 /** \file output.h
-	Generic output functions
+  Generic output functions
 */
 /**
    Constants for various character classifications. Each character of a command string can be classified as one of the following types.
@@ -9,24 +9,26 @@
 #define FISH_OUTPUT_H
 
 #include <wchar.h>
+#include "screen.h"
+#include "color.h"
 
 /**
-   Constants for various colors as used by the set_color function. 
+   Constants for various colors as used by the set_color function.
 */
 enum
 {
-	FISH_COLOR_BLACK,
-	FISH_COLOR_RED,
-	FISH_COLOR_GREEN,
-	FISH_COLOR_YELLOW,
-	FISH_COLOR_BLUE,
-	FISH_COLOR_MAGENTA,
-	FISH_COLOR_CYAN,
-	FISH_COLOR_WHITE,
-	/** The default fg color of the terminal */
-	FISH_COLOR_NORMAL,
-	FISH_COLOR_IGNORE,
-	FISH_COLOR_RESET
+    FISH_COLOR_BLACK,
+    FISH_COLOR_RED,
+    FISH_COLOR_GREEN,
+    FISH_COLOR_YELLOW,
+    FISH_COLOR_BLUE,
+    FISH_COLOR_MAGENTA,
+    FISH_COLOR_CYAN,
+    FISH_COLOR_WHITE,
+    /** The default fg color of the terminal */
+    FISH_COLOR_NORMAL,
+    FISH_COLOR_IGNORE,
+    FISH_COLOR_RESET
 }
 ;
 
@@ -71,7 +73,7 @@ enum
 */
 
 
-void set_color( int c, int c2 );
+void set_color(rgb_color_t c, rgb_color_t c2);
 
 /**
    Write specified multibyte string
@@ -79,21 +81,21 @@ void set_color( int c, int c2 );
 #define writembs( mbs )                         \
         {                                       \
                 char *tmp = mbs;                \
-                if( tmp )				\
-                {					\
-                        writembs_internal( tmp );			\
-                }							\
-                else							\
-                {							\
-                        debug( 0,					\
-			       _(L"Tried to use terminfo string %s on line %d of %s, which is undefined in terminal of type \"%ls\". Please report this error to %s"), \
-			       #mbs,					\
-			       __LINE__,				\
-			       __FILE__,				\
-			       output_get_term(),			\
-			       PACKAGE_BUGREPORT);			\
-		}                                                       \
-	}
+                if( tmp )        \
+                {          \
+                        writembs_internal( tmp );      \
+                }              \
+                else              \
+                {              \
+                        debug( 0,          \
+             _(L"Tried to use terminfo string %s on line %d of %s, which is undefined in terminal of type \"%ls\". Please report this error to %s"), \
+             #mbs,          \
+             __LINE__,        \
+             __FILE__,        \
+             output_get_term(),      \
+             PACKAGE_BUGREPORT);      \
+    }                                                       \
+  }
 
 
 /**
@@ -102,40 +104,41 @@ void set_color( int c, int c2 );
    as the sending function. But a weird bug on PPC Linux means that on
    this platform, write is instead used directly.
 */
-int writembs_internal( char *str );
+int writembs_internal(char *str);
 
 /**
    Write a wide character using the output method specified using output_set_writer().
 */
-int writech( wint_t ch );
+int writech(wint_t ch);
 
 /**
    Write a wide character string to FD 1.
 */
-void writestr( const wchar_t *str );
+void writestr(const wchar_t *str);
 
 /**
    Write a wide character string to FD 1. If the string is wider than
    the specified maximum, truncate and ellipsize it.
 */
-void writestr_ellipsis( const wchar_t *str, int max_width );
+void writestr_ellipsis(const wchar_t *str, int max_width);
 
 /**
    Escape and write a string to fd 1
 */
-int write_escaped_str( const wchar_t *str, int max_len );
+int write_escaped_str(const wchar_t *str, int max_len);
 
 /**
    Return the internal color code representing the specified color
 */
-int output_color_code( const wchar_t *val );
+int output_color_code(const wcstring &val, bool is_background);
+rgb_color_t parse_color(const wcstring &val, bool is_background);
 
 /**
    This is for writing process notification messages. Has to write to
    stdout, so clr_eol and such functions will work correctly. Not an
    issue since this function is only used in interactive mode anyway.
 */
-int writeb( tputs_arg_t b );
+int writeb(tputs_arg_t b);
 
 /**
    Set the function used for writing in move_cursor, writespace and
@@ -143,21 +146,26 @@ int writeb( tputs_arg_t b );
    default, the write call is used to give completely unbuffered
    output to stdout.
 */
-void output_set_writer( int (*writer)(char) );
+void output_set_writer(int (*writer)(char));
 
-//typedef int (*func_ptr_t)(char);
 /**
    Return the current output writer
  */
 int (*output_get_writer())(char) ;
 
-/**
-   Set the terminal name
- */
-void output_set_term( wchar_t *term );
-/**
-   Return the terminal name
- */
-wchar_t *output_get_term();
+/** Set the terminal name */
+void output_set_term(const wcstring &term);
+
+/** Return the terminal name */
+const wchar_t *output_get_term();
+
+/** Sets whether term256 colors are supported */
+bool output_get_supports_term256();
+void output_set_supports_term256(bool val);
+
+/* Exported for builtin_set_color's usage only */
+bool write_foreground_color(unsigned char idx);
+bool write_background_color(unsigned char idx);
+unsigned char index_for_color(rgb_color_t c);
 
 #endif

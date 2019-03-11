@@ -1,13 +1,15 @@
 /** \file env.h
-	Prototypes for functions for setting and getting environment variables.
+  Prototypes for functions for setting and getting environment variables.
 */
 
 #ifndef FISH_ENV_H
 #define FISH_ENV_H
 
 #include <wchar.h>
+#include <map>
 
 #include "util.h"
+#include "common.h"
 
 /**
    Flag for local (to the current block) variable
@@ -44,17 +46,27 @@
 /**
    Error code for trying to alter read-only variable
 */
-enum{
-	ENV_PERM = 1,
-	ENV_INVALID
+enum
+{
+    ENV_PERM = 1,
+    ENV_INVALID
 }
 ;
 
+/* A struct of configuration directories, determined in main() that fish will optionally pass to env_init.
+ */
+struct config_paths_t
+{
+    wcstring data;      // e.g. /usr/local/share
+    wcstring sysconf;   // e.g. /usr/local/etc
+    wcstring doc;       // e.g. /usr/local/share/doc/fish
+    wcstring bin;       // e.g. /usr/local/bin
+};
 
 /**
    Initialize environment variable data
 */
-void env_init();
+void env_init(const struct config_paths_t *paths = NULL);
 
 /**
    Destroy environment variable data
@@ -63,7 +75,7 @@ void env_destroy();
 
 
 /**
-   Set the value of the environment variable whose name matches key to val. 
+   Set the value of the environment variable whose name matches key to val.
 
    Memory policy: All keys and values are copied, the parameters can and should be freed by the caller afterwards
 
@@ -79,9 +91,7 @@ void env_destroy();
    * ENV_INVALID, the variable name or mode was invalid
 */
 
-int env_set( const wchar_t *key, 
-			 const wchar_t *val,
-			 int mode );
+int env_set(const wcstring &key, const wchar_t *val, int mode);
 
 
 /**
@@ -91,52 +101,146 @@ int env_set( const wchar_t *key,
   valid until the next call to env_get(), env_set(), env_push() or
   env_pop() takes place.
 */
-wchar_t *env_get( const wchar_t *key );
+//const wchar_t *env_get( const wchar_t *key );
+
+class env_var_t : public wcstring
+{
+private:
+    bool is_missing;
+public:
+    static env_var_t missing_var(void)
+    {
+        env_var_t result(L"");
+        result.is_missing = true;
+        return result;
+
+    }
+
+    env_var_t(const env_var_t &x) : wcstring(x), is_missing(x.is_missing) { }
+    env_var_t(const wcstring & x) : wcstring(x), is_missing(false) { }
+    env_var_t(const wchar_t *x) : wcstring(x), is_missing(false) { }
+    env_var_t() : wcstring(L""), is_missing(false) { }
+
+    bool missing(void) const
+    {
+        return is_missing;
+    }
+
+    bool missing_or_empty(void) const
+    {
+        return missing() || empty();
+    }
+
+    const wchar_t *c_str(void) const;
+
+    env_var_t &operator=(const env_var_t &s)
+    {
+        is_missing = s.is_missing;
+        wcstring::operator=(s);
+        return *this;
+    }
+
+    bool operator==(const env_var_t &s) const
+    {
+        return is_missing == s.is_missing && static_cast<const wcstring &>(*this) == static_cast<const wcstring &>(s);
+    }
+
+    bool operator==(const wcstring &s) const
+    {
+        return ! is_missing && static_cast<const wcstring &>(*this) == s;
+    }
+
+    bool operator!=(const env_var_t &s) const
+    {
+        return !(*this == s);
+    }
+
+    bool operator!=(const wcstring &s) const
+    {
+        return !(*this == s);
+    }
+
+    bool operator==(const wchar_t *s) const
+    {
+        return ! is_missing && static_cast<const wcstring &>(*this) == s;
+    }
+
+    bool operator!=(const wchar_t *s) const
+    {
+        return !(*this == s);
+    }
+
+
+};
+
+/** Gets the variable with the specified name, or env_var_t::missing_var if it does not exist. */
+env_var_t env_get_string(const wcstring &key);
 
 /**
-   Returns 1 if the specified key exists. This can't be reliably done
+   Returns true if the specified key exists. This can't be reliably done
    using env_get, since env_get returns null for 0-element arrays
 
    \param key The name of the variable to remove
    \param mode the scope to search in. All scopes are searched if unset
 */
-int env_exist( const wchar_t *key, int mode );
+bool env_exist(const wchar_t *key, int mode);
 
 /**
    Remove environemnt variable
-   
+
    \param key The name of the variable to remove
    \param mode should be ENV_USER if this is a remove request from the user, 0 otherwise. If this is a user request, read-only variables can not be removed. The mode may also specify the scope of the variable that should be erased.
 
    \return zero if the variable existed, and non-zero if the variable did not exist
 */
-int env_remove( const wchar_t *key, int mode );
+int env_remove(const wcstring &key, int mode);
 
 /**
   Push the variable stack. Used for implementing local variables for functions and for-loops.
 */
-void env_push( int new_scope );
+void env_push(bool new_scope);
 
 /**
   Pop the variable stack. Used for implementing local variables for functions and for-loops.
 */
 void env_pop();
 
-/**
-   Returns an array containing all exported variables in a format suitable for execv.
-*/
-char **env_export_arr( int recalc );
+/** Returns an array containing all exported variables in a format suitable for execv. */
+const char * const * env_export_arr(bool recalc);
 
 /**
-  Insert all variable names into l. These are not copies of the strings and should not be freed after use.
+  Returns all variable names.
 */
-void env_get_names( array_list_t *l, int flags );
+wcstring_list_t env_get_names(int flags);
 
-/**
-   Update the PWD variable
-   directory
-*/
+/** Update the PWD variable directory */
 int env_set_pwd();
+
+/* Returns the PWD with a terminating slash */
+wcstring env_get_pwd_slash();
+
+class env_vars_snapshot_t
+{
+    std::map<wcstring, wcstring> vars;
+    bool is_current() const;
+
+public:
+    env_vars_snapshot_t(const wchar_t * const * keys);
+    env_vars_snapshot_t(void);
+
+    env_var_t get(const wcstring &key) const;
+
+    // Returns the fake snapshot representing the live variables array
+    static const env_vars_snapshot_t &current();
+
+    // vars necessary for highlighting
+    static const wchar_t * const highlighting_keys[];
+};
+
+extern bool g_log_forks;
+extern int g_fork_count;
+
+extern bool g_use_posix_spawn;
 
 
 #endif

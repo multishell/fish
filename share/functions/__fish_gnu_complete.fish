@@ -1,4 +1,4 @@
-function __fish_gnu_complete -d "Wrapper for the complete builtin. Skips the long completions on non-GNU systems"
+function __fish_gnu_complete -d "Wrapper for the complete built-in. Skips the long completions on non-GNU systems"
 	set is_gnu 0
 
 	set -l argv_out
@@ -6,7 +6,7 @@ function __fish_gnu_complete -d "Wrapper for the complete builtin. Skips the lon
 	# Check if we are using a gnu system
 	for i in $argv
 		switch  $i
-			
+
 			case -g --is-gnu
 				set is_gnu 1
 
@@ -31,7 +31,7 @@ function __fish_gnu_complete -d "Wrapper for the complete builtin. Skips the lon
 						 continue
 
 				end
-	
+
 				switch $i
 
 					case -l --long
@@ -45,7 +45,7 @@ function __fish_gnu_complete -d "Wrapper for the complete builtin. Skips the lon
 			set argv $argv_out
 
 	end
-	
+
 	complete $argv
 
 end
