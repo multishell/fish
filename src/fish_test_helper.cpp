@@ -135,6 +135,8 @@ static void print_ignored_signals() {
 
 static void print_stop_cont() {
     signal(SIGTSTP, [](int) {
+        // C++ compilers are awful and this is the dance we need to do to silence the "Unused result" warning.
+        // No, casting to (void) does *not* work. Please leave this.
         auto __attribute__((unused)) _ = write(STDOUT_FILENO, "SIGTSTP\n", strlen("SIGTSTP\n"));
         kill(getpid(), SIGSTOP);
     });
@@ -147,6 +149,11 @@ static void print_stop_cont() {
             exit(0);
         }
     }
+}
+
+static void sigkill_self() {
+    kill(getpid(), SIGKILL);
+    abort();
 }
 
 static void show_help();
@@ -180,6 +187,7 @@ static fth_command_t s_commands[] = {
     {"print_ignored_signals", print_ignored_signals,
      "Print to stdout the name(s) of ignored signals"},
     {"print_stop_cont", print_stop_cont, "Print when we get SIGTSTP and SIGCONT, exiting on input"},
+    {"sigkill_self", sigkill_self, "Send SIGKILL to self"},
     {"help", show_help, "Print list of fish_test_helper commands"},
 };
 

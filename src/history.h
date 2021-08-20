@@ -126,7 +126,6 @@ class history_item_t {
 
 typedef std::deque<history_item_t> history_item_list_t;
 
-class history_file_contents_t;
 struct history_impl_t;
 
 class history_t {
@@ -146,7 +145,7 @@ class history_t {
 
     // Privately add an item. If pending, the item will not be returned by history searches until a
     // call to resolve_pending. Any trailing ephemeral items are dropped.
-    void add(history_item_t item, bool pending = false);
+    void add(history_item_t &&item, bool pending = false);
 
     // Add a new history item with text \p str to the end of history.
     void add(wcstring str);

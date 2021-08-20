@@ -586,6 +586,9 @@ class reader_data_t : public std::enable_shared_from_this<reader_data_t> {
     /// HACK: A flag to reset the loop state from the outside.
     bool reset_loop_state{false};
 
+    /// Whether this is the first prompt.
+    bool first_prompt{true};
+
     /// The representation of the current screen contents.
     screen_t screen;
 
@@ -1310,6 +1313,10 @@ void reader_data_t::exec_prompt() {
     // may still be output on the line from the previous command (#2499) and we need our PROMPT_SP
     // hack to work.
     reader_write_title(L"", parser(), false);
+
+    // Some prompt may have requested an exit (#8033).
+    this->exit_loop_requested |= parser().libdata().exit_current_script;
+    parser().libdata().exit_current_script = false;
 }
 
 void reader_init() {
@@ -1342,8 +1349,7 @@ void reader_init() {
 
     // Set up our fixed terminal modes once,
     // so we don't get flow control just because we inherited it.
-    if (is_interactive_session() &&
-        getpgrp() == tcgetpgrp(STDIN_FILENO)) {
+    if (is_interactive_session() && getpgrp() == tcgetpgrp(STDIN_FILENO)) {
         term_donate(/* quiet */ true);
     }
 
@@ -1817,8 +1823,7 @@ void reader_data_t::select_completion_in_direction(selection_motion_t dir) {
     }
 }
 
-/// Flash the screen. This function changes the color of the current line momentarily and sends a
-/// BEL to maybe flash the screen or emite a sound, depending on how it is configured.
+/// Flash the screen. This function changes the color of the current line momentarily.
 void reader_data_t::flash() {
     struct timespec pollint;
     editable_line_t *el = &command_line;
@@ -1833,11 +1838,6 @@ void reader_data_t::flash() {
     paint_layout(L"flash");
 
     layout_data_t old_data = std::move(rendered_layout);
-
-    ignore_result(write(STDOUT_FILENO, "\a", 1));
-    // The write above changed the timestamp of stdout; ensure we don't therefore reset our screen.
-    // See #3693.
-    s_save_status(&screen);
 
     pollint.tv_sec = 0;
     pollint.tv_nsec = 100 * 1000000;
@@ -1997,15 +1997,7 @@ bool reader_data_t::handle_completions(const completion_list_t &comp, size_t tok
                 size_t idx, max = std::min(common_prefix.size(), el.completion.size());
 
                 for (idx = 0; idx < max; idx++) {
-                    wchar_t ac = common_prefix.at(idx), bc = el.completion.at(idx);
-                    bool matches = (ac == bc);
-                    // If we are replacing the token, allow case to vary.
-                    if (will_replace_token && !matches) {
-                        // Hackish way to compare two strings in a case insensitive way,
-                        // hopefully better than towlower().
-                        matches = (wcsncasecmp(&ac, &bc, 1) == 0);
-                    }
-                    if (!matches) break;
+                    if (common_prefix.at(idx) != el.completion.at(idx)) break;
                 }
 
                 // idx is now the length of the new common prefix.
@@ -2508,29 +2500,42 @@ void reader_data_t::super_highlight_me_plenty() {
 }
 
 void reader_data_t::finish_highlighting_before_exec() {
+    // Early-out if highlighting is not OK.
     if (!conf.highlight_ok) return;
-    if (in_flight_highlight_request.empty()) return;
 
-    // We have an in-flight highlight request scheduled.
-    // Wait for its completion to run, but not forever.
-    namespace sc = std::chrono;
-    auto now = sc::steady_clock::now();
-    auto deadline = now + sc::milliseconds(kHighlightTimeoutForExecutionMs);
-    while (now < deadline) {
-        long timeout_usec = sc::duration_cast<sc::microseconds>(deadline - now).count();
-        iothread_service_main_with_timeout(timeout_usec);
+    // Decide if our current highlighting is OK. If not we will do a quick highlight without I/O.
+    bool current_highlight_ok = false;
+    if (in_flight_highlight_request.empty()) {
+        // There is no in-flight highlight request. Two possibilities:
+        // 1: The user hit return after highlighting finished, so current highlighting is correct.
+        // 2: The user hit return before highlighting started, so current highlighting is stale.
+        // We can distinguish these based on what we last rendered.
+        current_highlight_ok = (this->rendered_layout.text == command_line.text());
+    } else if (in_flight_highlight_request == command_line.text()) {
+        // The user hit return while our in-flight highlight request was still processing the text.
+        // Wait for its completion to run, but not forever.
+        namespace sc = std::chrono;
+        auto now = sc::steady_clock::now();
+        auto deadline = now + sc::milliseconds(kHighlightTimeoutForExecutionMs);
+        while (now < deadline) {
+            long timeout_usec = sc::duration_cast<sc::microseconds>(deadline - now).count();
+            iothread_service_main_with_timeout(timeout_usec);
 
-        // Note iothread_service_main_with_timeout will reentrantly modify us,
-        // by invoking a completion.
-        if (in_flight_highlight_request.empty()) break;
-        now = sc::steady_clock::now();
+            // Note iothread_service_main_with_timeout will reentrantly modify us,
+            // by invoking a completion.
+            if (in_flight_highlight_request.empty()) break;
+            now = sc::steady_clock::now();
+        }
+
+        // If our in_flight_highlight_request is now empty, it means it completed and we highlighted
+        // successfully.
+        current_highlight_ok = in_flight_highlight_request.empty();
     }
 
-    if (!in_flight_highlight_request.empty()) {
-        // We did not complete before the deadline.
-        // Give up and highlight without I/O.
-        const editable_line_t *el = &command_line;
-        auto highlight_no_io = get_highlight_performer(parser(), el->text(), false /* io not ok */);
+    if (!current_highlight_ok) {
+        // We need to do a quick highlight without I/O.
+        auto highlight_no_io =
+            get_highlight_performer(parser(), command_line.text(), false /* io not ok */);
         this->highlight_complete(highlight_no_io());
     }
 }
@@ -2749,16 +2754,6 @@ static int read_i(parser_t &parser) {
     return 0;
 }
 
-/// Test if there are bytes available for reading on the specified file descriptor.
-static int can_read(int fd) {
-    struct timeval can_read_timeout = {0, 0};
-    fd_set fds;
-
-    FD_ZERO(&fds);
-    FD_SET(fd, &fds);
-    return select(fd + 1, &fds, nullptr, nullptr, &can_read_timeout) == 1;
-}
-
 /// Test if the specified character in the specified string is backslashed. pos may be at the end of
 /// the string, which indicates if there is a trailing backslash.
 static bool is_backslashed(const wcstring &str, size_t pos) {
@@ -2864,8 +2859,8 @@ maybe_t<char_event_t> reader_data_t::read_normal_chars(readline_loop_state_t &rl
 
     while (accumulated_chars.size() < limit) {
         bool allow_commands = (accumulated_chars.empty());
-        auto evt = inputter.readch(allow_commands ? normal_handler : empty_handler);
-        if (!event_is_normal_char(evt) || !can_read(conf.in)) {
+        auto evt = inputter.read_char(allow_commands ? normal_handler : empty_handler);
+        if (!event_is_normal_char(evt) || !select_wrapper_t::poll_fd_readable(conf.in)) {
             event_needing_handling = std::move(evt);
             break;
         } else if (evt.input_style == char_input_style_t::notfirst && accumulated_chars.empty() &&
@@ -3283,9 +3278,8 @@ void reader_data_t::handle_readline_command(readline_cmd_t c, readline_loop_stat
                     text.pop_back();
                 }
 
-                if (history && !conf.in_silent_mode) {
+                if (!text.empty() && history && !conf.in_silent_mode) {
                     // Remove ephemeral items.
-                    // Note we fall into this case if the user just types a space and hits return.
                     history->remove_ephemeral_items();
 
                     // Mark this item as ephemeral if there is a leading space (#615).
@@ -3882,7 +3876,20 @@ maybe_t<wcstring> reader_data_t::readline(int nchars_or_0) {
         }
     }
 
-    s_reset_abandoning_line(&screen, termsize_last().width);
+    // HACK: Don't abandon line for the first prompt, because
+    // if we're started with the terminal it might not have settled,
+    // so the width is quite likely to be in flight.
+    //
+    // This means that `printf %s foo; fish` will overwrite the `foo`,
+    // but that's a smaller problem than having the omitted newline char
+    // appear constantly.
+    //
+    // I can't see a good way around this.
+    if (!first_prompt) {
+        s_reset_abandoning_line(&screen, termsize_last().width);
+    }
+    first_prompt = false;
+
     event_fire_generic(parser(), L"fish_prompt");
     exec_prompt();
 
@@ -3927,6 +3934,11 @@ maybe_t<wcstring> reader_data_t::readline(int nchars_or_0) {
                 break;
             }
         }
+
+        // If we ran `exit` anywhere, exit.
+        exit_loop_requested |= parser().libdata().exit_current_script;
+        parser().libdata().exit_current_script = false;
+        if (exit_loop_requested) continue;
 
         if (!event_needing_handling || event_needing_handling->is_check_exit()) {
             continue;
@@ -4001,8 +4013,10 @@ maybe_t<wcstring> reader_data_t::readline(int nchars_or_0) {
     if (this->is_repaint_needed() || conf.in != STDIN_FILENO)
         this->layout_and_repaint(L"prepare to execute");
 
-    // Finish any outstanding syntax highlighting (but do not wait forever).
-    finish_highlighting_before_exec();
+    // Finish syntax highlighting (but do not wait forever).
+    if (rls.finished) {
+        finish_highlighting_before_exec();
+    }
 
     // Emit a newline so that the output is on the line after the command.
     // But do not emit a newline if the cursor has wrapped onto a new line all its own - see #6826.
@@ -4107,7 +4121,7 @@ void reader_schedule_prompt_repaint() {
     reader_data_t *data = current_data_or_null();
     if (data && !data->force_exec_prompt_and_repaint) {
         data->force_exec_prompt_and_repaint = true;
-        data->inputter.queue_ch(readline_cmd_t::repaint);
+        data->inputter.queue_char(readline_cmd_t::repaint);
     }
 }
 
@@ -4120,7 +4134,7 @@ void reader_handle_command(readline_cmd_t cmd) {
 
 void reader_queue_ch(const char_event_t &ch) {
     if (reader_data_t *data = current_data_or_null()) {
-        data->inputter.queue_ch(ch);
+        data->inputter.queue_char(ch);
     }
 }
 

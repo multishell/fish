@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FISH-TUTORIAL" "1" "Apr 07, 2021" "3.2" "fish-shell"
+.TH "FISH-TUTORIAL" "1" "Jun 28, 2021" "3.3" "fish-shell"
 .SH NAME
 fish-tutorial \- fish-shell tutorial
 .
@@ -56,7 +56,7 @@ you@hostname ~>
 .UNINDENT
 .sp
 This prompt that you see above is the fish default prompt: it shows your username, hostname, and working directory.
-\- to change this prompt see \fI\%how to change your prompt\fP
+\- to change this prompt see how to change your prompt
 \- to switch to fish permanently see \fI\%switch your default shell to fish\fP\&.
 .sp
 From now on, we\(aqll pretend your prompt is just a \fB>\fP to save space.
@@ -65,6 +65,8 @@ From now on, we\(aqll pretend your prompt is just a \fB>\fP to save space.
 This tutorial assumes a basic understanding of command line shells and Unix commands, and that you have a working copy of fish.
 .sp
 If you have a strong understanding of other shells, and want to know what fish does differently, search for the magic phrase \fIunlike other shells\fP, which is used to call out important differences.
+.sp
+Or, if you want a quick overview over the differences to other shells like Bash, see Fish For Bash Users\&.
 .SH RUNNING COMMANDS
 .sp
 Fish runs commands like other shells: you type a command, followed by its arguments. Spaces are separators:
@@ -80,27 +82,25 @@ hello world
 .UNINDENT
 .UNINDENT
 .sp
-This runs the command \fBecho\fP with the arguments \fBhello\fP and \fBworld\fP\&.
-.sp
-You can include a literal space in an argument with a backslash, or by using single or double quotes:
+This runs the command \fBecho\fP with the arguments \fBhello\fP and \fBworld\fP\&. In this case that\(aqs the same as one argument \fBhello world\fP, but in many cases it\(aqs not. If you need to pass an argument that includes a space, you can escape with a backslash, or quote it using single or double quotes:
 .INDENT 0.0
 .INDENT 3.5
 .sp
 .nf
 .ft C
 > mkdir My\e Files
+# Makes a directory called "My Files", with a space in the name
 > cp ~/Some\e File \(aqMy Files\(aq
+# Copies a file called "Some File" in the home directory to "My Files"
 > ls "My Files"
 Some File
 .ft P
 .fi
 .UNINDENT
 .UNINDENT
-.sp
-Commands can be chained with semicolons.
 .SH GETTING HELP
 .sp
-Fish has excellent help and man pages. Run \fBhelp\fP to open help in a web browser, and \fBman\fP to open it in a man page. You can also ask for help with a specific command, for example, \fBhelp set\fP to open in a web browser, or \fBman set\fP to see it in the terminal.
+Run \fBhelp\fP to open fish\(aqs help in a web browser, and \fBman\fP with the page (like \fBfish\-language\fP) to open it in a man page. You can also ask for help with a specific command, for example, \fBhelp set\fP to open in a web browser, or \fBman set\fP to see it in the terminal.
 .INDENT 0.0
 .INDENT 3.5
 .sp
@@ -200,6 +200,8 @@ Especially powerful is the recursive wildcard ** which searches directories recu
 .UNINDENT
 .sp
 If that directory traversal is taking a long time, you can \fBControl\fP+\fBC\fP out of it.
+.sp
+For more, see Wildcards\&.
 .SH PIPES AND REDIRECTIONS
 .sp
 You can pipe between commands with the usual vertical bar:
@@ -238,6 +240,8 @@ To redirect stdout and stderr into one file, you need to first redirect stdout, 
 .fi
 .UNINDENT
 .UNINDENT
+.sp
+For more, see Input and output redirections and Pipes\&.
 .SH AUTOSUGGESTIONS
 .sp
 As you type fish will suggest commands to the right of the cursor, in gray. For example:
@@ -325,7 +329,7 @@ builtin_list_io_merge (Branch) builtin_set_color (Branch) busted_events (Tag)
 Try hitting tab and see what fish can do!
 .SH VARIABLES
 .sp
-Like other shells, a dollar sign performs variable substitution:
+Like other shells, a dollar sign followed by a variable name is replaced with the value of that variable:
 .INDENT 0.0
 .INDENT 3.5
 .sp
@@ -338,7 +342,7 @@ My home directory is /home/tutorial
 .UNINDENT
 .UNINDENT
 .sp
-Variable substitution also happens in double quotes, but not single quotes:
+This is known as variable substitution, and it also happens in double quotes, but not single quotes:
 .INDENT 0.0
 .INDENT 3.5
 .sp
@@ -398,6 +402,8 @@ You can erase (or "delete") a variable with \fB\-e\fP or \fB\-\-erase\fP
 .fi
 .UNINDENT
 .UNINDENT
+.sp
+For more, see Variable expansion\&.
 .SH EXPORTS (SHELL VARIABLES)
 .sp
 Sometimes you need to have a variable available to an external command, often as a setting. For example many programs like \fBgit\fP or \fBman\fP read the \fB$PAGER\fP variable to figure out your preferred pager (the program that lets you scroll text). Other variables used like this include \fB$BROWSER\fP, \fB$LANG\fP (to configure your language) and \fB$PATH\fP\&. You\(aqll note these are written in ALLCAPS, but that\(aqs just a convention.
@@ -420,7 +426,9 @@ It can also be unexported with \fB\-\-unexport\fP or \fB\-u\fP\&.
 .sp
 This works the other way around as well! If fish is started by something else, it inherits that parents exported variables. So if your terminal emulator starts fish, and it exports \fB$LANG\fP set to \fBen_US.UTF\-8\fP, fish will receive that setting. And whatever started your terminal emulator also gave \fIit\fP some variables that it will then pass on unless it specifically decides not to. This is how fish usually receives the values for things like \fB$LANG\fP, \fB$PATH\fP and \fB$TERM\fP, without you having to specify them again.
 .sp
-Note that exported variables can be local or global or universal \- "exported" is not a scope\&. Usually you\(aqd make them global via \fBset \-gx MyVariable SomeValue\fP\&.
+Exported variables can be local or global or universal \- "exported" is not a scope! Usually you\(aqd make them global via \fBset \-gx MyVariable SomeValue\fP\&.
+.sp
+For more, see Exporting variables\&.
 .SH LISTS
 .sp
 The \fBset\fP command above used quotes to ensure that \fBMister Noodle\fP was one argument. If it had been two arguments, then \fBname\fP would have been a list of length 2.  In fact, all variables in fish are really lists, that can contain any number of values, or none at all.
@@ -539,7 +547,9 @@ Lists adjacent to other lists or strings are expanded as cartesian products unle
 .UNINDENT
 .UNINDENT
 .sp
-This is similar to \fI\%Brace expansion\fP\&.
+This is similar to Brace expansion\&.
+.sp
+For more, see Lists\&.
 .SH COMMAND SUBSTITUTIONS
 .sp
 Command substitutions use the output of one command as an argument to another. Unlike other shells, fish does not use backticks \(ga\(ga for command substitutions. Instead, it uses parentheses:
@@ -599,6 +609,25 @@ Unlike other shells, fish does not split command substitutions on any whitespace
 .fi
 .UNINDENT
 .UNINDENT
+.sp
+If you need a command substitutions output as one argument, without any splits, use \fBstring collect\fP:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+> echo "first line
+second line" > myfile
+> set myfile (cat myfile | string collect)
+> printf \(aq|%s|\(aq $myfile
+|first line
+second line|
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+For more, see Command substitution\&.
 .SH SEPARATING COMMANDS (SEMICOLON)
 .sp
 Like other shells, fish allows multiple commands either on separate lines or the same line.
@@ -639,6 +668,8 @@ Unlike other shells, fish stores the exit status of the last command in \fB$stat
 This indicates how the command fared \- 0 usually means success, while the others signify kinds of failure. For instance fish\(aqs \fBset \-\-query\fP returns the number of variables it queried that weren\(aqt set \- \fBset \-\-query PATH\fP usually returns 0, \fBset \-\-query arglbargl boogagoogoo\fP usually returns 2.
 .sp
 There is also a \fB$pipestatus\fP list variable for the exit statuses [1] of processes in a pipe.
+.sp
+For more, see The status variable\&.
 .IP [1] 5
 or "stati" if you prefer, or "statūs" if you\(aqve time\-travelled from ancient Rome or work as a latin teacher
 .SH COMBINERS (AND, OR, NOT)
@@ -772,7 +803,9 @@ end
 .UNINDENT
 .UNINDENT
 .sp
-Note that case does not fall through, and can accept multiple arguments or (quoted) wildcards.
+As you see, case does not fall through, and can accept multiple arguments or (quoted) wildcards.
+.sp
+For more, see Conditions\&.
 .SH FUNCTIONS
 .sp
 A fish function is a list of commands, which may optionally take arguments. Unlike other shells, arguments are not passed in "numbered variables" like \fB$1\fP, but instead in a single list \fB$argv\fP\&. To create a function, use the function builtin:
@@ -822,6 +855,8 @@ end
 .fi
 .UNINDENT
 .UNINDENT
+.sp
+For more, see Functions\&.
 .IP [2] 5
 There is a function called alias, but it\(aqs just a shortcut to make functions.
 .SH LOOPS
@@ -871,6 +906,8 @@ end
 .fi
 .UNINDENT
 .UNINDENT
+.sp
+For more, see Loops and blocks\&.
 .SH PROMPT
 .sp
 Unlike other shells, there is no prompt variable like \fBPS1\fP\&. To display your prompt, fish executes the fish_prompt function and uses its output as the prompt. And if it exists, fish also executes the fish_right_prompt function and uses its output as the right prompt.
@@ -920,7 +957,7 @@ This prompt would look like:
 .UNINDENT
 .UNINDENT
 .sp
-You can choose among some sample prompts by running \fBfish_config prompt\fP\&.
+You can choose among some sample prompts by running \fBfish_config\fP for a web UI or \fBfish_config prompt\fP for a simpler version inside your terminal.
 .SH $PATH
 .sp
 \fB$PATH\fP is an environment variable containing the directories that fish searches for commands. Unlike other shells, $PATH is a \fI\%list\fP, not a colon\-delimited string.
@@ -1007,7 +1044,7 @@ end
 .sp
 However, it is more common and efficient to use  autoloading functions and universal variables.
 .sp
-If you want to organize your configuration, fish also reads commands in .fish files in \fB~/.config/fish/conf.d/\fP\&. See initialization for the details.
+If you want to organize your configuration, fish also reads commands in .fish files in \fB~/.config/fish/conf.d/\fP\&. See Configuration Files for the details.
 .SH AUTOLOADING FUNCTIONS
 .sp
 When fish encounters a command, it attempts to autoload a function for that command, by looking for a file with the name of that command in \fB~/.config/fish/functions/\fP\&.
@@ -1108,6 +1145,6 @@ If you want to learn more about fish, there is lots of detailed documentation, t
 .SH AUTHOR
 fish-shell developers
 .SH COPYRIGHT
-2020, fish-shell developers
+2021, fish-shell developers
 .\" Generated by docutils manpage writer.
 .

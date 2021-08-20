@@ -272,9 +272,7 @@ static void print_profile(const std::deque<profile_item_t> &items, FILE *out) {
     }
 }
 
-void parser_t::clear_profiling() {
-    profile_items.clear();
-}
+void parser_t::clear_profiling() { profile_items.clear(); }
 
 void parser_t::emit_profiling(const char *path) const {
     // Save profiling information. OK to not use CLO_EXEC here because this is called while fish is
@@ -568,16 +566,16 @@ void parser_t::job_promote(job_t *job) {
     std::rotate(job_list.begin(), loc, std::next(loc));
 }
 
-job_t *parser_t::job_get(job_id_t id) {
+const job_t *parser_t::job_with_id(job_id_t id) const {
     for (const auto &job : job_list) {
         if (id <= 0 || job->job_id() == id) return job.get();
     }
     return nullptr;
 }
 
-const job_t *parser_t::job_get(job_id_t id) const {
+const job_t *parser_t::job_with_internal_id(internal_job_id_t id) const {
     for (const auto &job : job_list) {
-        if (id <= 0 || job->job_id() == id) return job.get();
+        if (job->internal_job_id == id) return job.get();
     }
     return nullptr;
 }

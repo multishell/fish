@@ -230,7 +230,7 @@ bool is_windows_subsystem_for_linux() {
     debug_shared(msg_level, L"Backtrace:\n" + join_strings(bt, L'\n') + L'\n');
 }
 
-#else  // HAVE_BACKTRACE_SYMBOLS
+#else   // HAVE_BACKTRACE_SYMBOLS
 
 [[gnu::noinline]] void show_stackframe(const wchar_t msg_level, int, int) {
     debug_shared(msg_level, L"Sorry, but your system does not support backtraces");
@@ -547,7 +547,7 @@ void fish_setlocale() {
         obfuscation_read_char = L'*';
     } else {
         if (can_be_encoded(L'\u23CE')) {
-            omitted_newline_str = L"\u23CE";
+            omitted_newline_str = L"\u23CE";  // "return symbol" (⏎)
             omitted_newline_width = 1;
         } else {
             omitted_newline_str = L"^J";
@@ -600,12 +600,11 @@ bool should_suppress_stderr_for_tests() {
 static void debug_shared(const wchar_t level, const wcstring &msg) {
     pid_t current_pid;
     if (!is_forked_child()) {
-        std::fwprintf(stderr, L"<%lc> %ls: %ls\n", static_cast<unsigned long>(level), program_name,
-                      msg.c_str());
+        std::fwprintf(stderr, L"<%lc> %ls: %ls\n", level, program_name, msg.c_str());
     } else {
         current_pid = getpid();
-        std::fwprintf(stderr, L"<%lc> %ls: %d: %ls\n", static_cast<unsigned long>(level),
-                      program_name, current_pid, msg.c_str());
+        std::fwprintf(stderr, L"<%lc> %ls: %d: %ls\n", level, program_name, current_pid,
+                      msg.c_str());
     }
 }
 
@@ -1156,7 +1155,7 @@ static maybe_t<wchar_t> string_last_char(const wcstring &str) {
 }
 
 /// Given a null terminated string starting with a backslash, read the escape as if it is unquoted,
-/// appending to result. Return the number of characters consumed, or 0 on error.
+/// appending to result. Return the number of characters consumed, or none on error.
 maybe_t<size_t> read_unquoted_escape(const wchar_t *input, wcstring *result, bool allow_incomplete,
                                      bool unescape_special) {
     assert(input[0] == L'\\' && "Not an escape");
@@ -1674,7 +1673,7 @@ wcstring format_size(long long sz) {
             if (sz < (1024 * 1024) || !sz_name[i + 1]) {
                 long isz = (static_cast<long>(sz)) / 1024;
                 if (isz > 9)
-                    result.append(format_string(L"%d%ls", isz, sz_name[i]));
+                    result.append(format_string(L"%ld%ls", isz, sz_name[i]));
                 else
                     result.append(
                         format_string(L"%.1f%ls", static_cast<double>(sz) / 1024, sz_name[i]));
@@ -1884,10 +1883,11 @@ bool valid_var_name_char(wchar_t chr) { return fish_iswalnum(chr) || chr == L'_'
 /// Test if the given string is a valid variable name.
 bool valid_var_name(const wcstring &str) {
     // Note do not use c_str(), we want to fail on embedded nul bytes.
-    return std::all_of(str.begin(), str.end(), valid_var_name_char);
+    return !str.empty() && std::all_of(str.begin(), str.end(), valid_var_name_char);
 }
 
 bool valid_var_name(const wchar_t *str) {
+    if (str[0] == L'\0') return false;
     for (size_t i = 0; str[i] != L'\0'; i++) {
         if (!valid_var_name_char(str[i])) return false;
     }
@@ -1995,3 +1995,14 @@ bool is_console_session() {
     }();
     return console_session;
 }
+
+static_assert(const_strcmp("", "a") < 0, "const_strcmp failure");
+static_assert(const_strcmp("a", "a") == 0, "const_strcmp failure");
+static_assert(const_strcmp("a", "") > 0, "const_strcmp failure");
+static_assert(const_strcmp("aa", "a") > 0, "const_strcmp failure");
+static_assert(const_strcmp("a", "aa") < 0, "const_strcmp failure");
+static_assert(const_strcmp("b", "aa") > 0, "const_strcmp failure");
+
+static_assert(const_strlen("") == 0, "const_strlen failure");
+static_assert(const_strlen("a") == 1, "const_strlen failure");
+static_assert(const_strlen("hello") == 5, "const_strlen failure");

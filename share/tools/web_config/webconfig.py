@@ -239,10 +239,10 @@ def parse_bool(val):
 def html_color_for_ansi_color_index(val):
     arr = [
         "black",
-        "#AA0000",
-        "#00AA00",
+        "#FF0000",
+        "#00FF00",
         "#AA5500",
-        "#0000AA",
+        "#0000FF",
         "#AA00AA",
         "#00AAAA",
         "#AAAAAA",
@@ -865,7 +865,7 @@ class BindingParser:
         return readable_command + result
 
 
-class FishConfigTCPServer(SocketServer.TCPServer):
+class FishConfigTCPServer(SocketServer.ThreadingMixIn, SocketServer.TCPServer):
     """TCPServer that only accepts connections from localhost (IPv4/IPv6)."""
 
     WHITELIST = set(["::1", "::ffff:127.0.0.1", "127.0.0.1"])
@@ -902,7 +902,8 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
                 "quote",
                 "redirection",
                 "valid_path",
-                "autosuggestion" "user",
+                "autosuggestion",
+                "user",
                 "host",
                 "cancel",
             ]
@@ -1118,19 +1119,25 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
         return True
 
     def do_set_prompt_function(self, prompt_func):
-        cmd = prompt_func + "\n" + "funcsave fish_prompt"
+        cmd = "functions -e fish_right_prompt; " + prompt_func + "\n" + "funcsave fish_prompt && funcsave fish_right_prompt 2>/dev/null"
         out, err = run_fish_cmd(cmd)
         return len(err) == 0
 
-    def do_get_prompt(self, command_to_run, prompt_function_text, extras_dict):
+    def do_get_prompt(self, prompt_function_text, extras_dict):
         # Return the prompt output by the given command
-        prompt_demo_ansi, err = run_fish_cmd(command_to_run)
+        cmd = prompt_function_text + '\n builtin cd "' + initial_wd + '" \n false \n fish_prompt\n'
+        prompt_demo_ansi, err = run_fish_cmd(cmd)
         prompt_demo_html = ansi_to_html(prompt_demo_ansi)
-        prompt_demo_font_size = self.font_size_for_ansi_prompt(prompt_demo_ansi)
+        right_demo_ansi, err = run_fish_cmd(
+            "functions -e fish_right_prompt; " + prompt_function_text + '\n builtin cd "' + initial_wd + '" \n false \n functions -q fish_right_prompt && fish_right_prompt\n'
+        )
+        right_demo_html = ansi_to_html(right_demo_ansi)
+        prompt_demo_font_size = self.font_size_for_ansi_prompt(prompt_demo_ansi + right_demo_ansi)
         result = {
             "function": prompt_function_text,
             "demo": prompt_demo_html,
             "font_size": prompt_demo_font_size,
+            "right": right_demo_html,
         }
         if extras_dict:
             result.update(extras_dict)
@@ -1139,9 +1146,8 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
     def do_get_current_prompt(self):
         # Return the current prompt. We run 'false' to demonstrate how the
         # prompt shows the command status (#1624).
-        prompt_func, err = run_fish_cmd("functions fish_prompt")
+        prompt_func, err = run_fish_cmd("functions fish_prompt; functions fish_right_prompt")
         result = self.do_get_prompt(
-            'builtin cd "' + initial_wd + '" ; false ; fish_prompt',
             prompt_func.strip(),
             {"name": "Current"},
         )
@@ -1151,8 +1157,7 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
         # Return the prompt you get from the given text. Extras_dict is a
         # dictionary whose values get merged in. We run 'false' to demonstrate
         # how the prompt shows the command status (#1624)
-        cmd = text + '\n builtin cd "' + initial_wd + '" \n false \n fish_prompt\n'
-        return self.do_get_prompt(cmd, text.strip(), extras_dict)
+        return self.do_get_prompt(text.strip(), extras_dict)
 
     def parse_one_sample_prompt_hash(self, line, result_dict):
         # Allow us to skip whitespace, etc.
@@ -1198,7 +1203,7 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
             return None
 
     def do_get_sample_prompts_list(self):
-        paths = glob.iglob("sample_prompts/*.fish")
+        paths = sorted(glob.iglob("sample_prompts/*.fish"))
         result = []
         try:
             pool = multiprocessing.pool.ThreadPool(processes=8)
@@ -1430,9 +1435,9 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
         pass
 
     def log_error(self, format, *args):
-        if format == "code %d, message %s":
+        if format == "code %d, message %s" and hasattr(self, 'path'):
             # This appears to be a send_error() message
-            # We want to include the path
+            # We want to include the path (if we have one)
             (code, msg) = args
             format = "code %d, message %s, path %s"
             args = (code, msg, self.path)
@@ -1522,7 +1527,7 @@ if len(sys.argv) > 1:
         "abbreviations",
     ]:
         if tab.startswith(sys.argv[1]):
-            initial_tab = "#" + tab
+            initial_tab = "#!/" + tab
             break
 
 url = "http://localhost:%d/%s/%s" % (PORT, authkey, initial_tab)
@@ -1569,6 +1574,11 @@ def runThing():
 # so we just spawn it in a thread.
 thread = threading.Thread(target=runThing)
 thread.start()
+
+# Safari will open sockets and not write to them, causing potential hangs
+# on shutdown.
+httpd.block_on_close = False
+httpd.daemon_threads = True
 
 # Select on stdin and httpd
 stdin_no = sys.stdin.fileno()

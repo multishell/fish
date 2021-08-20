@@ -170,7 +170,9 @@ function __fish_git_files
     # (don't use --ignored=no because that was only added in git 2.16, from Jan 2018.
     set -q ignored; and set -a status_opt --ignored
 
-    set -q untracked; and set -a status_opt -unormal
+    # If we're looking for untracked files, we give untracked files even inside untracked directories.
+    # This makes it nicer if e.g. you're in an untracked directory and want to just add one file.
+    set -q untracked; and set -a status_opt -uall
     or set -a status_opt -uno
 
     # We need to set status.relativePaths to true because the porcelain v2 format still honors that,
@@ -967,6 +969,7 @@ complete -f -c git -n '__fish_git_using_command add' -a '(__fish_git_files modif
 # TODO options
 
 ### checkout
+complete -F -c git -n '__fish_git_using_command checkout; and contains -- -- (commandline -opc)'
 complete -f -c git -n __fish_git_needs_command -a checkout -d 'Checkout and switch to a branch'
 complete -k -f -c git -n '__fish_git_using_command checkout; and not contains -- -- (commandline -opc)' -a '(__fish_git_tags)' -d Tag
 complete -k -f -c git -n '__fish_git_using_command checkout; and not contains -- -- (commandline -opc)' -a '(__fish_git_heads)' -d Head
@@ -1060,6 +1063,8 @@ complete -x -c git -n '__fish_git_using_command commit' -l date -d 'Override the
 complete -x -c git -n '__fish_git_using_command commit' -s m -l message -d 'Use the given message as the commit message'
 complete -f -c git -n '__fish_git_using_command commit' -l no-edit -d 'Use the selected commit message without launching an editor'
 complete -f -c git -n '__fish_git_using_command commit; and __fish_contains_opt fixup squash' -k -a '(__fish_git_recent_commits)'
+complete -f -c git -n '__fish_git_using_command commit' -l allow-empty -d 'Create a commit with no changes'
+complete -f -c git -n '__fish_git_using_command commit' -l allow-empty-message -d 'Create a commit with no commit message'
 # TODO options
 
 ### count-objects
@@ -1071,7 +1076,6 @@ complete -f -c git -n '__fish_git_using_command count-objects' -s H -l human-rea
 complete -c git -n __fish_git_needs_command -a describe -d 'Give an object a human readable name based on an available ref'
 complete -k -f -c git -n '__fish_git_using_command describe' -a '(__fish_git_tags)' -d Tag
 complete -k -f -c git -n '__fish_git_using_command describe' -a '(__fish_git_branches)'
-complete -k -f -c git -n '__fish_git_using_command describe' -a '(__fish_git_unique_remote_branches)' -d 'Unique Remote Branch'
 complete -k -f -c git -n '__fish_git_using_command describe' -a '(__fish_git_heads)' -d Head
 complete -f -c git -n '__fish_git_using_command describe' -l dirty -d 'Describe the state of the working tree, append dirty if there are local changes'
 complete -f -c git -n '__fish_git_using_command describe' -l broken -d 'Describe the state of the working tree, append -broken instead of erroring'
@@ -1543,7 +1547,9 @@ complete -f -c git -n "__fish_git_using_command reflog; and not __fish_seen_subc
 
 ### reset
 complete -c git -n __fish_git_needs_command -a reset -d 'Reset current HEAD to the specified state'
-complete -f -c git -n '__fish_git_using_command reset' -l hard -d 'Reset files in working directory'
+complete -f -c git -n '__fish_git_using_command reset' -l hard -d 'Reset the index and the working tree'
+complete -f -c git -n '__fish_git_using_command reset' -l soft -d 'Reset head without touching the index or the working tree'
+complete -f -c git -n '__fish_git_using_command reset' -l mixed -d 'The default: reset the index but not the working tree'
 complete -c git -n '__fish_git_using_command reset; and not contains -- -- (commandline -opc)' -a '(__fish_git_branches)'
 # reset can either undo changes to versioned modified files,
 # or remove files from the staging area.
@@ -1569,7 +1575,7 @@ complete -f -c git -n '__fish_git_using_command restore' -l overlay -d 'Never re
 complete -f -c git -n '__fish_git_using_command restore' -l no-overlay -d 'Remove files when restoring (default)'
 complete -f -c git -n '__fish_git_using_command restore; and not contains -- --staged (commandline -opc)' -a '(__fish_git_files modified deleted unmerged)'
 complete -f -c git -n '__fish_git_using_command restore; and contains -- --staged (commandline -opc)' -a '(__fish_git_files added modified-staged deleted-staged renamed copied)'
-complete -f -c git -n '__fish_git_using_command restore; and __fish_contains_opt -s s source' -a '(git ls-files)'
+complete -F -c git -n '__fish_git_using_command restore; and __fish_contains_opt -s s source'
 # switch options
 complete -f -c git -n __fish_git_needs_command -a switch -d 'Switch to a branch'
 complete -k -f -c git -n '__fish_git_using_command switch' -a '(__fish_git_local_branches)'
@@ -1599,10 +1605,14 @@ complete -f -c git -n __fish_git_needs_command -a rev-parse -d 'Pick out and mas
 complete -f -c git -n '__fish_git_using_command rev-parse' -a '(__fish_git_branches)'
 complete -f -c git -n '__fish_git_using_command rev-parse' -a '(__fish_git_heads)' -d Head
 complete -k -c git -n '__fish_git_using_command rev-parse' -a '(__fish_git_tags)' -d Tag
+complete -c git -n '__fish_git_using_command rev-parse' -l abbrev-ref -d 'Output non-ambiguous short object names'
 
 ### revert
 complete -f -c git -n __fish_git_needs_command -a revert -d 'Revert an existing commit'
 complete -f -c git -n '__fish_git_using_command revert' -ka '(__fish_git_commits)'
+complete -f -c git -n '__fish_git_using_command revert' -l continue -d 'Continue the operation in progress'
+complete -f -c git -n '__fish_git_using_command revert' -l abort -d 'Cancel the operation'
+complete -f -c git -n '__fish_git_using_command revert' -l skip -d 'Skip the current commit and continue with the rest of the sequence'
 # TODO options
 
 ### rm

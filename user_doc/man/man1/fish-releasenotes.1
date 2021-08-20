@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FISH-RELEASENOTES" "1" "Apr 07, 2021" "3.2" "fish-shell"
+.TH "FISH-RELEASENOTES" "1" "Jun 28, 2021" "3.3" "fish-shell"
 .SH NAME
 fish-releasenotes \- fish-shell release notes
 .
@@ -30,6 +30,197 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
+.SH FISH 3.3.0 (RELEASED JUNE 28, 2021)
+.SS Notable improvements and fixes
+.INDENT 0.0
+.IP \(bu 2
+\fBfish_config\fP gained a \fBprompt\fP subcommand to show and pick from the sample prompts directly in the terminal, instead of having to open a webbrowser. For example \fBfish_config prompt choose default\fP loads the default prompt in the current session (\fI\%#7958\fP).
+.IP \(bu 2
+The documentation has been reorganized to be easier to understand (\fI\%#7773\fP).
+.UNINDENT
+.SS Deprecations and removed features
+.INDENT 0.0
+.IP \(bu 2
+The \fB$fish_history\fP value "default" is no longer special. It used to be treated the same as "fish" (\fI\%#7650\fP).
+.IP \(bu 2
+Redirection to standard error with the \fB^\fP character has been disabled by default. It can be turned back on using the \fBstderr\-nocaret\fP feature flag, but will eventually be disabled completely (\fI\%#7105\fP).
+.IP \(bu 2
+Specifying an initial tab to \fBfish_config\fP now only works with \fBfish_config browse\fP (e.g. \fBfish_config browse variables\fP), otherwise it would interfere with the new \fBprompt\fP subcommand (see below) (\fI\%#7958\fP).
+.UNINDENT
+.SS Scripting improvements
+.INDENT 0.0
+.IP \(bu 2
+\fBmath\fP gained new functions \fBlog2\fP (like the documentation claimed), \fBmax\fP and \fBmin\fP (\fI\%#7856\fP). \fBmath\fP functions can be used without the parentheses (eg \fBmath sin 2 + 6\fP), and functions have the lowest precedence in the order of operations (\fI\%#7877\fP).
+.IP \(bu 2
+Shebang (\fB#!\fP) lines are no longer required within shell scripts, improving support for scripts with concatenated binary contents. If a file fails to execute and passes a (rudimentary) binary safety check, fish will re\-invoke it using \fB/bin/sh\fP (\fI\%#7802\fP).
+.IP \(bu 2
+Exit codes are better aligned with bash. A failed execution now reports \fB$status\fP of 127 if the file is not found, and 126 if it is not executable.
+.IP \(bu 2
+\fBecho\fP no longer writes its output one byte at a time, improving performance and allowing use with Linux\(aqs special API files (\fB/proc\fP, \fB/sys\fP and such) (\fI\%#7836\fP).
+.IP \(bu 2
+fish should now better handle \fBcd\fP on filesystems with broken \fBstat(3)\fP responses (\fI\%#7577\fP).
+.IP \(bu 2
+Builtins now properly report a \fB$status\fP of 1 upon unsuccessful writes (\fI\%#7857\fP).
+.IP \(bu 2
+\fBstring match\fP with unmatched capture groups and without the \fB\-\-all\fP flag now sets an empty variable instead of a variable containing the empty string. It also correctly imports the first match if multiple arguments are provided, matching the documentation. (\fI\%#7938\fP).
+.IP \(bu 2
+fish produces more specific errors when a command in a command substitution wasn\(aqt found or is not allowed. This now prints something like "Unknown command" instead of "Unknown error while evaluating command substitution".
+.IP \(bu 2
+\fBfish_indent\fP allows inline variable assignments (\fBFOO=BAR command\fP) to use line continuation, instead of joining them into one line (\fI\%#7955\fP).
+.IP \(bu 2
+fish gained a \fB\-\-no\-config\fP option to disable configuration files. This applies to user\-specific and the systemwide \fBconfig.fish\fP (typically in \fB/etc/fish/config.fish\fP), and configuration snippets (typically in \fBconf.d\fP directories). It also disables universal variables, history, and loading of functions from system or user configuration directories (\fI\%#7921\fP, \fI\%#1256\fP).
+.IP \(bu 2
+When universal variables are unavailable for some reason, setting a universal variable now sets a global variable instead (\fI\%#7921\fP).
+.IP \(bu 2
+\fB$last_pid\fP now contains the process ID of the last process in the pipeline, allowing it to be used in scripts (\fI\%#5036\fP, \fI\%#5832\fP, \fI\%#7721\fP). Previously, this value contained the process group ID, but in scripts this was the same as the running fish\(aqs process ID.
+.IP \(bu 2
+\fBprocess\-exit\fP event handlers now receive the same value as \fB$status\fP in all cases, instead of receiving \-1 when the exit was due to a signal.
+.IP \(bu 2
+\fBprocess\-exit\fP event handlers for PID 0 also received \fBJOB_EXIT\fP events; this has been fixed.
+.IP \(bu 2
+\fBjob\-exit\fP event handlers may now be created with any of the PIDs from the job. The handler is passed the last PID in the job as its second argument, instead of the process group.
+.IP \(bu 2
+Trying to set an empty variable name with \fBset\fP no longer works (these variables could not be used in expansions anyway).
+.IP \(bu 2
+\fBfish_add_path\fP handles an undefined \fBPATH\fP environment variable correctly (\fI\%#8082\fP).
+.UNINDENT
+.SS Interactive improvements
+.INDENT 0.0
+.IP \(bu 2
+Commands entered before the previous command finishes will now be properly syntax highlighted.
+.IP \(bu 2
+fish now automatically creates \fBconfig.fish\fP and the configuration directories in \fB$XDG_CONFIG_HOME/fish\fP (by default \fB~/.config/fish\fP) if they do not already exist (\fI\%#7402\fP).
+.IP \(bu 2
+\fB$SHLVL\fP is no longer incremented in non\-interactive shells. This means it won\(aqt be set to values larger than 1 just because your environment happens to run some scripts in $SHELL in its startup path (\fI\%#7864\fP).
+.IP \(bu 2
+fish no longer rings the bell when flashing the command line. The flashing should already be enough notification and the bell can be annoying (\fI\%#7875\fP).
+.IP \(bu 2
+\fBfish \-\-help\fP is more helpful if the documentation isn\(aqt installed (\fI\%#7824\fP).
+.IP \(bu 2
+\fBfunced\fP won\(aqt include an entry on where a function is defined, thanks to the new \fBfunctions \-\-no\-details\fP option (\fI\%#7879\fP).
+.IP \(bu 2
+A new variable, \fBfish_killring\fP, containing entries from the killring, is now available (\fI\%#7445\fP).
+.IP \(bu 2
+\fBfish \-\-private\fP prints a note on private mode on startup even if \fB$fish_greeting\fP is an empty list (\fI\%#7974\fP).
+.IP \(bu 2
+fish no longer attempts to lock history or universal variable files on remote filesystems, including NFS and Samba mounts. In rare cases, updates to these files may be dropped if separate fish instances modify them simultaneously. (\fI\%#7968\fP).
+.IP \(bu 2
+\fBwait\fP and \fBon\-process\-exit\fP work correctly with jobs that have already exited (\fI\%#7210\fP).
+.IP \(bu 2
+\fB__fish_print_help\fP (used for \fB\-\-help\fP output for fish\(aqs builtins) now respects the \fBLESS\fP environment variable, and if not set, uses better default pager settings (\fI\%#7997\fP).
+.IP \(bu 2
+Errors from \fBalias\fP are now printed to standard error, matching other builtins and functions (\fI\%#7925\fP).
+.IP \(bu 2
+\fBls\fP output is colorized on OpenBSD if colorls utility is installed (\fI\%#8035\fP)
+.IP \(bu 2
+The default pager color looks better in terminals with light backgrounds (\fI\%#3412\fP).
+.IP \(bu 2
+Further robustness improvements to the bash history import (\fI\%#7874\fP).
+.IP \(bu 2
+fish now tries to find a Unicode\-aware locale for encoding (\fBLC_CTYPE\fP) if started without any locale information, improving the display of emoji and other non\-ASCII text on misconfigured systems (\fI\%#8031\fP). To allow a C locale, set the variable \fBfish_allow_singlebyte_locale\fP to 1.
+.IP \(bu 2
+The Web\-based configuration and documentation now feature a dark mode if the browser requests it (\fI\%#8043\fP).
+.IP \(bu 2
+Color variables can now also be given like \fB\-\-background red\fP and \fB\-b red\fP, not just \fB\-\-background=red\fP (\fI\%#8053\fP).
+.IP \(bu 2
+\fBexit\fP run within \fBfish_prompt\fP now exits properly (\fI\%#8033\fP).
+.IP \(bu 2
+When attempting to execute the unsupported POSIX\-style brace command group (\fB{ ... }\fP) fish will suggest its equivalent \fBbegin; ...; end\fP commands (\fI\%#6415\fP).
+.UNINDENT
+.SS New or improved bindings
+.INDENT 0.0
+.IP \(bu 2
+Pasting in Vi mode puts text in the right place in normal mode (\fI\%#7847\fP).
+.IP \(bu 2
+Vi mode\(aqs \fBu\fP is bound to \fBundo\fP instead of \fBhistory\-search\-backward\fP, following GNU readline\(aqs behavior. Similarly, \fBControl\-R\fP is bound to \fBredo\fP instead of \fBhistory\-search\-backward\fP, following Vim (\fI\%#7908\fP).
+.IP \(bu 2
+\fBs\fP in Vi visual mode now does the same thing as \fBc\fP (\fI\%#8039\fP).
+.IP \(bu 2
+The binding for \fB"*y\fP now uses \fBfish_clipboard_copy\fP, allowing it to support more than just \fBxsel\fP\&.
+.IP \(bu 2
+The \fBControl\-Space\fP binding can be correctly customised (\fI\%#7922\fP).
+.IP \(bu 2
+\fBexit\fP works correctly in bindings (\fI\%#7967\fP).
+.IP \(bu 2
+The \fBF1\fP binding, which opens the manual page for the current command, now works around a bug in certain \fBless\fP versions that fail to clear the screen (\fI\%#7863\fP).
+.IP \(bu 2
+The binding for \fBAlt\-S\fP now toggles whether \fBsudo\fP is prepended, even when it took the commandline from history instead of only adding it.
+.IP \(bu 2
+The new functions \fBfish_commandline_prepend\fP and \fBfish_commandline_append\fP allow toggling the presence of a prefix/suffix on the current commandline. (\fI\%#7905\fP).
+.IP \(bu 2
+\fBbackward\-kill\-path\-component\fP \fBControl\-W\fP) no longer erases parts of two tokens when the cursor is positioned immediately after \fB/\fP\&. (\fI\%#6258\fP).
+.UNINDENT
+.SS Improved prompts
+.INDENT 0.0
+.IP \(bu 2
+The default Vi mode prompt now uses foreground instead of background colors, making it less obtrusive (\fI\%#7880\fP).
+.IP \(bu 2
+Performance of the "informative" git prompt is improved somewhat (\fI\%#7871\fP). This is still slower than the non\-informative version by its very nature. In particular it is IO\-bound, so it will be very slow on slow disks or network mounts.
+.IP \(bu 2
+The sample prompts were updated. Some duplicated prompts, like the various classic variants, or less useful ones, like the "justadollar" prompt were removed, some prompts were cleaned up, and in some cases renamed. A new "simple" and "disco" prompt were added (\fI\%#7884\fP, \fI\%#7897\fP, \fI\%#7930\fP). The new prompts will only take effect when selected and existing installed prompts will remain unchanged.
+.IP \(bu 2
+A new \fBprompt_login\fP helper function to describe the kind of "login" (user, host and chroot status) for use in prompts. This replaces the old "debian chroot" prompt and has been added to the default and terlar prompts (\fI\%#7932\fP).
+.IP \(bu 2
+The Web\-based configuration\(aqs prompt picker now shows and installs right prompts (\fI\%#7930\fP).
+.IP \(bu 2
+The git prompt now has the same symbol order in normal and "informative" mode, and it\(aqs customizable via \fB$__fish_git_prompt_status_order\fP (\fI\%#7926\fP).
+.UNINDENT
+.SS Completions
+.INDENT 0.0
+.IP \(bu 2
+Added completions for:
+.INDENT 2.0
+.IP \(bu 2
+\fBfirewall\-cmd\fP (\fI\%#7900\fP)
+.IP \(bu 2
+\fBsv\fP (\fI\%#8069\fP)
+.UNINDENT
+.IP \(bu 2
+Improvements to plenty of completions!
+.IP \(bu 2
+Commands that wrap \fBcd\fP (using \fBcomplete \-\-wraps cd\fP) get the same completions as \fBcd\fP (\fI\%#4693\fP).
+.IP \(bu 2
+The \fB\-\-force\-files\fP option to \fBcomplete\fP works for bare arguments, not just options (\fI\%#7920\fP).
+.IP \(bu 2
+Completion descriptions for functions don\(aqt include the function definition, making them more concise (\fI\%#7911\fP).
+.IP \(bu 2
+The \fBkill\fP completions no longer error on MSYS2 (\fI\%#8046\fP).
+.IP \(bu 2
+Completion scripts are now loaded when calling a command via a relative path (like \fB\&./git\fP) (\fI\%#6001\fP, \fI\%#7992\fP).
+.IP \(bu 2
+When there are multiple completion candidates, fish inserts their shared prefix. This prefix was computed in a case\-insensitive way, resulting in wrong case in the completion pager. This was fixed by only inserting prefixes with matching case (\fI\%#7744\fP).
+.UNINDENT
+.SS Improved terminal support
+.INDENT 0.0
+.IP \(bu 2
+fish no longer tries to detect a missing new line during startup, preventing an erroneous \fB⏎\fP from appearing if the terminal is resized at the wrong time, which can happen in tiling window managers (\fI\%#7893\fP).
+.IP \(bu 2
+fish behaves better when it disagrees with the terminal on the width of characters. In particular, staircase effects with right prompts should be gone in most cases (\fI\%#8011\fP).
+.IP \(bu 2
+If the prompt takes up the entire line, the last character should no longer be chopped off in certain terminals (\fI\%#8002\fP).
+.IP \(bu 2
+fish\(aqs reflow handling has been disabled by default for kitty (\fI\%#7961\fP).
+.IP \(bu 2
+The default prompt no longer produces errors when used with a dumb terminal (\fI\%#7904\fP).
+.IP \(bu 2
+Terminal size variables are updated for window size change signal handlers (\fBSIGWINCH\fP).
+.IP \(bu 2
+Pasting within a multi\-line command using a terminal that supports bracketed paste works correctly, instead of producing an error (\fI\%#7782\fP).
+.IP \(bu 2
+\fBset_color\fP produces an error when used with invalid arguments, rather than empty output which interacts badly with Cartesian product expansion.
+.UNINDENT
+.SS For distributors
+.INDENT 0.0
+.IP \(bu 2
+fish runs correctly on platforms without the \fBO_CLOEXEC\fP flag for \fBopen(2)\fP (\fI\%#8023\fP).
+.UNINDENT
+
+.sp
+.ce
+----
+
+.ce 0
+.sp
 .SH FISH 3.2.2 (RELEASED APRIL 7, 2021)
 .sp
 This release of fish fixes a number of additional issues identified in the fish 3.2 series:
@@ -367,7 +558,7 @@ Builtins return a maximum exit status of 255, rather than potentially overflowin
 .IP \(bu 2
 It is no longer an error to run builtin with closed stdin. For example \fBcount <&\-\fP now prints 0, instead of failing.
 .IP \(bu 2
-Blocks, functions, and builtins no longer permit redirecting to file descriptors other than 0 (standard input), 1 (standard output) and 2 (standard error). For example, \fBecho hello >&5\fP is now an error. This prevents corruption of internal state (#3303).
+Blocks, functions, and builtins no longer permit redirecting to file descriptors other than 0 (standard input), 1 (standard output) and 2 (standard error). For example, \fBecho hello >&5\fP is now an error. This prevents corruption of internal state (\fI\%#3303\fP).
 .UNINDENT
 .SS Interactive improvements
 .INDENT 0.0
@@ -3929,6 +4120,6 @@ track.
 .SH AUTHOR
 fish-shell developers
 .SH COPYRIGHT
-2020, fish-shell developers
+2021, fish-shell developers
 .\" Generated by docutils manpage writer.
 .

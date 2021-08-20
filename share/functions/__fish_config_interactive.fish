@@ -62,7 +62,7 @@ function __fish_config_interactive -d "Initializations that should be performed 
         __init_uvar fish_color_cancel -r
 
         # Pager colors
-        __init_uvar fish_pager_color_prefix white --bold --underline
+        __init_uvar fish_pager_color_prefix normal --bold --underline
         __init_uvar fish_pager_color_completion
         __init_uvar fish_pager_color_description B3A06D yellow
         __init_uvar fish_pager_color_progress brwhite --background=cyan
@@ -235,6 +235,8 @@ function __fish_config_interactive -d "Initializations that should be performed 
         if set -q VTE_VERSION
             # Same for alacritty
             or string match -q -- 'alacritty*' $TERM
+            # Same for kitty
+            or string match -q -- '*kitty' $TERM
             set -g fish_handle_reflow 0
         else if set -q KONSOLE_VERSION
             and test "$KONSOLE_VERSION" -ge 210400 2>/dev/null
@@ -265,6 +267,16 @@ function __fish_config_interactive -d "Initializations that should be performed 
         end
         __update_cwd_osc # Run once because we might have already inherited a PWD from an old tab
     end
+
+    # Create empty configuration directores if they do not already exist
+    test -e $__fish_config_dir/completions/ -a -e $__fish_config_dir/conf.d/ -a -e $__fish_config_dir/functions/ ||
+        mkdir -p $__fish_config_dir/{completions, conf.d, functions}
+
+    # Create config.fish with some boilerplate if it does not exist
+    test -e $__fish_config_dir/config.fish || echo "\
+if status is-interactive
+    # Commands to run in interactive sessions can go here
+end" >$__fish_config_dir/config.fish
 
     # Bump this whenever some code below needs to run once when upgrading to a new version.
     # The universal variable __fish_initialized is initialized in share/config.fish.

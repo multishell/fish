@@ -105,7 +105,7 @@ static char dim_esc[] = "\x1B[2m";
 #endif
 
 /// set_color builtin.
-maybe_t<int> builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_set_color(parser_t &parser, io_streams_t &streams, const wchar_t **argv) {
     // By the time this is called we should have initialized the curses subsystem.
     assert(curses_initialized);
 
@@ -180,6 +180,7 @@ maybe_t<int> builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t 
                 return STATUS_INVALID_ARGS;
             }
             case '?': {
+                builtin_unknown_option(parser, streams, L"set_color", argv[w.woptind - 1]);
                 return STATUS_INVALID_ARGS;
             }
             default: {

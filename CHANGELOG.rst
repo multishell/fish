@@ -1,3 +1,114 @@
+fish 3.3.0 (released June 28, 2021)
+===================================
+
+Notable improvements and fixes
+------------------------------
+- ``fish_config`` gained a ``prompt`` subcommand to show and pick from the sample prompts directly in the terminal, instead of having to open a webbrowser. For example ``fish_config prompt choose default`` loads the default prompt in the current session (:issue:`7958`).
+- The documentation has been reorganized to be easier to understand (:issue:`7773`).
+
+Deprecations and removed features
+---------------------------------
+- The ``$fish_history`` value "default" is no longer special. It used to be treated the same as "fish" (:issue:`7650`).
+- Redirection to standard error with the ``^`` character has been disabled by default. It can be turned back on using the ``stderr-nocaret`` feature flag, but will eventually be disabled completely (:issue:`7105`).
+- Specifying an initial tab to ``fish_config`` now only works with ``fish_config browse`` (e.g. ``fish_config browse variables``), otherwise it would interfere with the new ``prompt`` subcommand (see below) (:issue:`7958`).
+
+Scripting improvements
+----------------------
+- ``math`` gained new functions ``log2`` (like the documentation claimed), ``max`` and ``min`` (:issue:`7856`). ``math`` functions can be used without the parentheses (eg ``math sin 2 + 6``), and functions have the lowest precedence in the order of operations (:issue:`7877`).
+- Shebang (``#!``) lines are no longer required within shell scripts, improving support for scripts with concatenated binary contents. If a file fails to execute and passes a (rudimentary) binary safety check, fish will re-invoke it using ``/bin/sh`` (:issue:`7802`).
+- Exit codes are better aligned with bash. A failed execution now reports ``$status`` of 127 if the file is not found, and 126 if it is not executable.
+- ``echo`` no longer writes its output one byte at a time, improving performance and allowing use with Linux's special API files (``/proc``, ``/sys`` and such) (:issue:`7836`).
+- fish should now better handle ``cd`` on filesystems with broken ``stat(3)`` responses (:issue:`7577`).
+- Builtins now properly report a ``$status`` of 1 upon unsuccessful writes (:issue:`7857`).
+- ``string match`` with unmatched capture groups and without the ``--all`` flag now sets an empty variable instead of a variable containing the empty string. It also correctly imports the first match if multiple arguments are provided, matching the documentation. (:issue:`7938`).
+- fish produces more specific errors when a command in a command substitution wasn't found or is not allowed. This now prints something like "Unknown command" instead of "Unknown error while evaluating command substitution".
+- ``fish_indent`` allows inline variable assignments (``FOO=BAR command``) to use line continuation, instead of joining them into one line (:issue:`7955`).
+- fish gained a ``--no-config`` option to disable configuration files. This applies to user-specific and the systemwide ``config.fish`` (typically in ``/etc/fish/config.fish``), and configuration snippets (typically in ``conf.d`` directories). It also disables universal variables, history, and loading of functions from system or user configuration directories (:issue:`7921`, :issue:`1256`).
+- When universal variables are unavailable for some reason, setting a universal variable now sets a global variable instead (:issue:`7921`).
+- ``$last_pid`` now contains the process ID of the last process in the pipeline, allowing it to be used in scripts (:issue:`5036`, :issue:`5832`, :issue:`7721`). Previously, this value contained the process group ID, but in scripts this was the same as the running fish's process ID.
+- ``process-exit`` event handlers now receive the same value as ``$status`` in all cases, instead of receiving -1 when the exit was due to a signal.
+- ``process-exit`` event handlers for PID 0 also received ``JOB_EXIT`` events; this has been fixed.
+- ``job-exit`` event handlers may now be created with any of the PIDs from the job. The handler is passed the last PID in the job as its second argument, instead of the process group.
+- Trying to set an empty variable name with ``set`` no longer works (these variables could not be used in expansions anyway).
+- ``fish_add_path`` handles an undefined ``PATH`` environment variable correctly (:issue:`8082`).
+
+Interactive improvements
+-------------------------
+- Commands entered before the previous command finishes will now be properly syntax highlighted.
+- fish now automatically creates ``config.fish`` and the configuration directories in ``$XDG_CONFIG_HOME/fish`` (by default ``~/.config/fish``) if they do not already exist (:issue:`7402`).
+- ``$SHLVL`` is no longer incremented in non-interactive shells. This means it won't be set to values larger than 1 just because your environment happens to run some scripts in $SHELL in its startup path (:issue:`7864`).
+- fish no longer rings the bell when flashing the command line. The flashing should already be enough notification and the bell can be annoying (:issue:`7875`).
+- ``fish --help`` is more helpful if the documentation isn't installed (:issue:`7824`).
+- ``funced`` won't include an entry on where a function is defined, thanks to the new ``functions --no-details`` option (:issue:`7879`).
+- A new variable, ``fish_killring``, containing entries from the killring, is now available (:issue:`7445`).
+- ``fish --private`` prints a note on private mode on startup even if ``$fish_greeting`` is an empty list (:issue:`7974`).
+- fish no longer attempts to lock history or universal variable files on remote filesystems, including NFS and Samba mounts. In rare cases, updates to these files may be dropped if separate fish instances modify them simultaneously. (:issue:`7968`).
+- ``wait`` and ``on-process-exit`` work correctly with jobs that have already exited (:issue:`7210`).
+- ``__fish_print_help`` (used for ``--help`` output for fish's builtins) now respects the ``LESS`` environment variable, and if not set, uses better default pager settings (:issue:`7997`).
+- Errors from ``alias`` are now printed to standard error, matching other builtins and functions (:issue:`7925`).
+- ``ls`` output is colorized on OpenBSD if colorls utility is installed (:issue:`8035`)
+- The default pager color looks better in terminals with light backgrounds (:issue:`3412`).
+- Further robustness improvements to the bash history import (:issue:`7874`).
+- fish now tries to find a Unicode-aware locale for encoding (``LC_CTYPE``) if started without any locale information, improving the display of emoji and other non-ASCII text on misconfigured systems (:issue:`8031`). To allow a C locale, set the variable ``fish_allow_singlebyte_locale`` to 1.
+- The Web-based configuration and documentation now feature a dark mode if the browser requests it (:issue:`8043`).
+- Color variables can now also be given like ``--background red`` and ``-b red``, not just ``--background=red`` (:issue:`8053`).
+- ``exit`` run within ``fish_prompt`` now exits properly (:issue:`8033`).
+- When attempting to execute the unsupported POSIX-style brace command group (``{ ... }``) fish will suggest its equivalent ``begin; ...; end`` commands (:issue:`6415`).
+
+New or improved bindings
+^^^^^^^^^^^^^^^^^^^^^^^^
+- Pasting in Vi mode puts text in the right place in normal mode (:issue:`7847`).
+- Vi mode's :kbd:`u` is bound to ``undo`` instead of ``history-search-backward``, following GNU readline's behavior. Similarly, :kbd:`Control-R` is bound to ``redo`` instead of ``history-search-backward``, following Vim (:issue:`7908`).
+- :kbd:`s` in Vi visual mode now does the same thing as :kbd:`c` (:issue:`8039`).
+- The binding for :kbd:`"*y` now uses ``fish_clipboard_copy``, allowing it to support more than just ``xsel``.
+- The :kbd:`Control-Space` binding can be correctly customised (:issue:`7922`).
+- ``exit`` works correctly in bindings (:issue:`7967`).
+- The :kbd:`F1` binding, which opens the manual page for the current command, now works around a bug in certain ``less`` versions that fail to clear the screen (:issue:`7863`).
+- The binding for :kbd:`Alt-S` now toggles whether ``sudo`` is prepended, even when it took the commandline from history instead of only adding it.
+- The new functions ``fish_commandline_prepend`` and ``fish_commandline_append`` allow toggling the presence of a prefix/suffix on the current commandline. (:issue:`7905`).
+- ``backward-kill-path-component`` :kbd:`Control-W`) no longer erases parts of two tokens when the cursor is positioned immediately after ``/``. (:issue:`6258`).
+
+Improved prompts
+^^^^^^^^^^^^^^^^
+- The default Vi mode prompt now uses foreground instead of background colors, making it less obtrusive (:issue:`7880`).
+- Performance of the "informative" git prompt is improved somewhat (:issue:`7871`). This is still slower than the non-informative version by its very nature. In particular it is IO-bound, so it will be very slow on slow disks or network mounts.
+- The sample prompts were updated. Some duplicated prompts, like the various classic variants, or less useful ones, like the "justadollar" prompt were removed, some prompts were cleaned up, and in some cases renamed. A new "simple" and "disco" prompt were added (:issue:`7884`, :issue:`7897`, :issue:`7930`). The new prompts will only take effect when selected and existing installed prompts will remain unchanged.
+- A new ``prompt_login`` helper function to describe the kind of "login" (user, host and chroot status) for use in prompts. This replaces the old "debian chroot" prompt and has been added to the default and terlar prompts (:issue:`7932`).
+- The Web-based configuration's prompt picker now shows and installs right prompts (:issue:`7930`).
+- The git prompt now has the same symbol order in normal and "informative" mode, and it's customizable via ``$__fish_git_prompt_status_order`` (:issue:`7926`).
+
+Completions
+^^^^^^^^^^^
+- Added completions for:
+
+  - ``firewall-cmd`` (:issue:`7900`)
+  - ``sv`` (:issue:`8069`)
+
+- Improvements to plenty of completions!
+- Commands that wrap ``cd`` (using ``complete --wraps cd``) get the same completions as ``cd`` (:issue:`4693`).
+- The ``--force-files`` option to ``complete`` works for bare arguments, not just options (:issue:`7920`).
+- Completion descriptions for functions don't include the function definition, making them more concise (:issue:`7911`).
+- The ``kill`` completions no longer error on MSYS2 (:issue:`8046`).
+- Completion scripts are now loaded when calling a command via a relative path (like ``./git``) (:issue:`6001`, :issue:`7992`).
+- When there are multiple completion candidates, fish inserts their shared prefix. This prefix was computed in a case-insensitive way, resulting in wrong case in the completion pager. This was fixed by only inserting prefixes with matching case (:issue:`7744`).
+
+Improved terminal support
+^^^^^^^^^^^^^^^^^^^^^^^^^
+- fish no longer tries to detect a missing new line during startup, preventing an erroneous ``⏎`` from appearing if the terminal is resized at the wrong time, which can happen in tiling window managers (:issue:`7893`).
+- fish behaves better when it disagrees with the terminal on the width of characters. In particular, staircase effects with right prompts should be gone in most cases (:issue:`8011`).
+- If the prompt takes up the entire line, the last character should no longer be chopped off in certain terminals (:issue:`8002`).
+- fish's reflow handling has been disabled by default for kitty (:issue:`7961`).
+- The default prompt no longer produces errors when used with a dumb terminal (:issue:`7904`).
+- Terminal size variables are updated for window size change signal handlers (``SIGWINCH``).
+- Pasting within a multi-line command using a terminal that supports bracketed paste works correctly, instead of producing an error (:issue:`7782`).
+- ``set_color`` produces an error when used with invalid arguments, rather than empty output which interacts badly with Cartesian product expansion.
+
+For distributors
+----------------
+- fish runs correctly on platforms without the ``O_CLOEXEC`` flag for ``open(2)`` (:issue:`8023`).
+
+--------------
+
 fish 3.2.2 (released April 7, 2021)
 ====================================
 
@@ -189,7 +300,7 @@ Scripting improvements
 -  ``fish --profile`` now only starts profiling after fish is ready to execute commands (all configuration is completed). There is a new ``--profile-startup`` option that only profiles the startup and configuration process (:issue:`7648`).
 -  Builtins return a maximum exit status of 255, rather than potentially overflowing. In particular, this affects ``exit``, ``return``, ``functions --query``, and ``set --query`` (:issue:`7698`, :issue:`7702`).
 - It is no longer an error to run builtin with closed stdin. For example ``count <&-`` now prints 0, instead of failing.
-- Blocks, functions, and builtins no longer permit redirecting to file descriptors other than 0 (standard input), 1 (standard output) and 2 (standard error). For example, ``echo hello >&5`` is now an error. This prevents corruption of internal state (#3303).
+- Blocks, functions, and builtins no longer permit redirecting to file descriptors other than 0 (standard input), 1 (standard output) and 2 (standard error). For example, ``echo hello >&5`` is now an error. This prevents corruption of internal state (:issue:`3303`).
 
 Interactive improvements
 ------------------------

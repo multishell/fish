@@ -124,7 +124,7 @@ static void write_part(const wchar_t *begin, const wchar_t *end, int cut_at_curs
 }
 
 /// The commandline builtin. It is used for specifying a new value for the commandline.
-maybe_t<int> builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_commandline(parser_t &parser, io_streams_t &streams, const wchar_t **argv) {
     // Pointer to what the commandline builtin considers to be the current contents of the command
     // line buffer.
     const wchar_t *current_buffer = nullptr;
@@ -132,7 +132,7 @@ maybe_t<int> builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_
     // What the commandline builtin considers to be the current cursor position.
     auto current_cursor_pos = static_cast<size_t>(-1);
 
-    wchar_t *cmd = argv[0];
+    const wchar_t *cmd = argv[0];
     int buffer_part = 0;
     bool cut_at_cursor = false;
 
@@ -344,7 +344,9 @@ maybe_t<int> builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_
     }
 
     if ((buffer_part || tokenize || cut_at_cursor) &&
-        (cursor_mode || line_mode || search_mode || paging_mode)) {
+        (cursor_mode || line_mode || search_mode || paging_mode) &&
+        // Special case - we allow to get/set cursor position relative to the process/job/token.
+        !(buffer_part && cursor_mode)) {
         streams.err.append_format(BUILTIN_ERR_COMBO, argv[0]);
         builtin_print_error_trailer(parser, streams.err, cmd);
         return STATUS_INVALID_ARGS;
@@ -370,25 +372,6 @@ maybe_t<int> builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_
 
     if (!buffer_part) {
         buffer_part = STRING_MODE;
-    }
-
-    if (cursor_mode) {
-        if (argc - w.woptind) {
-            long new_pos = fish_wcstol(argv[w.woptind]);
-            if (errno) {
-                streams.err.append_format(BUILTIN_ERR_NOT_NUMBER, cmd, argv[w.woptind]);
-                builtin_print_error_trailer(parser, streams.err, cmd);
-            }
-
-            current_buffer = reader_get_buffer();
-            new_pos =
-                std::max(0L, std::min(new_pos, static_cast<long>(std::wcslen(current_buffer))));
-            reader_set_buffer(current_buffer, static_cast<size_t>(new_pos));
-        } else {
-            streams.out.append_format(L"%lu\n",
-                                      static_cast<unsigned long>(reader_get_cursor_pos()));
-        }
-        return STATUS_CMD_OK;
     }
 
     if (line_mode) {
@@ -429,6 +412,25 @@ maybe_t<int> builtin_commandline(parser_t &parser, io_streams_t &streams, wchar_
         default: {
             DIE("unexpected buffer_part");
         }
+    }
+
+    if (cursor_mode) {
+        if (argc - w.woptind) {
+            long new_pos = fish_wcstol(argv[w.woptind]) + (begin - current_buffer);
+            if (errno) {
+                streams.err.append_format(BUILTIN_ERR_NOT_NUMBER, cmd, argv[w.woptind]);
+                builtin_print_error_trailer(parser, streams.err, cmd);
+            }
+
+            current_buffer = reader_get_buffer();
+            new_pos =
+                std::max(0L, std::min(new_pos, static_cast<long>(std::wcslen(current_buffer))));
+            reader_set_buffer(current_buffer, static_cast<size_t>(new_pos));
+        } else {
+            size_t pos = reader_get_cursor_pos() - (begin - current_buffer);
+            streams.out.append_format(L"%lu\n", static_cast<unsigned long>(pos));
+        }
+        return STATUS_CMD_OK;
     }
 
     int arg_count = argc - w.woptind;

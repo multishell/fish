@@ -73,7 +73,7 @@ highlight_language = "fish-docs-samples"
 # -- Project information -----------------------------------------------------
 
 project = "fish-shell"
-copyright = "2020, fish-shell developers"
+copyright = "2021, fish-shell developers"
 author = "fish-shell developers"
 issue_url = "https://github.com/fish-shell/fish-shell/issues"
 
@@ -210,12 +210,17 @@ def get_command_description(path, name):
                 return desc.strip()
     raise SphinxWarning("No description in file %s" % os.path.basename(path))
 
+# Newer sphinxen apparently create another subdirectory which breaks our man lookup.
+# Unbreak it (#7996)
+man_make_section_directory = False
 
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
 man_pages = [
     (master_doc, "fish-doc", "fish-shell Documentation", [author], 1),
     ("tutorial", "fish-tutorial", "fish-shell tutorial", [author], 1),
+    ("language", "fish-language", "The fish language", [author], 1),
+    ("interactive", "fish-interactive", "Using fish interactively", [author], 1),
     ("relnotes", "fish-releasenotes", "fish-shell release notes", [author], 1),
     ("completions", "fish-completions", "Writing fish completions", [author], 1),
     (

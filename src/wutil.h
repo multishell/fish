@@ -19,6 +19,8 @@
 #include "common.h"
 #include "maybe.h"
 
+class autoclose_fd_t;
+
 /// Wide character version of opendir(). Note that opendir() is guaranteed to set close-on-exec by
 /// POSIX (hooray).
 DIR *wopendir(const wcstring &name);
@@ -137,13 +139,15 @@ double fish_wcstod(const wchar_t *str, wchar_t **endptr);
 /// seems to aggressively re-use inodes, so it cannot determine if a file has been deleted (ABA
 /// problem). Therefore we include richer information.
 struct file_id_t {
-    dev_t device;
-    ino_t inode;
-    uint64_t size;
-    time_t change_seconds;
-    long change_nanoseconds;
-    time_t mod_seconds;
-    long mod_nanoseconds;
+    dev_t device{static_cast<dev_t>(-1LL)};
+    ino_t inode{static_cast<ino_t>(-1LL)};
+    uint64_t size{static_cast<uint64_t>(-1LL)};
+    time_t change_seconds{-1};
+    long change_nanoseconds{-1};
+    time_t mod_seconds{-1};
+    long mod_nanoseconds{-1};
+
+    constexpr file_id_t() = default;
 
     bool operator==(const file_id_t &rhs) const;
     bool operator!=(const file_id_t &rhs) const;
@@ -152,6 +156,8 @@ struct file_id_t {
     bool operator<(const file_id_t &rhs) const;
 
     static file_id_t from_stat(const struct stat &buf);
+
+    wcstring dump() const;
 
    private:
     int compare_file_id(const file_id_t &rhs) const;
@@ -182,6 +188,7 @@ struct hash<file_id_t> {
 #endif
 
 file_id_t file_id_for_fd(int fd);
+file_id_t file_id_for_fd(const autoclose_fd_t &fd);
 file_id_t file_id_for_path(const wcstring &path);
 file_id_t file_id_for_path(const std::string &path);
 

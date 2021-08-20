@@ -156,6 +156,13 @@ enum {
 };
 typedef unsigned int escape_flags_t;
 
+/// A user-visible job ID.
+using job_id_t = int;
+
+/// The non user-visible, never-recycled job ID.
+/// Every job has a unique positive value for this.
+using internal_job_id_t = uint64_t;
+
 /// Issue a debug message with printf-style string formating and automatic line breaking. The string
 /// will begin with the string \c program_name, followed by a colon and a whitespace.
 ///
@@ -657,13 +664,9 @@ enum {
 
     /// The status code used when a command was not found.
     STATUS_CMD_UNKNOWN = 127,
-    /// TODO: Figure out why we have two distinct failure codes for when an external command cannot
-    /// be run.
-    ///
+
     /// The status code used when an external command can not be run.
     STATUS_NOT_EXECUTABLE = 126,
-    /// The status code used when an external command can not be run.
-    STATUS_EXEC_FAIL = 125,
 
     /// The status code used when a wildcard had no matches.
     STATUS_UNMATCHED_WILDCARD = 124,
@@ -726,45 +729,38 @@ constexpr ssize_t const_strcmp(const T *lhs, const T *rhs) {
     return (*lhs == *rhs) ? (*lhs == 0 ? 0 : const_strcmp(lhs + 1, rhs + 1))
                           : (*lhs > *rhs ? 1 : -1);
 }
-static_assert(const_strcmp("", "a") < 0, "const_strcmp failure");
-static_assert(const_strcmp("a", "a") == 0, "const_strcmp failure");
-static_assert(const_strcmp("a", "") > 0, "const_strcmp failure");
-static_assert(const_strcmp("aa", "a") > 0, "const_strcmp failure");
-static_assert(const_strcmp("a", "aa") < 0, "const_strcmp failure");
-static_assert(const_strcmp("b", "aa") > 0, "const_strcmp failure");
 
 /// Compile-time agnostic-size strlen/wcslen implementation. Unicode-unaware.
 template <typename T, size_t N>
-constexpr size_t const_strlen(const T(&val)[N], ssize_t index = -1) {
+constexpr size_t const_strlen(const T (&val)[N], ssize_t index = -1) {
     // N is the length of the character array, but that includes one **or more** trailing nuls.
     static_assert(N > 0, "Invalid input to const_strlen");
-    return index == -1 ?
-        // Assume a minimum of one trailing nul and do a quick check for the usual case (single
-        // trailing nul) before recursing:
-        N - 1 - (N <= 2 || val[N-2] != static_cast<T>(0) ? 0 : const_strlen(val, N - 2))
-        // Prevent an underflow in case the string is comprised of all \0 bytes
-        : index == 0 ? 0
-        // Keep back-tracking until a non-nul byte is found
-        : (val[index] != static_cast<T>(0) ? 0 : 1 + const_strlen(val, index - 1));
+    return index == -1
+               ?
+               // Assume a minimum of one trailing nul and do a quick check for the usual case
+               // (single trailing nul) before recursing:
+               N - 1 - (N <= 2 || val[N - 2] != static_cast<T>(0) ? 0 : const_strlen(val, N - 2))
+               // Prevent an underflow in case the string is comprised of all \0 bytes
+               : index == 0
+                     ? 0
+                     // Keep back-tracking until a non-nul byte is found
+                     : (val[index] != static_cast<T>(0) ? 0 : 1 + const_strlen(val, index - 1));
 }
-static_assert(const_strlen("") == 0, "const_strlen failure");
-static_assert(const_strlen("a") == 1, "const_strlen failure");
-static_assert(const_strlen("hello") == 5, "const_strlen failure");
 
 /// Compile-time assertion of alphabetical sort of array `array`, by specified
 /// parameter `accessor`. This is only a macro because constexpr lambdas (to
 /// specify the accessor for the sort key) are C++17 and up.
-#define ASSERT_SORT_ORDER(array, accessor) \
-    struct verify_ ## array ## _sort_t { \
-        template <class T, size_t N> \
-        constexpr static bool validate(T(&vals)[N], size_t idx = 0) { \
-            return (idx == (((sizeof(array) / sizeof(vals[0]))) - 1)) \
-                   ? true \
-                   : const_strcmp(vals[idx] accessor, vals[idx + 1] accessor) <= 0 && \
-                         verify_ ## array ## _sort_t::validate<T, N>(vals, idx + 1); \
-    } \
-}; \
-static_assert(verify_ ## array ## _sort_t::validate(array), \
-              #array " members not in asciibetical order!");
+#define ASSERT_SORT_ORDER(array, accessor)                                                \
+    struct verify_##array##_sort_t {                                                      \
+        template <class T, size_t N>                                                      \
+        constexpr static bool validate(T (&vals)[N], size_t idx = 0) {                    \
+            return (idx == (((sizeof(array) / sizeof(vals[0]))) - 1))                     \
+                       ? true                                                             \
+                       : const_strcmp(vals[idx] accessor, vals[idx + 1] accessor) <= 0 && \
+                             verify_##array##_sort_t::validate<T, N>(vals, idx + 1);      \
+        }                                                                                 \
+    };                                                                                    \
+    static_assert(verify_##array##_sort_t::validate(array),                               \
+                  #array " members not in asciibetical order!");
 
 #endif  // FISH_COMMON_H

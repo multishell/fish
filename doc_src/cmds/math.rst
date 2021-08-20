@@ -20,7 +20,10 @@ By default, the output is a floating-point number with trailing zeroes trimmed. 
 
 Keep in mind that parameter expansion happens before expressions are evaluated. This can be very useful in order to perform calculations involving shell variables or the output of command substitutions, but it also means that parenthesis (``()``) and the asterisk (``*``) glob character have to be escaped or quoted. ``x`` can also be used to denote multiplication, but it needs to be followed by whitespace to distinguish it from hexadecimal numbers.
 
+Parentheses for functions are optional - ``math sin pi`` prints ``0``. However, a comma will bind to the inner function, so ``math pow sin 3, 5`` is an error because it tries to give ``sin`` the arguments ``3`` and ``5``. When in doubt, use parentheses.
+
 ``math`` ignores whitespace between arguments and takes its input as multiple arguments (internally joined with a space), so ``math 2 +2`` and ``math "2 +    2"`` work the same. ``math 2 2`` is an error.
+
 
 The following options are available:
 
@@ -87,6 +90,9 @@ Functions
 - ``floor`` - round number down to nearest integer
 - ``ln`` - the base-e logarithm
 - ``log`` or ``log10`` - the base-10 logarithm
+- ``log2`` - the base-2 logarithm
+- ``max`` - returns the larger of two numbers
+- ``min`` - returns the smaller of two numbers
 - ``ncr`` - "from n choose r" combination function - how many subsets of size r can be taken from n (order doesn't matter)
 - ``npr`` - the number of subsets of size r that can be taken from a set of n elements (including different order)
 - ``pow(x,y)`` returns x to the y (and can be written as ``x ^ y``)
@@ -118,7 +124,7 @@ Examples
 
 ``math 0xFF`` outputs 255, ``math 0 x 3`` outputs 0 (because it computes 0 multiplied by 3).
 
-``math "bitand(0xFE, 0x2e)"`` outputs 46.
+``math bitand 0xFE, 0x2e`` outputs 46.
 
 ``math "bitor(9,2)"`` outputs 11.
 

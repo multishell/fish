@@ -60,15 +60,15 @@
 
 /// List of all locale environment variable names that might trigger (re)initializing the locale
 /// subsystem.
-static const wcstring_list_t locale_variables({L"LANG", L"LANGUAGE", L"LC_ALL", L"LC_ADDRESS",
-                                               L"LC_COLLATE", L"LC_CTYPE", L"LC_IDENTIFICATION",
-                                               L"LC_MEASUREMENT", L"LC_MESSAGES", L"LC_MONETARY",
-                                               L"LC_NAME", L"LC_NUMERIC", L"LC_PAPER",
-                                               L"LC_TELEPHONE", L"LC_TIME", L"LOCPATH"});
+static const wcstring locale_variables[] = {
+    L"LANG",     L"LANGUAGE",          L"LC_ALL",         L"LC_ADDRESS",   L"LC_COLLATE",
+    L"LC_CTYPE", L"LC_IDENTIFICATION", L"LC_MEASUREMENT", L"LC_MESSAGES",  L"LC_MONETARY",
+    L"LC_NAME",  L"LC_NUMERIC",        L"LC_PAPER",       L"LC_TELEPHONE", L"LC_TIME",
+    L"fish_allow_singlebyte_locale", L"LOCPATH"};
 
 /// List of all curses environment variable names that might trigger (re)initializing the curses
 /// subsystem.
-static const wcstring_list_t curses_variables({L"TERM", L"TERMINFO", L"TERMINFO_DIRS"});
+static const wcstring curses_variables[] = {L"TERM", L"TERMINFO", L"TERMINFO_DIRS"};
 
 class var_dispatch_table_t {
     using named_callback_t = std::function<void(const wcstring &, env_stack_t &)>;
@@ -139,7 +139,7 @@ static void handle_timezone(const wchar_t *env_var_name, const environment_t &va
     const auto var = vars.get(env_var_name, ENV_DEFAULT);
     FLOGF(env_dispatch, L"handle_timezone() current timezone var: |%ls| => |%ls|", env_var_name,
           !var ? L"MISSING" : var->as_string().c_str());
-    const std::string &name = wcs2string(env_var_name);
+    std::string name = wcs2string(env_var_name);
     if (var.missing_or_empty()) {
         unsetenv_lock(name.c_str());
     } else {
@@ -260,11 +260,36 @@ static void handle_curses_change(const environment_t &vars) {
     init_curses(vars);
 }
 
+/// Whether to use posix_spawn when possible.
+static relaxed_atomic_bool_t g_use_posix_spawn{false};
+
+bool get_use_posix_spawn() { return g_use_posix_spawn; }
+
+extern "C" {
+const char *gnu_get_libc_version();
+}
+
+// Disallow posix_spawn entirely on glibc <= 2.24.
+// See #8021.
+static bool allow_use_posix_spawn() {
+    bool result = true;
+    // uClibc defines __GLIBC__.
+#if defined(__GLIBC__) && !defined(__UCLIBC__)
+    const char *version = gnu_get_libc_version();
+    result = version && strtod(version, nullptr) >= 2.24;
+#endif
+    return result;
+}
+
 static void handle_fish_use_posix_spawn_change(const environment_t &vars) {
-    // note this defaults to true
-    auto use_posix_spawn = vars.get(L"fish_use_posix_spawn");
-    g_use_posix_spawn =
-        use_posix_spawn.missing_or_empty() ? true : bool_from_string(use_posix_spawn->as_string());
+    // Note if the variable is missing or empty, we default to true.
+    if (!allow_use_posix_spawn()) {
+        g_use_posix_spawn = false;
+    } else if (auto var = vars.get(L"fish_use_posix_spawn")) {
+        g_use_posix_spawn = var->empty() || bool_from_string(var->as_string());
+    } else {
+        g_use_posix_spawn = true;
+    }
 }
 
 /// Allow the user to override the limit on how much data the `read` command will process.
@@ -531,6 +556,15 @@ static void init_curses(const environment_t &vars) {
     curses_initialized = true;
 }
 
+static const char *utf8_locales[] = {
+    "C.UTF-8",
+    "en_US.UTF-8",
+    "en_GB.UTF-8",
+    "de_DE.UTF-8",
+    "C.utf8",
+    "UTF-8",
+};
+
 /// Initialize the locale subsystem.
 static void init_locale(const environment_t &vars) {
     // We have to make a copy because the subsequent setlocale() call to change the locale will
@@ -539,7 +573,7 @@ static void init_locale(const environment_t &vars) {
 
     for (const auto &var_name : locale_variables) {
         const auto var = vars.get(var_name, ENV_EXPORT);
-        const std::string &name = wcs2string(var_name);
+        std::string name = wcs2string(var_name);
         if (var.missing_or_empty()) {
             FLOGF(env_locale, L"locale var %s missing or empty", name.c_str());
             unsetenv_lock(name.c_str());
@@ -551,6 +585,28 @@ static void init_locale(const environment_t &vars) {
     }
 
     char *locale = setlocale(LC_ALL, "");
+
+    // Try to get a multibyte-capable encoding
+    // A "C" locale is broken for our purposes - any wchar functions will break on it.
+    // So we try *really really really hard* to not have one.
+    bool fix_locale = true;
+    if (auto allow_c = vars.get(L"fish_allow_singlebyte_locale")) {
+        fix_locale = allow_c.missing_or_empty() ? true : !bool_from_string(allow_c->as_string());
+    }
+    if (fix_locale && MB_CUR_MAX == 1) {
+        FLOGF(env_locale, L"Have singlebyte locale, trying to fix");
+        for (auto loc : utf8_locales) {
+            setlocale(LC_CTYPE, loc);
+            if (MB_CUR_MAX > 1) {
+                FLOGF(env_locale, L"Fixed locale: '%s'", loc);
+                break;
+            }
+        }
+        if (MB_CUR_MAX == 1) {
+            FLOGF(env_locale, L"Failed to fix locale");
+        }
+    }
+
     fish_setlocale();
     FLOGF(env_locale, L"init_locale() setlocale(): '%s'", locale);
 
@@ -569,9 +625,6 @@ static void init_locale(const environment_t &vars) {
 
 /// Returns true if we think the terminal supports setting its title.
 bool term_supports_setting_title() { return can_set_term_title; }
-
-/// Miscellaneous variables.
-bool g_use_posix_spawn = false;
 
 // Limit `read` to 100 MiB (bytes not wide chars) by default. This can be overridden by the
 // fish_read_limit variable.

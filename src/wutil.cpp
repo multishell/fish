@@ -2,6 +2,8 @@
 #define FISH_NO_ISW_WRAPPERS
 #include "config.h"
 
+#include "wutil.h"  // IWYU pragma: keep
+
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -9,35 +11,28 @@
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/stat.h>
-
-#include <cstring>
 #include <sys/mount.h>
+#include <sys/stat.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <wctype.h>
 
 #include <atomic>
+#include <cstring>
 #include <cwchar>
 #include <string>
 #include <unordered_map>
 
 #include "common.h"
 #include "fallback.h"  // IWYU pragma: keep
+#include "fds.h"
 #include "flog.h"
 #include "wcstringutil.h"
-#include "wutil.h"  // IWYU pragma: keep
 
 using cstring = std::string;
 
-const file_id_t kInvalidFileID = {static_cast<dev_t>(-1LL),
-                                  static_cast<ino_t>(-1LL),
-                                  static_cast<uint64_t>(-1LL),
-                                  -1,
-                                  -1,
-                                  -1,
-                                  -1};
+const file_id_t kInvalidFileID{};
 
 /// Map used as cache by wgettext.
 static owning_lock<std::unordered_map<wcstring, wcstring>> wgettext_map;
@@ -138,7 +133,6 @@ wcstring wgetcwd() {
     FLOGF(error, _(L"getcwd() failed with errno %d/%s"), errno, std::strerror(errno));
     return wcstring();
 }
-
 
 DIR *wopendir(const wcstring &name) {
     const cstring tmp = wcs2string(name);
@@ -771,6 +765,10 @@ file_id_t file_id_for_fd(int fd) {
     return result;
 }
 
+file_id_t file_id_for_fd(const autoclose_fd_t &fd) {
+    return file_id_for_fd(fd.fd());
+}
+
 file_id_t file_id_for_path(const wcstring &path) {
     file_id_t result = kInvalidFileID;
     struct stat buf = {};
@@ -792,6 +790,20 @@ file_id_t file_id_for_path(const std::string &path) {
 bool file_id_t::operator==(const file_id_t &rhs) const { return this->compare_file_id(rhs) == 0; }
 
 bool file_id_t::operator!=(const file_id_t &rhs) const { return !(*this == rhs); }
+
+
+wcstring file_id_t::dump() const {
+    using llong = long long;
+    wcstring result;
+    append_format(result, L"     device: %lld\n", llong(device));
+    append_format(result, L"      inode: %lld\n", llong(inode));
+    append_format(result, L"       size: %lld\n", llong(size));
+    append_format(result, L"     change: %lld\n", llong(change_seconds));
+    append_format(result, L"change_nano: %lld\n", llong(change_nanoseconds));
+    append_format(result, L"        mod: %lld\n", llong(mod_seconds));
+    append_format(result, L"   mod_nano: %lld", llong(mod_nanoseconds));
+    return result;
+}
 
 template <typename T>
 int compare(T a, T b) {

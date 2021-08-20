@@ -21,6 +21,8 @@
 #include "parser.h"
 #include "proc.h"
 #include "signal.h"
+#include "termsize.h"
+#include "wcstringutil.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 class pending_signals_t {
@@ -112,10 +114,16 @@ static bool handler_matches(const event_handler_t &classv, const event_t &instan
         case event_type_t::variable: {
             return instance.desc.str_param1 == classv.desc.str_param1;
         }
-        case event_type_t::exit: {
+        case event_type_t::process_exit: {
             if (classv.desc.param1.pid == EVENT_ANY_PID) return true;
             only_once = true;
             return classv.desc.param1.pid == instance.desc.param1.pid;
+        }
+        case event_type_t::job_exit: {
+            const auto &jobspec = classv.desc.param1.jobspec;
+            if (jobspec.pid == EVENT_ANY_PID) return true;
+            only_once = true;
+            return jobspec.internal_job_id == instance.desc.param1.jobspec.internal_job_id;
         }
         case event_type_t::caller_exit: {
             only_once = true;
@@ -155,21 +163,18 @@ wcstring event_get_desc(const parser_t &parser, const event_t &evt) {
             return format_string(_(L"handler for variable '%ls'"), ed.str_param1.c_str());
         }
 
-        case event_type_t::exit: {
-            if (ed.param1.pid > 0) {
-                return format_string(_(L"exit handler for process %d"), ed.param1.pid);
+        case event_type_t::process_exit: {
+            return format_string(_(L"exit handler for process %d"), ed.param1.pid);
+        }
+
+        case event_type_t::job_exit: {
+            const auto &jobspec = ed.param1.jobspec;
+            if (const job_t *j = parser.job_get_from_pid(jobspec.pid)) {
+                return format_string(_(L"exit handler for job %d, '%ls'"), j->job_id(),
+                                     j->command_wcstr());
             } else {
-                // In events, PGIDs are stored as negative PIDs
-                job_t *j = parser.job_get_from_pid(-ed.param1.pid);
-                if (j) {
-                    return format_string(_(L"exit handler for job %d, '%ls'"), j->job_id(),
-                                         j->command_wcstr());
-                } else {
-                    return format_string(_(L"exit handler for job with process group %d"),
-                                         -ed.param1.pid);
-                }
+                return format_string(_(L"exit handler for job with pid %d"), jobspec.pid);
             }
-            DIE("Unreachable");
         }
 
         case event_type_t::caller_exit: {
@@ -327,6 +332,12 @@ void event_fire_delayed(parser_t &parser) {
     if (signals.any()) {
         for (uint32_t sig = 0; sig < signals.size(); sig++) {
             if (signals.test(sig)) {
+                // HACK: The only variables we change in response to a *signal*
+                // are $COLUMNS and $LINES.
+                // Do that now.
+                if (sig == SIGWINCH) {
+                    (void)termsize_container_t::shared().updating(parser);
+                }
                 auto e = std::make_shared<event_t>(event_type_t::signal);
                 e->desc.param1.signal = sig;
                 e->arguments.push_back(sig2wcs(sig));
@@ -361,38 +372,52 @@ void event_fire(parser_t &parser, const event_t &event) {
     }
 }
 
-/// Mapping between event type to name.
-/// Note we don't bother to sort this.
-struct event_type_name_t {
-    event_type_t type;
-    const wchar_t *name;
-};
-
-static const event_type_name_t events_mapping[] = {{event_type_t::signal, L"signal"},
-                                                   {event_type_t::variable, L"variable"},
-                                                   {event_type_t::exit, L"exit"},
-                                                   {event_type_t::caller_exit, L"caller-exit"},
-                                                   {event_type_t::generic, L"generic"}};
-
-maybe_t<event_type_t> event_type_for_name(const wcstring &name) {
-    for (const auto &em : events_mapping) {
-        if (name == em.name) {
-            return em.type;
-        }
-    }
-    return none();
-}
-
 static const wchar_t *event_name_for_type(event_type_t type) {
-    for (const auto &em : events_mapping) {
-        if (type == em.type) {
-            return em.name;
-        }
+    switch (type) {
+        case event_type_t::any:
+            return L"any";
+        case event_type_t::signal:
+            return L"signal";
+        case event_type_t::variable:
+            return L"variable";
+        case event_type_t::process_exit:
+            return L"process-exit";
+        case event_type_t::job_exit:
+            return L"job-exit";
+        case event_type_t::caller_exit:
+            return L"caller-exit";
+        case event_type_t::generic:
+            return L"generic";
     }
     return L"";
 }
 
-void event_print(io_streams_t &streams, maybe_t<event_type_t> type_filter) {
+const wchar_t *const event_filter_names[] = {L"signal",       L"variable", L"exit",
+                                             L"process-exit", L"job-exit", L"caller-exit",
+                                             L"generic",      nullptr};
+
+static bool filter_matches_event(const wcstring &filter, event_type_t type) {
+    if (filter.empty()) return true;
+    switch (type) {
+        case event_type_t::any:
+            return false;
+        case event_type_t::signal:
+            return filter == L"signal";
+        case event_type_t::variable:
+            return filter == L"variable";
+        case event_type_t::process_exit:
+            return filter == L"process-exit" || filter == L"exit";
+        case event_type_t::job_exit:
+            return filter == L"job-exit" || filter == L"exit";
+        case event_type_t::caller_exit:
+            return filter == L"process-exit" || filter == L"exit";
+        case event_type_t::generic:
+            return filter == L"generic";
+    }
+    DIE("Unreachable");
+}
+
+void event_print(io_streams_t &streams, const wcstring &type_filter) {
     event_handler_list_t tmp = *s_event_handlers.acquire();
     std::sort(tmp.begin(), tmp.end(),
               [](const shared_ptr<event_handler_t> &e1, const shared_ptr<event_handler_t> &e2) {
@@ -404,8 +429,10 @@ void event_print(io_streams_t &streams, maybe_t<event_type_t> type_filter) {
                   switch (d1.type) {
                       case event_type_t::signal:
                           return d1.signal < d2.signal;
-                      case event_type_t::exit:
+                      case event_type_t::process_exit:
                           return d1.param1.pid < d2.param1.pid;
+                      case event_type_t::job_exit:
+                          return d1.param1.jobspec.pid < d2.param1.jobspec.pid;
                       case event_type_t::caller_exit:
                           return d1.param1.caller_id < d2.param1.caller_id;
                       case event_type_t::variable:
@@ -419,7 +446,7 @@ void event_print(io_streams_t &streams, maybe_t<event_type_t> type_filter) {
     maybe_t<event_type_t> last_type{};
     for (const shared_ptr<event_handler_t> &evt : tmp) {
         // If we have a filter, skip events that don't match.
-        if (type_filter && *type_filter != evt->desc.type) {
+        if (!filter_matches_event(type_filter, evt->desc.type)) {
             continue;
         }
 
@@ -433,7 +460,8 @@ void event_print(io_streams_t &streams, maybe_t<event_type_t> type_filter) {
                 streams.out.append_format(L"%ls %ls\n", sig2wcs(evt->desc.param1.signal),
                                           evt->function_name.c_str());
                 break;
-            case event_type_t::exit:
+            case event_type_t::process_exit:
+            case event_type_t::job_exit:
                 break;
             case event_type_t::caller_exit:
                 streams.out.append_format(L"caller-exit %ls\n", evt->function_name.c_str());
@@ -479,9 +507,43 @@ event_description_t event_description_t::generic(wcstring str) {
     return event;
 }
 
+// static
 event_t event_t::variable(wcstring name, wcstring_list_t args) {
     event_t evt{event_type_t::variable};
     evt.desc.str_param1 = std::move(name);
     evt.arguments = std::move(args);
+    return evt;
+}
+
+// static
+event_t event_t::process_exit(pid_t pid, int status) {
+    event_t evt{event_type_t::process_exit};
+    evt.desc.param1.pid = pid;
+    evt.arguments.reserve(3);
+    evt.arguments.push_back(L"PROCESS_EXIT");
+    evt.arguments.push_back(to_string(pid));
+    evt.arguments.push_back(to_string(status));
+    return evt;
+}
+
+// static
+event_t event_t::job_exit(pid_t pid, internal_job_id_t jid) {
+    event_t evt{event_type_t::job_exit};
+    evt.desc.param1.jobspec = {pid, jid};
+    evt.arguments.reserve(3);
+    evt.arguments.push_back(L"JOB_EXIT");
+    evt.arguments.push_back(to_string(pid));
+    evt.arguments.push_back(L"0");  // historical
+    return evt;
+}
+
+// static
+event_t event_t::caller_exit(uint64_t caller_id, int job_id) {
+    event_t evt{event_type_t::caller_exit};
+    evt.desc.param1.caller_id = caller_id;
+    evt.arguments.reserve(3);
+    evt.arguments.push_back(L"JOB_EXIT");
+    evt.arguments.push_back(to_string(job_id));
+    evt.arguments.push_back(L"0");  // historical
     return evt;
 }

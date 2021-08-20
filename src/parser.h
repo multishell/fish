@@ -20,6 +20,7 @@
 #include "parse_tree.h"
 #include "proc.h"
 #include "util.h"
+#include "wait_handle.h"
 
 class io_chain_t;
 
@@ -248,8 +249,14 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
    private:
     /// The current execution context.
     std::unique_ptr<parse_execution_context_t> execution_context;
+
     /// The jobs associated with this parser.
     job_list_t job_list;
+
+    /// Our store of recorded wait-handles. These are jobs that finished in the background, and have
+    /// been reaped, but may still be wait'ed on.
+    wait_handle_store_t wait_handles;
+
     /// The list of blocks. This is a deque because we give out raw pointers to callers, who hold
     /// them across manipulating this stack.
     /// This is in "reverse" order: the topmost block is at the front. This enables iteration from
@@ -361,6 +368,10 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     library_data_t &libdata() { return library_data; }
     const library_data_t &libdata() const { return library_data; }
 
+    /// Get our wait handle store.
+    wait_handle_store_t &get_wait_handles() { return wait_handles; }
+    const wait_handle_store_t &get_wait_handles() const { return wait_handles; }
+
     /// Get and set the last proc statuses.
     int get_last_status() const { return vars().get_last_status(); }
     statuses_t get_last_statuses() const { return vars().get_last_statuses(); }
@@ -389,8 +400,10 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     void job_promote(job_t *job);
 
     /// Return the job with the specified job id. If id is 0 or less, return the last job used.
-    job_t *job_get(job_id_t job_id);
-    const job_t *job_get(job_id_t job_id) const;
+    const job_t *job_with_id(job_id_t job_id) const;
+
+    /// Return the job with the specified internal job id.
+    const job_t *job_with_internal_id(internal_job_id_t job_id) const;
 
     /// Returns the job with the given pid.
     job_t *job_get_from_pid(pid_t pid) const;

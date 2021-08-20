@@ -4,7 +4,7 @@
 
 {% block rootrellink %}
     <li><img src="{{ pathto('_static/' + theme_root_icon, 1) }}" alt=""
-             style="width: 80px; vertical-align: middle; margin-top: -1px"/></li>
+             style="width: 80px; height: 80px; vertical-align: middle; margin-top: -1px"/></li>
     <li><a href="{{theme_root_url}}">{{theme_root_name}}</a>{{ reldelim1 }}</li>
     {% if theme_root_include_title %}
     <a href="{{ pathto('index') }}">{{ shorttitle }}</a>{{ reldelim1 }}
@@ -37,7 +37,8 @@
     {%- endif %}
 {% endblock %}
 
-{% block sidebar1 %}{{ sidebar() }}{% endblock %}
+{# The sidebar goes into the *document* block, so it ends up in the document *div* so it doesn't go over the footer #}
+{% block document %}{{ sidebar() }}{{ super() }}{% endblock %}
 {% block sidebar2 %} {% endblock %}
 {% block extrahead %}
     <link rel="shortcut icon" type="image/png" href="{{ pathto('_static/' + theme_root_icon, 1) }}" />

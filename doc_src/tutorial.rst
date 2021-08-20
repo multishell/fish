@@ -28,8 +28,8 @@ which means you are all set up and can start using fish::
 
 
 This prompt that you see above is the fish default prompt: it shows your username, hostname, and working directory.
-- to change this prompt see `how to change your prompt <#prompt>`_
-- to switch to fish permanently see `switch your default shell to fish <#switching-to-fish>`_.
+- to change this prompt see :ref:`how to change your prompt <prompt>`
+- to switch to fish permanently see :ref:`switch your default shell to fish <switching-to-fish>`.
 
 From now on, we'll pretend your prompt is just a ``>`` to save space.
 
@@ -41,6 +41,7 @@ This tutorial assumes a basic understanding of command line shells and Unix comm
 
 If you have a strong understanding of other shells, and want to know what fish does differently, search for the magic phrase *unlike other shells*, which is used to call out important differences.
 
+Or, if you want a quick overview over the differences to other shells like Bash, see :ref:`Fish For Bash Users <fish_for_bash_users>`.
 
 Running Commands
 ----------------
@@ -51,32 +52,26 @@ Fish runs commands like other shells: you type a command, followed by its argume
     hello world
 
 
-This runs the command ``echo`` with the arguments ``hello`` and ``world``.
-
-You can include a literal space in an argument with a backslash, or by using single or double quotes::
+This runs the command ``echo`` with the arguments ``hello`` and ``world``. In this case that's the same as one argument ``hello world``, but in many cases it's not. If you need to pass an argument that includes a space, you can :ref:`escape <escapes>` with a backslash, or :ref:`quote <quotes>` it using single or double quotes::
 
     > mkdir My\ Files
+    # Makes a directory called "My Files", with a space in the name
     > cp ~/Some\ File 'My Files'
+    # Copies a file called "Some File" in the home directory to "My Files"
     > ls "My Files"
     Some File
-
-
-Commands can be chained with semicolons.
 
 
 Getting Help
 ------------
 
-Fish has excellent help and man pages. Run ``help`` to open help in a web browser, and ``man`` to open it in a man page. You can also ask for help with a specific command, for example, ``help set`` to open in a web browser, or ``man set`` to see it in the terminal.
-
-
+Run ``help`` to open fish's help in a web browser, and ``man`` with the page (like ``fish-language``) to open it in a man page. You can also ask for help with a specific command, for example, ``help set`` to open in a web browser, or ``man set`` to see it in the terminal.
 
 ::
 
     > man set
     set - handle shell variables
       Synopsis...
-
 
 
 Syntax Highlighting
@@ -141,6 +136,7 @@ Especially powerful is the recursive wildcard ** which searches directories recu
 
 If that directory traversal is taking a long time, you can :kbd:`Control`\ +\ :kbd:`C` out of it.
 
+For more, see :ref:`Wildcards <expand-wildcard>`.
 
 Pipes and Redirections
 ----------------------
@@ -164,6 +160,7 @@ To redirect stdout and stderr into one file, you need to first redirect stdout, 
 
     > make > make_output.txt 2>&1
 
+For more, see :ref:`Input and output redirections <redirects>` and :ref:`Pipes <pipes>`.
 
 Autosuggestions
 ---------------
@@ -233,13 +230,13 @@ Try hitting tab and see what fish can do!
 Variables
 ---------
 
-Like other shells, a dollar sign performs variable substitution::
+Like other shells, a dollar sign followed by a variable name is replaced with the value of that variable::
 
     > echo My home directory is $HOME
     My home directory is /home/tutorial
 
 
-Variable substitution also happens in double quotes, but not single quotes::
+This is known as variable substitution, and it also happens in double quotes, but not single quotes::
 
     > echo "My current directory is $PWD"
     My current directory is /home/tutorial
@@ -275,6 +272,8 @@ You can erase (or "delete") a variable with ``-e`` or ``--erase``
     > env | grep MyVariable
     (no output)
 
+For more, see :ref:`Variable expansion <expand-variable>`.
+
 .. _tut-exports:
 
 Exports (Shell Variables)
@@ -294,7 +293,9 @@ It can also be unexported with ``--unexport`` or ``-u``.
 
 This works the other way around as well! If fish is started by something else, it inherits that parents exported variables. So if your terminal emulator starts fish, and it exports ``$LANG`` set to ``en_US.UTF-8``, fish will receive that setting. And whatever started your terminal emulator also gave *it* some variables that it will then pass on unless it specifically decides not to. This is how fish usually receives the values for things like ``$LANG``, ``$PATH`` and ``$TERM``, without you having to specify them again.
 
-Note that exported variables can be local or global or universal - "exported" is not a :ref:`scope <variables-scope>`. Usually you'd make them global via ``set -gx MyVariable SomeValue``.
+Exported variables can be local or global or universal - "exported" is not a :ref:`scope <variables-scope>`! Usually you'd make them global via ``set -gx MyVariable SomeValue``.
+
+For more, see :ref:`Exporting variables <variables-export>`.
 
 .. _tut-lists:
 
@@ -310,7 +311,6 @@ Other variables, like ``$PATH``, really do have multiple values. During variable
     > echo $PATH
     /usr/bin /bin /usr/sbin /sbin /usr/local/bin
 
-
 Variables whose name ends in "PATH" are automatically split on colons to become lists. They are joined using colons when exported to subcommands. This is for compatibility with other tools, which expect $PATH to use colons. You can also explicitly add this quirk to a variable with ``set --path``, or remove it with ``set --unpath``.
 
 Lists cannot contain other lists: there is no recursion.  A variable is a list of strings, full stop.
@@ -320,12 +320,9 @@ Get the length of a list with ``count``::
     > count $PATH
     5
 
-
 You can append (or prepend) to a list by setting the list to itself, with some additional arguments. Here we append /usr/local/bin to $PATH::
 
     > set PATH $PATH /usr/local/bin
-
-
 
 You can access individual elements with square brackets. Indexing starts at 1 from the beginning, and -1 from the end::
 
@@ -336,10 +333,7 @@ You can access individual elements with square brackets. Indexing starts at 1 fr
     > echo $PATH[-1]
     /usr/local/bin
 
-
 You can also access ranges of elements, known as "slices":
-
-
 
 ::
 
@@ -347,7 +341,6 @@ You can also access ranges of elements, known as "slices":
     /usr/bin /bin
     > echo $PATH[-1..2]
     /usr/local/bin /sbin /usr/sbin /bin
-
 
 You can iterate over a list (or a slice) with a for loop::
 
@@ -360,7 +353,6 @@ You can iterate over a list (or a slice) with a for loop::
     entry: /sbin
     entry: /usr/local/bin
 
-
 Lists adjacent to other lists or strings are expanded as :ref:`cartesian products <cartesian-product>` unless quoted (see :ref:`Variable expansion <expand-variable>`)::
 
     > set a 1 2 3
@@ -372,8 +364,10 @@ Lists adjacent to other lists or strings are expanded as :ref:`cartesian product
     > echo "$a banana"
     1 2 3 banana
 
+This is similar to :ref:`Brace expansion <expand-brace>`.
 
-This is similar to `Brace expansion <index#expand-brace>`__.
+For more, see :ref:`Lists <variables-lists>`.
+
 
 Command Substitutions
 ---------------------
@@ -383,13 +377,11 @@ Command substitutions use the output of one command as an argument to another. U
     > echo In (pwd), running (uname)
     In /home/tutorial, running FreeBSD
 
-
 A common idiom is to capture the output of a command in a variable::
 
     > set os (uname)
     > echo $os
     Linux
-
 
 Command substitutions are not expanded within quotes. Instead, you can temporarily close the quotes, add the command substitution, and reopen them, all in the same argument::
 
@@ -397,9 +389,7 @@ Command substitutions are not expanded within quotes. Instead, you can temporari
     > ls *.txt
     testing_1360099791.txt
 
-
 Unlike other shells, fish does not split command substitutions on any whitespace (like spaces or tabs), only newlines. This can be an issue with commands like ``pkg-config`` that print what is meant to be multiple arguments on a single line. To split it on spaces too, use ``string split``.
-
 
 ::
 
@@ -410,6 +400,16 @@ Unlike other shells, fish does not split command substitutions on any whitespace
     -lgobject-2.0
     -lglib-2.0
 
+If you need a command substitutions output as one argument, without any splits, use ``string collect``::
+
+    > echo "first line
+    second line" > myfile
+    > set myfile (cat myfile | string collect)
+    > printf '|%s|' $myfile
+    |first line
+    second line|
+
+For more, see :ref:`Command substitution <expand-command-substitution>`.
 
 .. _tut-semicolon:
 
@@ -441,10 +441,11 @@ Unlike other shells, fish stores the exit status of the last command in ``$statu
     > echo $status
     1
 
-
 This indicates how the command fared - 0 usually means success, while the others signify kinds of failure. For instance fish's ``set --query`` returns the number of variables it queried that weren't set - ``set --query PATH`` usually returns 0, ``set --query arglbargl boogagoogoo`` usually returns 2.
 
 There is also a ``$pipestatus`` list variable for the exit statuses [#]_ of processes in a pipe.
+
+For more, see :ref:`The status variable <variables-status>`.
 
 .. [#] or "stati" if you prefer, or "statūs" if you've time-travelled from ancient Rome or work as a latin teacher
 
@@ -542,9 +543,9 @@ There is also a :ref:`switch <cmd-switch>` command::
         echo Hi, stranger!
     end
 
+As you see, :ref:`case <cmd-case>` does not fall through, and can accept multiple arguments or (quoted) wildcards.
 
-Note that :ref:`case <cmd-case>` does not fall through, and can accept multiple arguments or (quoted) wildcards.
-
+For more, see :ref:`Conditions <syntax-conditional>`.
 
 Functions
 ---------
@@ -575,6 +576,8 @@ You can see the source for any function by passing its name to ``functions``::
         command ls -G $argv
     end
 
+For more, see :ref:`Functions <syntax-function>`.
+
 .. [#] There is a function called :ref:`alias <cmd-alias>`, but it's just a shortcut to make functions.
 
 Loops
@@ -604,6 +607,7 @@ Iterating over a list of numbers can be done with ``seq``::
         touch file_$x.txt
     end
 
+For more, see :ref:`Loops and blocks <syntax-loops-and-blocks>`.
 
 Prompt
 ------
@@ -642,7 +646,7 @@ This prompt would look like:
     :red:`/home/tutorial >` _
 
 
-You can choose among some sample prompts by running ``fish_config prompt``.
+You can choose among some sample prompts by running ``fish_config`` for a web UI or ``fish_config prompt`` for a simpler version inside your terminal.
 
 $PATH
 -----
@@ -702,7 +706,7 @@ It is possible to directly create functions and variables in ``config.fish`` fil
 
 However, it is more common and efficient to use  autoloading functions and universal variables.
 
-If you want to organize your configuration, fish also reads commands in .fish files in ``~/.config/fish/conf.d/``. See :ref:`initialization <initialization>` for the details.
+If you want to organize your configuration, fish also reads commands in .fish files in ``~/.config/fish/conf.d/``. See :ref:`Configuration Files <configuration>` for the details.
 
 Autoloading Functions
 ---------------------

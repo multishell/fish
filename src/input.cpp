@@ -272,28 +272,6 @@ void input_mapping_set_t::add(wcstring sequence, const wchar_t *command, const w
     input_mapping_set_t::add(std::move(sequence), &command, 1, mode, sets_mode, user);
 }
 
-/// Handle interruptions to key reading by reaping finished jobs and propagating the interrupt to
-/// the reader.
-static maybe_t<char_event_t> interrupt_handler() {
-    // Fire any pending events.
-    // TODO: eliminate this principal_parser().
-    auto &parser = parser_t::principal_parser();
-    event_fire_delayed(parser);
-    // Reap stray processes, including printing exit status messages.
-    // TODO: shouldn't need this parser here.
-    if (job_reap(parser, true)) reader_schedule_prompt_repaint();
-    // Tell the reader an event occurred.
-    if (reader_reading_interrupted()) {
-        auto vintr = shell_modes.c_cc[VINTR];
-        if (vintr == 0) {
-            return none();
-        }
-        return char_event_t{vintr};
-    }
-
-    return char_event_t{char_event_type_t::check_exit};
-}
-
 static relaxed_atomic_bool_t s_input_initialized{false};
 
 /// Set up arrays used by readch to detect escape sequences for special keys and perform related
@@ -303,7 +281,6 @@ void init_input() {
     if (s_input_initialized) return;
     s_input_initialized = true;
 
-    input_common_init(&interrupt_handler);
     s_terminfo_mappings = create_input_terminfo();
 
     auto input_mapping = input_mappings();
@@ -314,13 +291,16 @@ void init_input() {
         input_mapping->add(L"\n", L"execute", DEFAULT_BIND_MODE, DEFAULT_BIND_MODE, false);
         input_mapping->add(L"\r", L"execute", DEFAULT_BIND_MODE, DEFAULT_BIND_MODE, false);
         input_mapping->add(L"\t", L"complete", DEFAULT_BIND_MODE, DEFAULT_BIND_MODE, false);
-        input_mapping->add(L"\x3", L"cancel-commandline", DEFAULT_BIND_MODE, DEFAULT_BIND_MODE, false);
+        input_mapping->add(L"\x3", L"cancel-commandline", DEFAULT_BIND_MODE, DEFAULT_BIND_MODE,
+                           false);
         input_mapping->add(L"\x4", L"exit", DEFAULT_BIND_MODE, DEFAULT_BIND_MODE, false);
         input_mapping->add(L"\x5", L"bind", DEFAULT_BIND_MODE, DEFAULT_BIND_MODE, false);
         // ctrl-s
-        input_mapping->add(L"\x13", L"pager-toggle-search", DEFAULT_BIND_MODE, DEFAULT_BIND_MODE, false);
+        input_mapping->add(L"\x13", L"pager-toggle-search", DEFAULT_BIND_MODE, DEFAULT_BIND_MODE,
+                           false);
         // ctrl-u
-        input_mapping->add(L"\x15", L"backward-kill-line", DEFAULT_BIND_MODE, DEFAULT_BIND_MODE, false);
+        input_mapping->add(L"\x15", L"backward-kill-line", DEFAULT_BIND_MODE, DEFAULT_BIND_MODE,
+                           false);
         // del/backspace
         input_mapping->add(L"\x7f", L"backward-delete-char", DEFAULT_BIND_MODE, DEFAULT_BIND_MODE,
                            false);
@@ -338,7 +318,32 @@ void init_input() {
     }
 }
 
-inputter_t::inputter_t(parser_t &parser, int in) : event_queue_(in), parser_(parser.shared()) {}
+inputter_t::inputter_t(parser_t &parser, int in)
+    : input_event_queue_t(in), parser_(parser.shared()) {}
+
+void inputter_t::prepare_to_select() /* override */ {
+    // Fire any pending events and reap stray processes, including printing exit status messages.
+    auto &parser = *this->parser_;
+    event_fire_delayed(parser);
+    if (job_reap(parser, true)) reader_schedule_prompt_repaint();
+}
+
+void inputter_t::select_interrupted() /* override */ {
+    // Fire any pending events and reap stray processes, including printing exit status messages.
+    auto &parser = *this->parser_;
+    event_fire_delayed(parser);
+    if (job_reap(parser, true)) reader_schedule_prompt_repaint();
+
+    // Tell the reader an event occurred.
+    if (reader_reading_interrupted()) {
+        auto vintr = shell_modes.c_cc[VINTR];
+        if (vintr != 0) {
+            this->push_front(char_event_t{vintr});
+        }
+        return;
+    }
+    this->push_front(char_event_t{char_event_type_t::check_exit});
+}
 
 void inputter_t::function_push_arg(wchar_t arg) { input_function_args_.push_back(arg); }
 
@@ -359,7 +364,7 @@ void inputter_t::function_push_args(readline_cmd_t code) {
         // Skip and queue up any function codes. See issue #2357.
         wchar_t arg{};
         for (;;) {
-            auto evt = event_queue_.readch();
+            auto evt = this->readch();
             if (evt.is_char()) {
                 arg = evt.get_char();
                 break;
@@ -370,7 +375,7 @@ void inputter_t::function_push_args(readline_cmd_t code) {
     }
 
     // Push the function codes back into the input stream.
-    event_queue_.insert_front(skipped.begin(), skipped.end());
+    this->insert_front(skipped.begin(), skipped.end());
 }
 
 /// Perform the action of the specified binding. allow_commands controls whether fish commands
@@ -401,15 +406,15 @@ void inputter_t::mapping_execute(const input_mapping_t &m,
 
     if (has_commands && !command_handler) {
         // We don't want to run commands yet. Put the characters back and return check_exit.
-        event_queue_.insert_front(m.seq.cbegin(), m.seq.cend());
-        event_queue_.push_front(char_event_type_t::check_exit);
+        this->insert_front(m.seq.cbegin(), m.seq.cend());
+        this->push_front(char_event_type_t::check_exit);
         return;  // skip the input_set_bind_mode
     } else if (has_functions && !has_commands) {
         // Functions are added at the head of the input queue.
         for (auto it = m.commands.rbegin(), end = m.commands.rend(); it != end; ++it) {
             readline_cmd_t code = input_function_get_code(*it).value();
             function_push_args(code);
-            event_queue_.push_front(char_event_t(code, m.seq));
+            this->push_front(char_event_t(code, m.seq));
         }
     } else if (has_commands && !has_functions) {
         // Execute all commands.
@@ -417,132 +422,116 @@ void inputter_t::mapping_execute(const input_mapping_t &m,
         // FIXME(snnw): if commands add stuff to input queue (e.g. commandline -f execute), we won't
         // see that until all other commands have also been run.
         command_handler(m.commands);
-        event_queue_.push_front(char_event_type_t::check_exit);
+        this->push_front(char_event_type_t::check_exit);
     } else {
         // Invalid binding, mixed commands and functions.  We would need to execute these one by
         // one.
-        event_queue_.push_front(char_event_type_t::check_exit);
+        this->push_front(char_event_type_t::check_exit);
     }
 
     // Empty bind mode indicates to not reset the mode (#2871)
     if (!m.sets_mode.empty()) input_set_bind_mode(*parser_, m.sets_mode);
 }
 
-/// Try reading the specified function mapping.
-bool inputter_t::mapping_is_match(const input_mapping_t &m) {
-    const wcstring &str = m.seq;
-
-    assert(!str.empty() && "zero-length input string passed to mapping_is_match!");
-
-    bool timed = false;
-    for (size_t i = 0; i < str.size(); ++i) {
-        auto evt = timed ? event_queue_.readch_timed() : event_queue_.readch();
-        if (!evt.is_char() || evt.get_char() != str[i]) {
-            // We didn't match the bind sequence/input mapping, (it timed out or they entered
-            // something else). Undo consumption of the read characters since we didn't match the
-            // bind sequence and abort.
-            event_queue_.push_front(evt);
-            event_queue_.insert_front(str.begin(), str.begin() + i);
-            return false;
-        }
-
-        // If we just read an escape, we need to add a timeout for the next char,
-        // to distinguish between the actual escape key and an "alt"-modifier.
-        timed = (str[i] == L'\x1B');
-    }
-
-    return true;
-}
-
-void inputter_t::queue_ch(const char_event_t &ch) {
+void inputter_t::queue_char(const char_event_t &ch) {
     if (ch.is_readline()) {
         function_push_args(ch.get_readline());
     }
-    event_queue_.push_back(ch);
+    this->push_back(ch);
 }
 
-void inputter_t::push_front(const char_event_t &ch) { event_queue_.push_front(ch); }
-
-/// \return the first mapping that matches, walking first over the user's mapping list, then the
-/// preset list. \return null if nothing matches.
-maybe_t<input_mapping_t> inputter_t::find_mapping() {
-    const input_mapping_t *generic = nullptr;
-    const auto &vars = parser_->vars();
-    const wcstring bind_mode = input_get_bind_mode(vars);
-
-    auto ml = input_mappings()->all_mappings();
-    for (const auto &m : *ml) {
-        if (m.mode != bind_mode) {
-            continue;
-        }
-
-        if (m.is_generic()) {
-            if (!generic) generic = &m;
-        } else if (mapping_is_match(m)) {
-            return m;
-        }
-    }
-    return generic ? maybe_t<input_mapping_t>(*generic) : none();
-}
-
-template <size_t N = 16>
+/// A class which allows accumulating input events, or returns them to the queue.
+/// This contains a list of events which have been dequeued, and a current index into that list.
 class event_queue_peeker_t {
-    private:
-        input_event_queue_t &event_queue_;
-        std::array<char_event_t, N> peeked_;
-        size_t count = 0;
-        bool consumed_ = false;
+   public:
+    explicit event_queue_peeker_t(input_event_queue_t &event_queue) : event_queue_(event_queue) {}
 
-    public:
-        event_queue_peeker_t(input_event_queue_t &event_queue)
-            : event_queue_(event_queue) {
+    /// \return the next event.
+    char_event_t next() {
+        assert(idx_ <= peeked_.size() && "Index must not be larger than dequeued event count");
+        if (idx_ == peeked_.size()) {
+            auto event = event_queue_.readch();
+            peeked_.push_back(event);
         }
+        return peeked_.at(idx_++);
+    }
 
-        char_event_t next(bool timed = false) {
-            assert(count < N && "Insufficient backing array size!");
-            auto event = timed ? event_queue_.readch_timed() : event_queue_.readch();
-            peeked_[count++] = event;
-            return event;
+    /// Check if the next event is the given character. This advances the index on success only.
+    /// If \p timed is set, then return false if this (or any other) character had a timeout.
+    bool next_is_char(wchar_t c, bool timed = false) {
+        assert(idx_ <= peeked_.size() && "Index must not be larger than dequeued event count");
+        // See if we had a timeout already.
+        if (timed && had_timeout_) {
+            return false;
         }
-
-        size_t len() {
-            return count;
-        }
-
-        constexpr size_t max_len() const {
-            return N;
-        }
-
-        void consume() {
-            consumed_ = true;
-        }
-
-        void restart() {
-            if (count > 0) {
-                event_queue_.insert_front(peeked_.cbegin(), peeked_.cbegin() + count);
-                count = 0;
+        // Grab a new event if we have exhausted what we have already peeked.
+        // Use either readch or readch_timed, per our param.
+        if (idx_ == peeked_.size()) {
+            char_event_t newevt{L'\0'};
+            if (!timed) {
+                newevt = event_queue_.readch();
+            } else if (auto mevt = event_queue_.readch_timed()) {
+                newevt = mevt.acquire();
+            } else {
+                had_timeout_ = true;
+                return false;
             }
+            peeked_.push_back(newevt);
         }
-
-        ~event_queue_peeker_t() {
-            if (!consumed_) {
-                restart();
-            }
+        // Now we have peeked far enough; check the event.
+        // If it matches the char, then increment the index.
+        if (peeked_.at(idx_).maybe_char() == c) {
+            idx_++;
+            return true;
         }
-};
-
-bool inputter_t::have_mouse_tracking_csi() {
-    // Maximum length of any CSI is NPAR (which is nominally 16), although this does not account for
-    // user input intermixed with pseudo input generated by the tty emulator.
-    event_queue_peeker_t<16> peeker(event_queue_);
-
-    // Check for the CSI first
-    if (peeker.next().maybe_char() != L'\x1B'
-            || peeker.next(true /* timed */).maybe_char() != L'[') {
         return false;
     }
 
-    auto next = peeker.next().maybe_char();
+    /// \return the current index.
+    size_t len() const { return idx_; }
+
+    /// Consume all events up to the current index.
+    /// Remaining events are returned to the queue.
+    void consume() {
+        event_queue_.insert_front(peeked_.cbegin() + idx_, peeked_.cend());
+        peeked_.clear();
+        idx_ = 0;
+    }
+
+    /// Reset our index back to 0.
+    void restart() { idx_ = 0; }
+
+    ~event_queue_peeker_t() {
+        assert(idx_ == 0 && "Events left on the queue - missing restart or consume?");
+        consume();
+    }
+
+   private:
+    /// The list of events which have been dequeued.
+    std::vector<char_event_t> peeked_{};
+
+    /// If set, then some previous timed event timed out.
+    bool had_timeout_{false};
+
+    /// The current index. This never exceeds peeked_.size().
+    size_t idx_{0};
+
+    /// The queue from which to read more events.
+    input_event_queue_t &event_queue_;
+};
+
+/// Try reading a mouse-tracking CSI sequence, using the given \p peeker.
+/// Events are left on the peeker and the caller must restart or consume it.
+/// \return true if matched, false if not.
+static bool have_mouse_tracking_csi(event_queue_peeker_t *peeker) {
+    // Maximum length of any CSI is NPAR (which is nominally 16), although this does not account for
+    // user input intermixed with pseudo input generated by the tty emulator.
+    // Check for the CSI first.
+    if (!peeker->next_is_char(L'\x1b') || !peeker->next_is_char(L'[', true /* timed */)) {
+        return false;
+    }
+
+    auto next = peeker->next().maybe_char();
     size_t length = 0;
     if (next == L'M') {
         // Generic X10 or modified VT200 sequence. It doesn't matter which, they're both 6 chars
@@ -553,13 +542,13 @@ bool inputter_t::have_mouse_tracking_csi() {
         // Extended (SGR/1006) mouse reporting mode, with semicolon-separated parameters for button
         // code, Px, and Py, ending with 'M' for button press or 'm' for button release.
         while (true) {
-            next = peeker.next().maybe_char();
+            next = peeker->next().maybe_char();
             if (next == L'M' || next == L'm') {
                 // However much we've read, we've consumed the CSI in its entirety.
-                length = peeker.len();
+                length = peeker->len();
                 break;
             }
-            if (peeker.len() == 16) {
+            if (peeker->len() >= 16) {
                 // This is likely a malformed mouse-reporting CSI but we can't do anything about it.
                 return false;
             }
@@ -576,18 +565,61 @@ bool inputter_t::have_mouse_tracking_csi() {
 
     // Consume however many characters it takes to prevent the mouse tracking sequence from reaching
     // the prompt, dependent on the class of mouse reporting as detected above.
-    peeker.consume();
-    while (peeker.len() != length) {
-        auto _ = peeker.next();
+    while (peeker->len() < length) {
+        (void)peeker->next();
     }
-
     return true;
 }
 
+/// \return true if a given \p peeker matches a given sequence of char events given by \p str.
+static bool try_peek_sequence(event_queue_peeker_t *peeker, const wcstring &str) {
+    assert(!str.empty() && "Empty string passed to try_peek_sequence");
+    wchar_t prev = L'\0';
+    for (wchar_t c : str) {
+        // If we just read an escape, we need to add a timeout for the next char,
+        // to distinguish between the actual escape key and an "alt"-modifier.
+        bool timed = prev == L'\x1B';
+        if (!peeker->next_is_char(c, timed)) {
+            return false;
+        }
+        prev = c;
+    }
+    return true;
+}
+
+/// \return the first mapping that matches, walking first over the user's mapping list, then the
+/// preset list. \return null if nothing matches.
+maybe_t<input_mapping_t> inputter_t::find_mapping(event_queue_peeker_t *peeker) {
+    const input_mapping_t *generic = nullptr;
+    const auto &vars = parser_->vars();
+    const wcstring bind_mode = input_get_bind_mode(vars);
+
+    auto ml = input_mappings()->all_mappings();
+    for (const auto &m : *ml) {
+        if (m.mode != bind_mode) {
+            continue;
+        }
+
+        // Defer generic mappings until the end.
+        if (m.is_generic()) {
+            if (!generic) generic = &m;
+            continue;
+        }
+
+        if (try_peek_sequence(peeker, m.seq)) {
+            return m;
+        }
+        peeker->restart();
+    }
+    return generic ? maybe_t<input_mapping_t>(*generic) : none();
+}
+
 void inputter_t::mapping_execute_matching_or_generic(const command_handler_t &command_handler) {
+    event_queue_peeker_t peeker(*this);
+
     // Check for mouse-tracking CSI before mappings to prevent the generic mapping handler from
     // taking over.
-    if (have_mouse_tracking_csi()) {
+    if (have_mouse_tracking_csi(&peeker)) {
         // fish recognizes but does not actually support mouse reporting. We never turn it on, and
         // it's only ever enabled if a program we spawned enabled it and crashed or forgot to turn
         // it off before exiting. We swallow the events to prevent garbage from piling up at the
@@ -603,17 +635,26 @@ void inputter_t::mapping_execute_matching_or_generic(const command_handler_t &co
         // We can't/shouldn't directly manipulate stdout from `input.cpp`, so request the execution
         // of a helper function to disable mouse tracking.
         // writembs(outputter_t::stdoutput(), "\x1B[?1000l");
-        event_queue_.push_front(char_event_t(readline_cmd_t::disable_mouse_tracking, L""));
+        peeker.consume();
+        this->push_front(char_event_t(readline_cmd_t::disable_mouse_tracking, L""));
+        return;
     }
-    else if (auto mapping = find_mapping()) {
+    peeker.restart();
+
+    // Check for ordinary mappings.
+    if (auto mapping = find_mapping(&peeker)) {
+        peeker.consume();
         mapping_execute(*mapping, command_handler);
-    } else {
-        FLOGF(reader, L"no generic found, ignoring char...");
-        auto evt = event_queue_.readch();
-        if (evt.is_eof()) {
-            event_queue_.push_front(evt);
-        }
+        return;
     }
+    peeker.restart();
+
+    FLOGF(reader, L"no generic found, ignoring char...");
+    auto evt = peeker.next();
+    if (evt.is_eof()) {
+        this->push_front(evt);
+    }
+    peeker.consume();
 }
 
 /// Helper function. Picks through the queue of incoming characters until we get to one that's not a
@@ -626,7 +667,7 @@ char_event_t inputter_t::read_characters_no_readline() {
 
     char_event_t evt_to_return{0};
     for (;;) {
-        auto evt = event_queue_.readch();
+        auto evt = this->readch();
         if (evt.is_readline()) {
             saved_events.push_back(evt);
         } else {
@@ -636,16 +677,16 @@ char_event_t inputter_t::read_characters_no_readline() {
     }
 
     // Restore any readline functions
-    event_queue_.insert_front(saved_events.cbegin(), saved_events.cend());
+    this->insert_front(saved_events.cbegin(), saved_events.cend());
     return evt_to_return;
 }
 
-char_event_t inputter_t::readch(const command_handler_t &command_handler) {
+char_event_t inputter_t::read_char(const command_handler_t &command_handler) {
     // Clear the interrupted flag.
     reader_reset_interrupted();
     // Search for sequence in mapping tables.
     while (true) {
-        auto evt = event_queue_.readch();
+        auto evt = this->readch();
 
         if (evt.is_readline()) {
             switch (evt.get_readline()) {
@@ -653,7 +694,7 @@ char_event_t inputter_t::readch(const command_handler_t &command_handler) {
                 case readline_cmd_t::self_insert_notfirst: {
                     // Typically self-insert is generated by the generic (empty) binding.
                     // However if it is generated by a real sequence, then insert that sequence.
-                    event_queue_.insert_front(evt.seq.cbegin(), evt.seq.cend());
+                    this->insert_front(evt.seq.cbegin(), evt.seq.cend());
                     // Issue #1595: ensure we only insert characters, not readline functions. The
                     // common case is that this will be empty.
                     char_event_t res = read_characters_no_readline();
@@ -675,9 +716,9 @@ char_event_t inputter_t::readch(const command_handler_t &command_handler) {
                     }
                     // Else we flush remaining tokens
                     do {
-                        evt = event_queue_.readch();
+                        evt = this->readch();
                     } while (evt.is_readline());
-                    event_queue_.push_front(evt);
+                    this->push_front(evt);
                     return readch();
                 }
                 default: {
@@ -689,7 +730,7 @@ char_event_t inputter_t::readch(const command_handler_t &command_handler) {
             // There's no need to go through the input functions.
             return evt;
         } else {
-            event_queue_.push_front(evt);
+            this->push_front(evt);
             mapping_execute_matching_or_generic(command_handler);
             // Regarding allow_commands, we're in a loop, but if a fish command is executed,
             // check_exit is unread, so the next pass through the loop we'll break out and return

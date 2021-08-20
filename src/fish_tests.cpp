@@ -60,6 +60,7 @@
 #include "input_common.h"
 #include "io.h"
 #include "iothread.h"
+#include "kill.h"
 #include "lru.h"
 #include "maybe.h"
 #include "operation_context.h"
@@ -558,13 +559,14 @@ static void test_convert_ascii() {
     }
 }
 
-/// fish uses the private-use range to encode bytes that could not be decoded using the user's locale.
-/// If the input could be decoded, but decoded to private-use codepoints, then fish should also use the direct encoding for those bytes.
-/// Verify that characters in the private use area are correctly round-tripped.
-/// See #7723.
+/// fish uses the private-use range to encode bytes that could not be decoded using the user's
+/// locale. If the input could be decoded, but decoded to private-use codepoints, then fish should
+/// also use the direct encoding for those bytes. Verify that characters in the private use area are
+/// correctly round-tripped. See #7723.
 static void test_convert_private_use() {
     for (wchar_t wc = ENCODE_DIRECT_BASE; wc < ENCODE_DIRECT_END; wc++) {
-        // Encode the char via the locale. Do not use fish functions which interpret these specially.
+        // Encode the char via the locale. Do not use fish functions which interpret these
+        // specially.
         char converted[MB_LEN_MAX];
         mbstate_t state{};
         size_t len = std::wcrtomb(converted, wc, &state);
@@ -575,7 +577,8 @@ static void test_convert_private_use() {
         std::string s(converted, len);
 
         // Ask fish to decode this via str2wcstring.
-        // str2wcstring should notice that the decoded form collides with its private use and encode it directly.
+        // str2wcstring should notice that the decoded form collides with its private use and encode
+        // it directly.
         wcstring ws = str2wcstring(s);
 
         // Each byte should be encoded directly, and round tripping should work.
@@ -663,10 +666,10 @@ static void test_tokenizer() {
         L"Compress_Newlines\n  \n\t\n   \nInto_Just_One";
     using tt = token_type_t;
     const token_type_t types[] = {
-        tt::string,     tt::redirect,   tt::string,   tt::redirect, tt::string, tt::string,
-        tt::string,     tt::redirect,   tt::redirect, tt::string,   tt::pipe,   tt::redirect,
-        tt::andand,     tt::background, tt::oror,     tt::pipe,     tt::andand, tt::oror,
-        tt::background, tt::pipe,       tt::string,   tt::end,      tt::string};
+        tt::string,     tt::redirect, tt::string, tt::redirect, tt::string,   tt::string,
+        tt::string,     tt::string,   tt::string, tt::pipe,     tt::redirect, tt::andand,
+        tt::background, tt::oror,     tt::pipe,   tt::andand,   tt::oror,     tt::background,
+        tt::pipe,       tt::string,   tt::end,    tt::string};
 
     say(L"Test correct tokenization");
 
@@ -770,8 +773,6 @@ static void test_tokenizer() {
     };
 
     if (get_redir_mode(L"<") != redirection_mode_t::input)
-        err(L"redirection_type_for_string failed on line %ld", (long)__LINE__);
-    if (get_redir_mode(L"^") != redirection_mode_t::overwrite)
         err(L"redirection_type_for_string failed on line %ld", (long)__LINE__);
     if (get_redir_mode(L">") != redirection_mode_t::overwrite)
         err(L"redirection_type_for_string failed on line %ld", (long)__LINE__);
@@ -1885,7 +1886,7 @@ static void test_feature_flags() {
     say(L"Testing future feature flags");
     using ft = features_t;
     ft f;
-    do_test(!f.test(ft::stderr_nocaret));
+    do_test(f.test(ft::stderr_nocaret));
     f.set(ft::stderr_nocaret, true);
     do_test(f.test(ft::stderr_nocaret));
     f.set(ft::stderr_nocaret, false);
@@ -2716,10 +2717,15 @@ static void test_word_motion() {
     test_1_word_motion(word_motion_left, move_word_style_path_components, L"^/^foo/^bar/^baz/^");
     test_1_word_motion(word_motion_left, move_word_style_path_components, L"^echo ^--foo ^--bar^");
     test_1_word_motion(word_motion_left, move_word_style_path_components,
-                       L"^echo ^hi ^> /^dev/^null^");
+                       L"^echo ^hi ^> ^/^dev/^null^");
 
     test_1_word_motion(word_motion_left, move_word_style_path_components,
-                       L"^echo /^foo/^bar{^aaa,^bbb,^ccc}^bak/^");
+                       L"^echo ^/^foo/^bar{^aaa,^bbb,^ccc}^bak/^");
+    test_1_word_motion(word_motion_left, move_word_style_path_components, L"^echo ^bak ^///^");
+    test_1_word_motion(word_motion_left, move_word_style_path_components, L"^aaa ^@ ^@^aaa^");
+    test_1_word_motion(word_motion_left, move_word_style_path_components, L"^aaa ^a ^@^aaa^");
+    test_1_word_motion(word_motion_left, move_word_style_path_components, L"^aaa ^@@@ ^@@^aa^");
+    test_1_word_motion(word_motion_left, move_word_style_path_components, L"^aa^@@  ^aa@@^a^");
 
     test_1_word_motion(word_motion_right, move_word_style_punctuation, L"^a^ bcd^");
     test_1_word_motion(word_motion_right, move_word_style_punctuation, L"a^b^ cde^");
@@ -2768,31 +2774,24 @@ static void test_is_potential_path() {
 }
 
 /// Test the 'test' builtin.
-maybe_t<int> builtin_test(parser_t &parser, io_streams_t &streams, wchar_t **argv);
-static bool run_one_test_test(int expected, wcstring_list_t &lst, bool bracket) {
+maybe_t<int> builtin_test(parser_t &parser, io_streams_t &streams, const wchar_t **argv);
+static bool run_one_test_test(int expected, const wcstring_list_t &lst, bool bracket) {
     parser_t &parser = parser_t::principal_parser();
-    size_t i, count = lst.size();
-    wchar_t **argv = new wchar_t *[count + 3];
-    argv[0] = (wchar_t *)(bracket ? L"[" : L"test");
-    for (i = 0; i < count; i++) {
-        argv[i + 1] = (wchar_t *)lst.at(i).c_str();
-    }
-    if (bracket) {
-        argv[i + 1] = (wchar_t *)L"]";
-        i++;
-    }
-    argv[i + 1] = NULL;
+    wcstring_list_t argv;
+    argv.push_back(bracket ? L"[" : L"test");
+    argv.insert(argv.end(), lst.begin(), lst.end());
+    if (bracket) argv.push_back(L"]");
+
+    null_terminated_array_t<wchar_t> cargv(argv);
+
     null_output_stream_t null{};
     io_streams_t streams(null, null);
-    maybe_t<int> result = builtin_test(parser, streams, argv);
+    maybe_t<int> result = builtin_test(parser, streams, cargv.get());
 
     if (result != expected) {
         std::wstring got = result ? std::to_wstring(result.value()) : L"nothing";
         err(L"expected builtin_test() to return %d, got %s", expected, got.c_str());
     }
-
-    delete[] argv;
-
     return result == expected;
 }
 
@@ -2821,16 +2820,16 @@ static void test_test_brackets() {
     null_output_stream_t null{};
     io_streams_t streams(null, null);
 
-    null_terminated_array_t<wchar_t> args;
+    wcstring_list_t args;
 
-    args.set({L"[", L"foo"});
-    do_test(builtin_test(parser, streams, args.get()) != 0);
+    const wchar_t *args1[] = {L"[", L"foo", nullptr};
+    do_test(builtin_test(parser, streams, args1) != 0);
 
-    args.set({L"[", L"foo", L"]"});
-    do_test(builtin_test(parser, streams, args.get()) == 0);
+    const wchar_t *args2[] = {L"[", L"foo", L"]", nullptr};
+    do_test(builtin_test(parser, streams, args2) == 0);
 
-    args.set({L"[", L"foo", L"]", L"bar"});
-    do_test(builtin_test(parser, streams, args.get()) != 0);
+    const wchar_t *args3[] = {L"[", L"foo", L"]", L"bar", nullptr};
+    do_test(builtin_test(parser, streams, args3) != 0);
 }
 
 static void test_test() {
@@ -3152,11 +3151,14 @@ static void test_complete() {
     if (system("mkdir -p 'test/complete_test'")) err(L"mkdir failed");
     if (system("touch 'test/complete_test/has space'")) err(L"touch failed");
     if (system("touch 'test/complete_test/bracket[abc]'")) err(L"touch failed");
-#ifndef __CYGWIN__ // Square brackets are not legal path characters on WIN32/CYGWIN
+#ifndef __CYGWIN__  // Square brackets are not legal path characters on WIN32/CYGWIN
     if (system(R"(touch 'test/complete_test/gnarlybracket\[abc]')")) err(L"touch failed");
 #endif
     if (system("touch 'test/complete_test/testfile'")) err(L"touch failed");
     if (system("chmod 700 'test/complete_test/testfile'")) err(L"chmod failed");
+    if (system("mkdir -p 'test/complete_test/foo1'")) err(L"mkdir failed");
+    if (system("mkdir -p 'test/complete_test/foo2'")) err(L"mkdir failed");
+    if (system("mkdir -p 'test/complete_test/foo3'")) err(L"mkdir failed");
 
     completions = do_complete(L"echo (test/complete_test/testfil", {});
     do_test(completions.size() == 1);
@@ -3189,7 +3191,7 @@ static void test_complete() {
         completions.front().completion, completions.front().flags, cmdline, &where, false);
     do_test(newcmdline == L"touch test/complete_test/bracket\\[abc\\] ");
 
-#ifndef __CYGWIN__ // Square brackets are not legal path characters on WIN32/CYGWIN
+#ifndef __CYGWIN__  // Square brackets are not legal path characters on WIN32/CYGWIN
     cmdline = LR"(touch test/complete_test/gnarlybracket\\[)";
     completions = do_complete(cmdline, {});
     do_test(completions.size() == 1);
@@ -3319,6 +3321,36 @@ static void test_complete() {
     do_test(comma_join(complete_get_wrap_targets(L"wrapper1")).empty());
     do_test(comma_join(complete_get_wrap_targets(L"wrapper2")) == L"wrapper3");
     do_test(comma_join(complete_get_wrap_targets(L"wrapper3")) == L"wrapper1");
+
+    // Test cd wrapping chain
+    if (!pushd("test/complete_test")) err(L"pushd(\"test/complete_test\") failed");
+
+    complete_add_wrapper(L"cdwrap1", L"cd");
+    complete_add_wrapper(L"cdwrap2", L"cdwrap1");
+
+    completion_list_t cd_compl = do_complete(L"cd ", {});
+    completions_sort_and_prioritize(&cd_compl);
+
+    completion_list_t cdwrap1_compl = do_complete(L"cdwrap1 ", {});
+    completions_sort_and_prioritize(&cdwrap1_compl);
+
+    completion_list_t cdwrap2_compl = do_complete(L"cdwrap2 ", {});
+    completions_sort_and_prioritize(&cdwrap2_compl);
+
+    size_t min_compl_size =
+        std::min(cd_compl.size(), std::min(cdwrap1_compl.size(), cdwrap2_compl.size()));
+
+    do_test(cd_compl.size() == min_compl_size);
+    do_test(cdwrap1_compl.size() == min_compl_size);
+    do_test(cdwrap2_compl.size() == min_compl_size);
+    for (size_t i = 0; i < min_compl_size; ++i) {
+        do_test(cd_compl[i].completion == cdwrap1_compl[i].completion);
+        do_test(cdwrap1_compl[i].completion == cdwrap2_compl[i].completion);
+    }
+
+    complete_remove_wrapper(L"cdwrap1", L"cd");
+    complete_remove_wrapper(L"cdwrap2", L"cdwrap1");
+    popd();
 }
 
 static void test_1_completion(wcstring line, const wcstring &completion, complete_flags_t flags,
@@ -3341,6 +3373,42 @@ static void test_1_completion(wcstring line, const wcstring &completion, complet
     }
     do_test(result == expected);
     do_test(cursor_pos == out_cursor_pos);
+}
+
+static void test_wait_handles() {
+    say(L"Testing wait handles");
+    constexpr size_t limit = 4;
+    wait_handle_store_t whs(limit);
+    do_test(whs.size() == 0);
+
+    // Null handles ignored.
+    whs.add(wait_handle_ref_t{});
+    do_test(whs.size() == 0);
+    do_test(whs.get_by_pid(5) == nullptr);
+
+    // Duplicate pids drop oldest.
+    whs.add(std::make_shared<wait_handle_t>(5, L"first"));
+    whs.add(std::make_shared<wait_handle_t>(5, L"second"));
+    do_test(whs.size() == 1);
+    do_test(whs.get_by_pid(5)->base_name == L"second");
+
+    whs.remove_by_pid(123);
+    do_test(whs.size() == 1);
+    whs.remove_by_pid(5);
+    do_test(whs.size() == 0);
+
+    // Test evicting oldest.
+    whs.add(std::make_shared<wait_handle_t>(1, L"1"));
+    whs.add(std::make_shared<wait_handle_t>(2, L"2"));
+    whs.add(std::make_shared<wait_handle_t>(3, L"3"));
+    whs.add(std::make_shared<wait_handle_t>(4, L"4"));
+    whs.add(std::make_shared<wait_handle_t>(5, L"5"));
+    do_test(whs.size() == 4);
+    auto start = whs.get_list().begin();
+    do_test(std::next(start, 0)->get()->base_name == L"5");
+    do_test(std::next(start, 1)->get()->base_name == L"4");
+    do_test(std::next(start, 2)->get()->base_name == L"3");
+    do_test(std::next(start, 3)->get()->base_name == L"2");
 }
 
 static void test_completion_insertions() {
@@ -3640,11 +3708,11 @@ static void test_input() {
 
     // Push the desired binding to the queue.
     for (wchar_t c : desired_binding) {
-        input.queue_ch(c);
+        input.queue_char(c);
     }
 
     // Now test.
-    auto evt = input.readch();
+    auto evt = input.read_char();
     if (!evt.is_readline()) {
         err(L"Event is not a readline");
     } else if (evt.get_readline() != readline_cmd_t::down_line) {
@@ -3731,7 +3799,8 @@ static void test_undo() {
 
 static int test_universal_helper(int x) {
     callback_data_list_t callbacks;
-    env_universal_t uvars(UVARS_TEST_PATH);
+    env_universal_t uvars;
+    uvars.initialize_at_path(callbacks, UVARS_TEST_PATH);
     for (int j = 0; j < UVARS_PER_THREAD; j++) {
         const wcstring key = format_string(L"key_%d_%d", x, j);
         const wcstring val = format_string(L"val_%d_%d", x, j);
@@ -3761,12 +3830,9 @@ static void test_universal() {
     }
     iothread_drain_all();
 
-    env_universal_t uvars(UVARS_TEST_PATH);
+    env_universal_t uvars;
     callback_data_list_t callbacks;
-    bool loaded = uvars.initialize(callbacks);
-    if (!loaded) {
-        err(L"Failed to load universal variables");
-    }
+    uvars.initialize_at_path(callbacks, UVARS_TEST_PATH);
     for (int i = 0; i < threads; i++) {
         for (int j = 0; j < UVARS_PER_THREAD; j++) {
             const wcstring key = format_string(L"key_%d_%d", i, j);
@@ -3864,8 +3930,10 @@ static void test_universal_callbacks() {
     say(L"Testing universal callbacks");
     if (system("mkdir -p test/fish_uvars_test/")) err(L"mkdir failed");
     callback_data_list_t callbacks;
-    env_universal_t uvars1(UVARS_TEST_PATH);
-    env_universal_t uvars2(UVARS_TEST_PATH);
+    env_universal_t uvars1;
+    env_universal_t uvars2;
+    uvars1.initialize_at_path(callbacks, UVARS_TEST_PATH);
+    uvars2.initialize_at_path(callbacks, UVARS_TEST_PATH);
 
     env_var_t::env_var_flags_t noflags = 0;
 
@@ -3945,11 +4013,12 @@ static void test_universal_ok_to_save() {
     do_test(before_id != kInvalidFileID && "UVARS_TEST_PATH should be readable");
 
     callback_data_list_t cbs;
-    env_universal_t uvars(UVARS_TEST_PATH);
-    do_test(uvars.is_ok_to_save() && "Should be OK to save before sync");
+    env_universal_t uvars;
+    uvars.initialize_at_path(cbs, UVARS_TEST_PATH);
+    do_test(!uvars.is_ok_to_save() && "Should not be OK to save");
     uvars.sync(cbs);
     cbs.clear();
-    do_test(!uvars.is_ok_to_save() && "Should no longer be OK to save");
+    do_test(!uvars.is_ok_to_save() && "Should still not be OK to save");
     uvars.set(L"SOMEVAR", env_var_t{wcstring{L"SOMEVALUE"}, 0});
     uvars.sync(cbs);
 
@@ -3964,39 +4033,16 @@ bool poll_notifier(const std::unique_ptr<universal_notifier_t> &note) {
 
     bool result = false;
     int fd = note->notification_fd();
-    if (fd >= 0) {
-        fd_set fds;
-        FD_ZERO(&fds);
-        FD_SET(fd, &fds);
-        struct timeval tv = {0, 0};
-        if (select(fd + 1, &fds, NULL, NULL, &tv) > 0 && FD_ISSET(fd, &fds)) {
-            result = note->notification_fd_became_readable(fd);
-        }
+    if (fd >= 0 && select_wrapper_t::poll_fd_readable(fd)) {
+        result = note->notification_fd_became_readable(fd);
     }
     return result;
 }
 
-static void trigger_or_wait_for_notification(universal_notifier_t::notifier_strategy_t strategy) {
-    switch (strategy) {
-        case universal_notifier_t::strategy_shmem_polling: {
-            break;  // nothing required
-        }
-        case universal_notifier_t::strategy_notifyd: {
-            // notifyd requires a round trip to the notifyd server, which means we have to wait a
-            // little bit to receive it. In practice 40 ms seems to be enough.
-            usleep(40000);
-            break;
-        }
-        case universal_notifier_t::strategy_named_pipe: {
-            break;  // nothing required
-        }
-    }
-}
-
 static void test_notifiers_with_strategy(universal_notifier_t::notifier_strategy_t strategy) {
     say(L"Testing universal notifiers with strategy %d", (int)strategy);
-    std::unique_ptr<universal_notifier_t> notifiers[16];
-    size_t notifier_count = sizeof notifiers / sizeof *notifiers;
+    constexpr size_t notifier_count = 16;
+    std::unique_ptr<universal_notifier_t> notifiers[notifier_count];
 
     // Populate array of notifiers.
     for (size_t i = 0; i < notifier_count; i++) {
@@ -4015,20 +4061,30 @@ static void test_notifiers_with_strategy(universal_notifier_t::notifier_strategy
     for (size_t post_idx = 0; post_idx < notifier_count; post_idx++) {
         notifiers[post_idx]->post_notification();
 
-        // Do special stuff to "trigger" a notification for testing.
-        trigger_or_wait_for_notification(strategy);
+        if (strategy == universal_notifier_t::strategy_notifyd) {
+            // notifyd requires a round trip to the notifyd server, which means we have to wait a
+            // little bit to receive it. In practice 40 ms seems to be enough.
+            usleep(40000);
+        }
 
         for (size_t i = 0; i < notifier_count; i++) {
+            bool polled = poll_notifier(notifiers[i]);
+
             // We aren't concerned with the one who posted. Poll from it (to drain it), and then
             // skip it.
             if (i == post_idx) {
-                poll_notifier(notifiers[i]);
                 continue;
             }
 
-            if (!poll_notifier(notifiers[i])) {
+            if (!polled) {
                 err(L"Universal variable notifier (%lu) %p polled failed to notice changes, with "
                     L"strategy %d",
+                    i, notifiers[i].get(), (int)strategy);
+                continue;
+            }
+            // It should not poll again immediately.
+            if (poll_notifier(notifiers[i])) {
+                err(L"Universal variable notifier (%lu) %p polled twice in a row with strategy %d",
                     i, notifiers[i].get(), (int)strategy);
             }
         }
@@ -4174,7 +4230,7 @@ void history_tests_t::test_history() {
         history_item_t item(value, time(NULL));
         item.required_paths = paths;
         before.push_back(item);
-        history->add(item);
+        history->add(std::move(item));
     }
     history->save();
 
@@ -4596,10 +4652,15 @@ void history_tests_t::test_history_formats() {
     } else {
         // The results are in the reverse order that they appear in the bash history file.
         // We don't expect whitespace to be elided (#4908: except for leading/trailing whitespace)
-        const wchar_t *expected[] = {
-            L"/** # see issue 7407", L"sleep 123",   L"a && echo valid construct",
-            L"final line",           L"echo supsup", L"export XVAR='exported'",
-            L"history --help",       L"echo foo",    NULL};
+        const wchar_t *expected[] = {L"EOF",
+                                     L"sleep 123",
+                                     L"a && echo valid construct",
+                                     L"final line",
+                                     L"echo supsup",
+                                     L"export XVAR='exported'",
+                                     L"history --help",
+                                     L"echo foo",
+                                     NULL};
         auto test_history = history_t::with_name(L"bash_import");
         test_history->populate_from_bash(f);
         if (!history_equals(test_history, expected)) {
@@ -5407,31 +5468,26 @@ static void test_highlighting() {
     vars.remove(L"VARIABLE_IN_COMMAND2", ENV_DEFAULT);
 }
 
-static void test_wcstring_tok() {
-    say(L"Testing wcstring_tok");
-    wcstring buff = L"hello world";
-    wcstring needle = L" \t\n";
-    wcstring_range loc = wcstring_tok(buff, needle);
-    if (loc.first == wcstring::npos || buff.substr(loc.first, loc.second) != L"hello") {
-        err(L"Wrong results from first wcstring_tok(): {%zu, %zu}", loc.first, loc.second);
-    }
-    loc = wcstring_tok(buff, needle, loc);
-    if (loc.first == wcstring::npos || buff.substr(loc.first, loc.second) != L"world") {
-        err(L"Wrong results from second wcstring_tok(): {%zu, %zu}", loc.first, loc.second);
-    }
-    loc = wcstring_tok(buff, needle, loc);
-    if (loc.first != wcstring::npos) {
-        err(L"Wrong results from third wcstring_tok(): {%zu, %zu}", loc.first, loc.second);
-    }
+static void test_split_string_tok() {
+    say(L"Testing split_string_tok");
+    wcstring_list_t splits;
+    splits = split_string_tok(L" hello \t   world", L" \t\n");
+    do_test((splits == wcstring_list_t{L"hello", L"world"}));
 
-    buff = L"hello world";
-    loc = wcstring_tok(buff, needle);
-    // loc is "hello" again
-    loc = wcstring_tok(buff, L"", loc);
-    if (loc.first == wcstring::npos || buff.substr(loc.first, loc.second) != L"world") {
-        err(L"Wrong results from wcstring_tok with empty needle: {%zu, %zu}", loc.first,
-            loc.second);
-    }
+    splits = split_string_tok(L" stuff ", wcstring(L" "), 0);
+    do_test((splits == wcstring_list_t{}));
+
+    splits = split_string_tok(L" stuff ", wcstring(L" "), 1);
+    do_test((splits == wcstring_list_t{L" stuff "}));
+
+    splits = split_string_tok(L" hello \t   world  andstuff ", L" \t\n", 3);
+    do_test((splits == wcstring_list_t{L"hello", L"world", L" andstuff "}));
+
+    // NUL chars are OK.
+    wcstring nullstr = L" hello X  world";
+    nullstr.at(nullstr.find(L'X')) = L'\0';
+    splits = split_string_tok(nullstr, wcstring(L" \0", 2));
+    do_test((splits == wcstring_list_t{L"hello", L"world"}));
 }
 
 static void test_wwrite_to_fd() {
@@ -5508,20 +5564,26 @@ static void test_pcre2_escape() {
     }
 }
 
-maybe_t<int> builtin_string(parser_t &parser, io_streams_t &streams, wchar_t **argv);
-static void run_one_string_test(const wchar_t *const *argv, int expected_rc,
+maybe_t<int> builtin_string(parser_t &parser, io_streams_t &streams, const wchar_t **argv);
+static void run_one_string_test(const wchar_t *const *argv_raw, int expected_rc,
                                 const wchar_t *expected_out) {
+    // Copy to a null terminated array, as builtin_string may wish to rearrange our pointers.
+    wcstring_list_t argv_list(argv_raw, argv_raw + null_terminated_array_length(argv_raw));
+    null_terminated_array_t<wchar_t> argv(argv_list);
+
     parser_t &parser = parser_t::principal_parser();
     string_output_stream_t outs{};
     null_output_stream_t errs{};
     io_streams_t streams(outs, errs);
     streams.stdin_is_directly_redirected = false;  // read from argv instead of stdin
-    maybe_t<int> rc = builtin_string(parser, streams, const_cast<wchar_t **>(argv));
+    maybe_t<int> rc = builtin_string(parser, streams, argv.get());
+
     wcstring args;
-    for (int i = 0; argv[i] != NULL; i++) {
-        args += escape_string(argv[i], ESCAPE_ALL) + L' ';
+    for (const wcstring &arg : argv_list) {
+        args += escape_string(arg, ESCAPE_ALL) + L' ';
     }
     args.resize(args.size() - 1);
+
     if (rc != expected_rc) {
         std::wstring got = rc ? std::to_wstring(rc.value()) : L"nothing";
         err(L"Test failed on line %lu: [%ls]: expected return code %d but got %s", __LINE__,
@@ -6378,6 +6440,31 @@ Executed in  500.00 micros    fish         external
     free(saved_locale);
 }
 
+static void test_killring() {
+    say(L"Testing killring");
+
+    do_test(kill_entries().empty());
+
+    kill_add(L"a");
+    kill_add(L"b");
+    kill_add(L"c");
+
+    do_test((kill_entries() == wcstring_list_t{L"c", L"b", L"a"}));
+
+    do_test(kill_yank_rotate() == L"b");
+    do_test((kill_entries() == wcstring_list_t{L"b", L"a", L"c"}));
+
+    do_test(kill_yank_rotate() == L"a");
+    do_test((kill_entries() == wcstring_list_t{L"a", L"c", L"b"}));
+
+    kill_add(L"d");
+
+    do_test((kill_entries() == wcstring_list_t{L"d", L"a", L"c", L"b"}));
+
+    do_test(kill_yank_rotate() == L"a");
+    do_test((kill_entries() == wcstring_list_t{L"a", L"c", L"b", L"d"}));
+}
+
 struct termsize_tester_t {
     static void test();
 };
@@ -6447,6 +6534,8 @@ void termsize_tester_t::test() {
 /// Main test.
 int main(int argc, char **argv) {
     UNUSED(argc);
+    setlocale(LC_ALL, "");
+
     // Look for the file tests/test.fish. We expect to run in a directory containing that file.
     // If we don't find it, walk up the directory hierarchy until we do, or error.
     while (access("./tests/test.fish", F_OK) != 0) {
@@ -6492,7 +6581,7 @@ int main(int argc, char **argv) {
     env_stack_t::principal().set_pwd_from_getcwd();
 
     if (should_test_function("utility_functions")) test_utility_functions();
-    if (should_test_function("wcstring_tok")) test_wcstring_tok();
+    if (should_test_function("string_split")) test_split_string_tok();
     if (should_test_function("wwrite_to_fd")) test_wwrite_to_fd();
     if (should_test_function("env_vars")) test_env_vars();
     if (should_test_function("env")) test_env_snapshot();
@@ -6559,6 +6648,7 @@ int main(int argc, char **argv) {
     if (should_test_function("universal")) test_universal_formats();
     if (should_test_function("universal")) test_universal_ok_to_save();
     if (should_test_function("notifiers")) test_universal_notifiers();
+    if (should_test_function("wait_handles")) test_wait_handles();
     if (should_test_function("completion_insertions")) test_completion_insertions();
     if (should_test_function("autosuggestion_ignores")) test_autosuggestion_ignores();
     if (should_test_function("autosuggestion_combining")) test_autosuggestion_combining();
@@ -6586,6 +6676,7 @@ int main(int argc, char **argv) {
     // history_tests_t::test_history_speed();
 
     if (should_test_function("termsize")) termsize_tester_t::test();
+    if (should_test_function("killring")) test_killring();
 
     say(L"Encountered %d errors in low-level tests", err_count);
     if (s_test_run_count == 0) say(L"*** No Tests Were Actually Run! ***");

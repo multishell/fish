@@ -21,11 +21,11 @@ struct echo_cmd_opts_t {
 static const wchar_t *const short_options = L"+:Eens";
 static const struct woption *const long_options = nullptr;
 
-static int parse_cmd_opts(echo_cmd_opts_t &opts, int *optind, int argc, wchar_t **argv,
+static int parse_cmd_opts(echo_cmd_opts_t &opts, int *optind, int argc, const wchar_t **argv,
                           parser_t &parser, io_streams_t &streams) {
     UNUSED(parser);
     UNUSED(streams);
-    wchar_t *cmd = argv[0];
+    const wchar_t *cmd = argv[0];
     int opt;
     wgetopter_t w;
     echo_cmd_opts_t oldopts = opts;
@@ -194,8 +194,8 @@ static bool builtin_echo_parse_numeric_sequence(const wchar_t *str, size_t *cons
 ///
 /// Bash only respects -n if it's the first argument. We'll do the same. We also support a new,
 /// fish specific, option -s to mean "no spaces".
-maybe_t<int> builtin_echo(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
-    wchar_t *cmd = argv[0];
+maybe_t<int> builtin_echo(parser_t &parser, io_streams_t &streams, const wchar_t **argv) {
+    const wchar_t *cmd = argv[0];
     UNUSED(cmd);
     int argc = builtin_count_args(argv);
     echo_cmd_opts_t opts;
@@ -207,16 +207,19 @@ maybe_t<int> builtin_echo(parser_t &parser, io_streams_t &streams, wchar_t **arg
     bool continue_output = true;
 
     const wchar_t *const *args_to_echo = argv + optind;
+    // We buffer output so we can write in one go,
+    // this matters when writing to an fd.
+    wcstring out;
     for (size_t idx = 0; continue_output && args_to_echo[idx] != nullptr; idx++) {
         if (opts.print_spaces && idx > 0) {
-            streams.out.push_back(' ');
+            out.push_back(' ');
         }
 
         const wchar_t *str = args_to_echo[idx];
         for (size_t j = 0; continue_output && str[j]; j++) {
             if (!opts.interpret_special_chars || str[j] != L'\\') {
                 // Not an escape.
-                streams.out.push_back(str[j]);
+                out.push_back(str[j]);
             } else {
                 // Most escapes consume one character in addition to the backslash; the numeric
                 // sequences may consume more, while an unrecognized escape sequence consumes none.
@@ -286,13 +289,18 @@ maybe_t<int> builtin_echo(parser_t &parser, io_streams_t &streams, wchar_t **arg
                 j += consumed;
 
                 if (continue_output) {
-                    streams.out.push_back(wc);
+                    out.push_back(wc);
                 }
             }
         }
     }
     if (opts.print_newline && continue_output) {
-        streams.out.push_back('\n');
+        out.push_back('\n');
     }
+
+    if (!out.empty()) {
+        streams.out.append(out);
+    }
+
     return STATUS_CMD_OK;
 }

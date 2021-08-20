@@ -241,7 +241,7 @@ var color_scheme_fish_default = {
     'search_match' : 'bryellow --background=brblack',
     'fish_pager_color_completion' : '',
     'fish_pager_color_description' : 'B3A06D yellow',
-    'fish_pager_color_prefix' : 'white --bold --underline',
+    'fish_pager_color_prefix' : 'normal --bold --underline',
     'fish_pager_color_progress' : 'brwhite --background=cyan',
     'normal' : 'normal',
     'user' : 'brgreen',
@@ -329,8 +329,8 @@ var ayuTheme = {
         receiver['param'] = theme.fg
         receiver['quote'] = theme.string
         receiver['redirection'] = theme.constant
-        receiver['search_match'] = theme.accent
-        receiver['selection'] = theme.accent
+        receiver['search_match'] = "--background="+theme.accent
+        receiver['selection'] = "--background="+theme.accent
 
         receiver['colors'] = []
         for (var key in theme) receiver['colors'].push(theme[key])

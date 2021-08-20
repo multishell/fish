@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "SET" "1" "Apr 07, 2021" "3.2" "fish-shell"
+.TH "SET" "1" "Jun 28, 2021" "3.3" "fish-shell"
 .SH NAME
 set \- display and change shell variables
 .
@@ -51,42 +51,52 @@ set ( \-S | \-\-show ) [VARIABLE_NAME]...
 .sp
 \fBset\fP manipulates shell variables\&.
 .sp
-If set is called with no arguments, the names and values of all shell variables are printed in sorted order. If some of the scope or export flags have been given, only the variables matching the specified scope are printed.
+If both a variable name and values are provided, \fBset\fP assigns the values to the variable of that name. Because all variables in fish are lists, multiple values are allowed.
 .sp
-With both variable names and values provided, \fBset\fP assigns the variable \fBVARIABLE_NAME\fP the values \fBVALUES...\fP\&.
+If only a variable name has been given, \fBset\fP sets the variable to the empty list.
+.sp
+If \fBset\fP is called with no arguments, it prints the names and values of all shell variables in sorted order. Passing scope or export flags allows filtering this to only matching variables, so \fBset \-\-local\fP would only show local variables.
+.sp
+With \fB\-\-erase\fP and optionally a scope flag \fBset\fP will erase the matching variable (or the variable of that name in the smallest possible scope).
+.sp
+With \fB\-\-show\fP, \fBset\fP will describe the given variable names, explaining how they have been defined \- in which scope with which values and options.
 .sp
 The following options control variable scope:
 .INDENT 0.0
-.IP \(bu 2
-\fB\-a\fP or \fB\-\-append\fP causes the values to be appended to the current set of values for the variable. This can be used with \fB\-\-prepend\fP to both append and prepend at the same time. This cannot be used when assigning to a variable slice.
-.IP \(bu 2
-\fB\-p\fP or \fB\-\-prepend\fP causes the values to be prepended to the current set of values for the variable. This can be used with \fB\-\-append\fP to both append and prepend at the same time. This cannot be used when assigning to a variable slice.
 .IP \(bu 2
 \fB\-l\fP or \fB\-\-local\fP forces the specified shell variable to be given a scope that is local to the current block, even if a variable with the given name exists and is non\-local
 .IP \(bu 2
 \fB\-g\fP or \fB\-\-global\fP causes the specified shell variable to be given a global scope. Non\-global variables disappear when the block they belong to ends
 .IP \(bu 2
 \fB\-U\fP or \fB\-\-universal\fP causes the specified shell variable to be given a universal scope. If this option is supplied, the variable will be shared between all the current user\(aqs fish instances on the current computer, and will be preserved across restarts of the shell.
+.UNINDENT
+.sp
+These options control additional variable options:
+.INDENT 0.0
 .IP \(bu 2
 \fB\-x\fP or \fB\-\-export\fP causes the specified shell variable to be exported to child processes (making it an "environment variable")
 .IP \(bu 2
 \fB\-u\fP or \fB\-\-unexport\fP causes the specified shell variable to NOT be exported to child processes
 .IP \(bu 2
-\fB\-\-path\fP causes the specified variable to be treated as a path variable, meaning it will automatically be split on colons,  and joined using colons when quoted (\fIecho "$PATH"\fP) or exported.
+\fB\-\-path\fP causes the specified variable to be treated as a path variable, meaning it will automatically be split on colons,  and joined using colons when quoted (\fBecho "$PATH"\fP) or exported.
 .IP \(bu 2
 \fB\-\-unpath\fP causes the specified variable to not be treated as a path variable. Variables with a name ending in "PATH" are automatically path variables, so this can be used to treat such a variable normally.
 .UNINDENT
 .sp
-The following options are available:
+The following other options are available:
 .INDENT 0.0
+.IP \(bu 2
+\fB\-a\fP or \fB\-\-append\fP causes the values to be appended to the current set of values for the variable. This can be used with \fB\-\-prepend\fP to both append and prepend at the same time. This cannot be used when assigning to a variable slice.
+.IP \(bu 2
+\fB\-p\fP or \fB\-\-prepend\fP causes the values to be prepended to the current set of values for the variable. This can be used with \fB\-\-append\fP to both append and prepend at the same time. This cannot be used when assigning to a variable slice.
 .IP \(bu 2
 \fB\-e\fP or \fB\-\-erase\fP causes the specified shell variables to be erased
 .IP \(bu 2
 \fB\-q\fP or \fB\-\-query\fP test if the specified variable names are defined. Does not output anything, but the builtins exit status is the number of variables specified that were not defined, or 255 if more than 255 variables are not defined.
 .IP \(bu 2
-\fB\-n\fP or \fB\-\-names\fP List only the names of all defined variables, not their value. The names are guaranteed to be sorted.
+\fB\-n\fP or \fB\-\-names\fP: List only the names of all defined variables, not their value. The names are guaranteed to be sorted.
 .IP \(bu 2
-\fB\-S\fP or \fB\-\-show\fP Shows information about the given variables. If no variable names are given then all variables are shown in sorted order. It shows the scopes the given variables are set in, along with the values in each and whether or not it is exported. No other flags can be used with this option.
+\fB\-S\fP or \fB\-\-show\fP shows information about the given variables. If no variable names are given then all variables are shown in sorted order. It shows the scopes the given variables are set in, along with the values in each and whether or not it is exported. No other flags can be used with this option.
 .IP \(bu 2
 \fB\-L\fP or \fB\-\-long\fP do not abbreviate long values when printing set variables
 .UNINDENT
@@ -180,6 +190,6 @@ begin; set \-lx HOME (mktemp \-d); fish; end
 Fish versions prior to 3.0 supported the syntax \fBset PATH[1] PATH[4] /bin /sbin\fP, which worked like
 \fBset PATH[1 4] /bin /sbin\fP\&. This syntax was not widely used, and was ambiguous and inconsistent.
 .SH COPYRIGHT
-2020, fish-shell developers
+2021, fish-shell developers
 .\" Generated by docutils manpage writer.
 .
