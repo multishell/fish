@@ -195,6 +195,16 @@ static void popd() {
     env_stack_t::principal().set_pwd_from_getcwd();
 }
 
+// Helper to return a string whose length greatly exceeds PATH_MAX.
+wcstring get_overlong_path() {
+    wcstring longpath;
+    longpath.reserve(PATH_MAX * 2 + 10);
+    while (longpath.size() <= PATH_MAX * 2) {
+        longpath += L"/overlong";
+    }
+    return longpath;
+}
+
 // The odd formulation of these macros is to avoid "multiple unary operator" warnings from oclint
 // were we to use the more natural "if (!(e)) err(..." form. We have to do this because the rules
 // for the C preprocessor make it practically impossible to embed a comment in the body of a macro.
@@ -3977,8 +3987,7 @@ static void trigger_or_wait_for_notification(universal_notifier_t::notifier_stra
             usleep(40000);
             break;
         }
-        case universal_notifier_t::strategy_named_pipe:
-        case universal_notifier_t::strategy_sigio: {
+        case universal_notifier_t::strategy_named_pipe: {
             break;  // nothing required
         }
     }
@@ -3988,9 +3997,6 @@ static void test_notifiers_with_strategy(universal_notifier_t::notifier_strategy
     say(L"Testing universal notifiers with strategy %d", (int)strategy);
     std::unique_ptr<universal_notifier_t> notifiers[16];
     size_t notifier_count = sizeof notifiers / sizeof *notifiers;
-
-    // Set up SIGIO handler as needed.
-    signal_set_handlers(false);
 
     // Populate array of notifiers.
     for (size_t i = 0; i < notifier_count; i++) {
@@ -4041,12 +4047,6 @@ static void test_notifiers_with_strategy(universal_notifier_t::notifier_strategy
 
     // Nobody should poll now.
     for (size_t i = 0; i < notifier_count; i++) {
-        // On BSD, SIGIO may be delivered by read() even if it returns EAGAIN;
-        // that is the polling itself may trigger a SIGIO. Therefore we poll twice.
-        if (strategy == universal_notifier_t::strategy_sigio) {
-            (void)poll_notifier(notifiers[i]);
-        }
-
         if (poll_notifier(notifiers[i])) {
             err(L"Universal variable notifier polled true after all changes, with strategy %d",
                 (int)strategy);
@@ -5336,6 +5336,13 @@ static void test_highlighting() {
         {L"# comment", highlight_role_t::comment},
     });
 
+    // Overlong paths don't crash (#7837).
+    const wcstring overlong = get_overlong_path();
+    highlight_tests.push_back({
+        {L"touch", highlight_role_t::command},
+        {overlong.c_str(), highlight_role_t::param},
+    });
+
     highlight_tests.push_back({
         {L"a", highlight_role_t::param},
         {L"=", highlight_role_t::operat, ns},
@@ -6184,6 +6191,47 @@ void test_normalize_path() {
     do_test(path_normalize_for_cd(L"/abc/def/", L"../ghi/..") == L"/abc/ghi/..");
 }
 
+void test_dirname_basename() {
+    say(L"Testing wdirname and wbasename");
+    const struct testcase_t {
+        const wchar_t *path;
+        const wchar_t *dir;
+        const wchar_t *base;
+    } testcases[] = {
+        {L"", L".", L"."},
+        {L"foo//", L".", L"foo"},
+        {L"foo//////", L".", L"foo"},
+        {L"/////foo", L"/", L"foo"},
+        {L"/////foo", L"/", L"foo"},
+        {L"//foo/////bar", L"//foo", L"bar"},
+        {L"foo/////bar", L"foo", L"bar"},
+
+        // Examples given in XPG4.2.
+        {L"/usr/lib", L"/usr", L"lib"},
+        {L"usr", L".", L"usr"},
+        {L"/", L"/", L"/"},
+        {L".", L".", L"."},
+        {L"..", L".", L".."},
+    };
+    for (const auto &tc : testcases) {
+        wcstring dir = wdirname(tc.path);
+        if (dir != tc.dir) {
+            err(L"Wrong dirname for \"%ls\": expected \"%ls\", got \"%ls\"", tc.path, tc.dir,
+                dir.c_str());
+        }
+        wcstring base = wbasename(tc.path);
+        if (base != tc.base) {
+            err(L"Wrong basename for \"%ls\": expected \"%ls\", got \"%ls\"", tc.path, tc.base,
+                base.c_str());
+        }
+    }
+    // Ensures strings which greatly exceed PATH_MAX still work (#7837).
+    wcstring longpath = get_overlong_path();
+    wcstring longpath_dir = longpath.substr(0, longpath.rfind(L'/'));
+    do_test(wdirname(longpath) == longpath_dir);
+    do_test(wbasename(longpath) == L"overlong");
+}
+
 static void test_topic_monitor() {
     say(L"Testing topic monitor");
     topic_monitor_t monitor;
@@ -6529,6 +6577,7 @@ int main(int argc, char **argv) {
     if (should_test_function("layout_cache")) test_layout_cache();
     if (should_test_function("prompt")) test_prompt_truncation();
     if (should_test_function("normalize")) test_normalize_path();
+    if (should_test_function("dirname")) test_dirname_basename();
     if (should_test_function("topics")) test_topic_monitor();
     if (should_test_function("topics")) test_topic_monitor_torture();
     if (should_test_function("pipes")) test_pipes();

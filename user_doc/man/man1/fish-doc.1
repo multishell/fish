@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FISH-DOC" "1" "Mar 18, 2021" "3.2" "fish-shell"
+.TH "FISH-DOC" "1" "Apr 07, 2021" "3.2" "fish-shell"
 .SH NAME
 fish-doc \- fish-shell Documentation
 .
@@ -12256,6 +12256,34 @@ products or services of Licensee, or any third party.
 agrees to be bound by the terms and conditions of this License
 Agreement.
 .SH RELEASE NOTES
+.SS fish 3.2.2 (released April 7, 2021)
+.sp
+This release of fish fixes a number of additional issues identified in the fish 3.2 series:
+.INDENT 0.0
+.IP \(bu 2
+The command\-not\-found handler used suggestions from \fBpacman\fP on Arch Linux, but this caused major slowdowns on some systems and has been disabled (\fI\%#7841\fP).
+.IP \(bu 2
+fish will no longer hang on exit if another process is in the foreground on macOS (\fI\%#7901\fP).
+.IP \(bu 2
+Certain programs (such as \fBlazygit\fP) could create situations where fish would not receive keystrokes correctly, but it is now more robust in these situations (\fI\%#7853\fP).
+.IP \(bu 2
+Arguments longer than 1024 characters no longer trigger excessive CPU usage on macOS (\fI\%#7837\fP).
+.IP \(bu 2
+fish builds correctly on macOS when using new versions of Xcode (\fI\%#7838\fP).
+.IP \(bu 2
+Completions for \fBaura\fP (\fI\%#7865\fP) and \fBtshark\fP (\fI\%#7858\fP) should no longer produce errors.
+.IP \(bu 2
+Background jobs no longer interfere with syntax highlighting (a regression introduced in fish 3.2.1, \fI\%#7842\fP).
+.UNINDENT
+.sp
+If you are upgrading from version 3.1.2 or before, please also review the release notes for 3.2.1 and 3.2.0 (included below).
+
+.sp
+.ce
+----
+
+.ce 0
+.sp
 .SS fish 3.2.1 (released March 18, 2021)
 .sp
 This release of fish fixes the following problems identified in fish 3.2.0:
