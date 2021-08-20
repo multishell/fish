@@ -148,9 +148,9 @@ struct library_data_t {
     /// Whether we are currently cleaning processes.
     bool is_cleaning_procs{false};
 
-    /// The job id of the job being populated.
+    /// The internal job id of the job being populated, or 0 if none.
     /// This supports the '--on-job-exit caller' feature.
-    job_id_t caller_job_id{-1};
+    internal_job_id_t caller_id{0};
 
     /// Whether we are running a subshell command.
     bool is_subshell{false};
@@ -266,15 +266,18 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     /// \param io io redirections to perform on all started jobs
     /// \param block_type The type of block to push on the block stack, which must be either 'top'
     /// or 'subst'.
+    /// \param parent_pgid if set, the pgid to give to spawned jobs
     ///
     /// \return the eval result,
     eval_result_t eval(const wcstring &cmd, const io_chain_t &io,
-                       block_type_t block_type = block_type_t::top);
+                       block_type_t block_type = block_type_t::top,
+                       maybe_t<pid_t> parent_pgid = {});
 
     /// Evaluate the parsed source ps.
     /// Because the source has been parsed, a syntax error is impossible.
     eval_result_t eval(const parsed_source_ref_t &ps, const io_chain_t &io,
-                       block_type_t block_type = block_type_t::top);
+                       block_type_t block_type = block_type_t::top,
+                       maybe_t<pid_t> parent_pgid = {});
 
     /// Evaluates a node.
     /// The node type must be grammar::statement or grammar::job_list.
@@ -326,6 +329,12 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
     statuses_t get_last_statuses() const { return vars().get_last_statuses(); }
     void set_last_statuses(statuses_t s) { vars().set_last_statuses(std::move(s)); }
 
+    /// Cover of vars().set(), which also fires any returned event handlers.
+    /// \return a value like ENV_OK.
+    int set_var_and_fire(const wcstring &key, env_mode_flags_t mode, wcstring val);
+    int set_var_and_fire(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals);
+    int set_empty_var_and_fire(const wcstring &key, env_mode_flags_t mode);
+
     /// Pushes a new block. Returns a pointer to the block, stored in the parser. The pointer is
     /// valid until the call to pop_block()
     block_t *push_block(block_t &&b);
@@ -354,6 +363,9 @@ class parser_t : public std::enable_shared_from_this<parser_t> {
 
     void get_backtrace(const wcstring &src, const parse_error_list_t &errors,
                        wcstring &output) const;
+
+    /// \return the signal triggering cancellation, or 0 if none.
+    int get_cancel_signal() const { return cancellation_signal; }
 
     /// Output profiling data to the given filename.
     void emit_profiling(const char *path) const;

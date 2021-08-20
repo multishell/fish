@@ -85,7 +85,7 @@ parser_t::parser_t(std::shared_ptr<env_stack_t> vars) : variables(std::move(vars
     int cwd = open_cloexec(".", O_RDONLY);
     if (cwd < 0) {
         perror("Unable to open the current working directory");
-        abort();
+        return;
     }
     libdata().cwd_fd = std::make_shared<const autoclose_fd_t>(cwd);
 }
@@ -105,6 +105,25 @@ parser_t &parser_t::principal_parser() {
 void parser_t::cancel_requested(int sig) {
     assert(sig != 0 && "Signal must not be 0");
     principal->cancellation_signal = sig;
+}
+
+int parser_t::set_var_and_fire(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals) {
+    std::vector<event_t> events;
+    int res = vars().set(key, mode, std::move(vals), &events);
+    for (const auto &evt : events) {
+        event_fire(*this, evt);
+    }
+    return res;
+}
+
+int parser_t::set_var_and_fire(const wcstring &key, env_mode_flags_t mode, wcstring val) {
+    wcstring_list_t vals;
+    vals.push_back(std::move(val));
+    return set_var_and_fire(key, mode, std::move(vals));
+}
+
+int parser_t::set_empty_var_and_fire(const wcstring &key, env_mode_flags_t mode) {
+    return set_var_and_fire(key, mode, wcstring_list_t{});
 }
 
 // Given a new-allocated block, push it onto our block list, acquiring ownership.
@@ -615,11 +634,11 @@ profile_item_t *parser_t::create_profile_item() {
 }
 
 eval_result_t parser_t::eval(const wcstring &cmd, const io_chain_t &io,
-                             enum block_type_t block_type) {
+                             enum block_type_t block_type, maybe_t<pid_t> parent_pgid) {
     // Parse the source into a tree, if we can.
     parse_error_list_t error_list;
     if (parsed_source_ref_t ps = parse_source(cmd, parse_flag_none, &error_list)) {
-        return this->eval(ps, io, block_type);
+        return this->eval(ps, io, block_type, parent_pgid);
     } else {
         // Get a backtrace. This includes the message.
         wcstring backtrace_and_desc;
@@ -632,11 +651,12 @@ eval_result_t parser_t::eval(const wcstring &cmd, const io_chain_t &io,
 }
 
 eval_result_t parser_t::eval(const parsed_source_ref_t &ps, const io_chain_t &io,
-                             enum block_type_t block_type) {
+                             enum block_type_t block_type, maybe_t<pid_t> parent_pgid) {
     assert(block_type == block_type_t::top || block_type == block_type_t::subst);
     if (!ps->tree.empty()) {
         job_lineage_t lineage;
         lineage.block_io = io;
+        lineage.parent_pgid = parent_pgid;
         // Execute the first node.
         tnode_t<grammar::job_list> start{&ps->tree, &ps->tree.front()};
         return this->eval_node(ps, start, std::move(lineage), block_type);
@@ -669,6 +689,9 @@ eval_result_t parser_t::eval_node(const parsed_source_ref_t &ps, tnode_t<T> node
     // Start it up
     operation_context_t op_ctx = this->context();
     block_t *scope_block = this->push_block(block_t::scope_block(block_type));
+
+    // Propogate any parent pgid.
+    op_ctx.parent_pgid = lineage.parent_pgid;
 
     // Create and set a new execution context.
     using exc_ctx_ref_t = std::unique_ptr<parse_execution_context_t>;

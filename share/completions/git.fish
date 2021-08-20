@@ -339,7 +339,7 @@ function __fish_git_files
         # Note that we can't use space as a delimiter between status and filename, because
         # the status can contain spaces - " M" is different from "M ".
         __fish_git $git_opt status --porcelain -z $status_opt \
-            | while read -lz line
+            | while read -lz -d' ' line
             set -l desc
             # The entire line is the "from" from a rename.
             if set -q use_next[1]
@@ -621,7 +621,9 @@ function __fish_git_aliases
     __fish_git config -z --get-regexp '^alias\.' 2>/dev/null | while read -lz key value
         begin
             set -l name (string replace -r '^.*\.' '' -- $key)
-            printf "%s\t%s\n" $name "Alias for $value"
+            # Only use the first line of the value as the description.
+            set -l val (printf '%s\n' $value)[1]
+            printf "%s\t%s\n" $name "Alias for $val"
         end
     end
 end

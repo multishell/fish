@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "ULIMIT" "1" "Feb 12, 2020" "3.1" "fish-shell"
+.TH "ULIMIT" "1" "Apr 27, 2020" "3.1" "fish-shell"
 .SH NAME
 ulimit \- set or get resource usage limits
 .
@@ -83,7 +83,7 @@ If limit is given, it is the new value of the specified resource. If no option i
 \fB\-S\fP or \fB\-\-soft\fP sets soft resource limit
 .UNINDENT
 .sp
-A hard limit can only be decreased. Once it is set it cannot be increased; a soft limit may be increased up to the value of the hard limit. If neither \-H nor \-S is specified, both the soft and hard limits are updated when assigning a new limit value, and the soft limit is used when reporting the current value.
+A hard limit can only be decreased. Once it is set it cannot be increased; a soft limit may be increased up to the value of the hard limit. If neither \fB\-H\fP nor \fB\-S\fP is specified, both the soft and hard limits are updated when assigning a new limit value, and the soft limit is used when reporting the current value.
 .sp
 The following additional options are also understood by \fBulimit\fP:
 .INDENT 0.0
@@ -98,7 +98,7 @@ Fish \fBulimit\fP supports GNU\-style long options for all switches
 .IP \(bu 2
 Fish \fBulimit\fP does not support the \fB\-p\fP option for getting the pipe size. The bash implementation consists of a compile\-time check that empirically guesses this number by writing to a pipe and waiting for SIGPIPE. Fish does not do this because it this method of determining pipe size is unreliable. Depending on bash version, there may also be further additional limits to set in bash that do not exist in fish.
 .IP \(bu 2
-Fish \fBulimit\fP does not support getting or setting multiple limits in one command, except reporting all values using the \-a switch
+Fish \fBulimit\fP does not support getting or setting multiple limits in one command, except reporting all values using the \fB\-a\fP switch
 .UNINDENT
 .SH EXAMPLE
 .sp

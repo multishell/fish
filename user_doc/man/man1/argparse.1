@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "ARGPARSE" "1" "Feb 12, 2020" "3.1" "fish-shell"
+.TH "ARGPARSE" "1" "Apr 27, 2020" "3.1" "fish-shell"
 .SH NAME
 argparse \- parse options passed to a fish script or function
 .
@@ -170,7 +170,7 @@ Some OPTION_SPEC examples:
 .IP \(bu 2
 \fBn\-name=+\fP means that only \fB\-\-name\fP is valid. It requires a value and can be used more than once. If the flag is seen then \fB_flag_n\fP and \fB_flag_name\fP will be set with the values associated with each occurrence of the flag.
 .IP \(bu 2
-\fBx\fP means that only \fB\-x\fP is valid. It is a boolean can can be used more than once. If it is seen then \fB_flag_x\fP will be set to the count of how many times the flag was seen.
+\fBx\fP means that only \fB\-x\fP is valid. It is a boolean that can be used more than once. If it is seen then \fB_flag_x\fP will be set to the count of how many times the flag was seen.
 .IP \(bu 2
 \fBx=\fP, \fBx=?\fP, and \fBx=+\fP are similar to the n/name examples above but there is no long flag alternative to the short flag \fB\-x\fP\&.
 .IP \(bu 2

@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FISH_HG_PROMPT" "1" "Feb 12, 2020" "3.1" "fish-shell"
+.TH "FISH_HG_PROMPT" "1" "Apr 27, 2020" "3.1" "fish-shell"
 .SH NAME
 fish_hg_prompt \- output Mercurial information for use in a prompt
 .
@@ -49,7 +49,19 @@ The fish_hg_prompt function displays information about the current Mercurial rep
 .sp
 \fI\%Mercurial\fP (\fBhg\fP) must be installed.
 .sp
-There are numerous customization options, which can be controlled with fish variables.
+By default, only the current branch is shown because \fBhg status\fP can take be slow on large repository. You can enable a more informative prompt by setting the variable \fB$fish_prompt_hg_show_informative_status\fP, for example:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+set \-\-universal fish_prompt_hg_show_informative_status
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+If you enabled the informative status, there are numerous customization options, which can be controlled with fish variables.
 .INDENT 0.0
 .IP \(bu 2
 \fB$fish_color_hg_clean\fP, \fB$fish_color_hg_modified\fP and \fB$fish_color_hg_dirty\fP are colors used when the repository has the respective status.
@@ -100,6 +112,7 @@ A simple prompt that displays hg info:
 .ft C
 function fish_prompt
     ...
+    set \-g fish_prompt_hg_show_informative_status
     printf \(aq%s %s$\(aq $PWD (fish_hg_prompt)
 end
 .ft P

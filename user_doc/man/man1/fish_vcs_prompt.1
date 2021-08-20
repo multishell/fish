@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FISH_VCS_PROMPT" "1" "Feb 12, 2020" "3.1" "fish-shell"
+.TH "FISH_VCS_PROMPT" "1" "Apr 27, 2020" "3.1" "fish-shell"
 .SH NAME
 fish_vcs_prompt \- output version control system information for use in a prompt
 .
@@ -58,6 +58,8 @@ fish_svn_prompt
 .UNINDENT
 .sp
 If a VCS isn\(aqt installed, the respective function does nothing.
+.sp
+The svn prompt is disabled by default because it\(aqs slow on large svn repositories. To enable it, modify fish_vcs_prompt to uncomment it. See funced\&.
 .sp
 For more information, see the documentation for each of the functions above.
 .SH EXAMPLE

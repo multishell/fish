@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FISH-DOC" "1" "Feb 12, 2020" "3.1" "fish-shell"
+.TH "FISH-DOC" "1" "Apr 27, 2020" "3.1" "fish-shell"
 .SH NAME
 fish-doc \- fish-shell Documentation
 .
@@ -1353,7 +1353,7 @@ If \fBfish\fP encounters a problem while executing a command, the status variabl
 If a process exits through a signal, the exit status will be 128 plus the number of the signal.
 .SH VARIABLES FOR CHANGING HIGHLIGHTING COLORS
 .sp
-The colors used by fish for syntax highlighting can be configured by changing the values of a various variables. The value of these variables can be one of the colors accepted by the \fI\%set_color\fP command. The \fB\-\-bold\fP or \fB\-b\fP switches accepted by \fBset_color\fP are also accepted.
+The colors used by fish for syntax highlighting can be configured by changing the values of a various variables. The value of these variables can be one of the colors accepted by the set_color command. The \fB\-\-bold\fP or \fB\-b\fP switches accepted by \fBset_color\fP are also accepted.
 .sp
 The following variables are available to change the highlighting colors in fish:
 .INDENT 0.0
@@ -1889,7 +1889,7 @@ Directories for third\-party software vendors to ship their own configuration sn
 If there are multiple files with the same name in these directories, only the first will be executed.
 They are executed in order of their filename, sorted (like globs) in a natural order (i.e. "01" sorts before "2").
 .IP \(bu 2
-System\-wide configuration files, where administrators can include initialization that should be run for all users on the system \- similar to \fB/etc/profile\fP for POSIX\-style shells \- in \fB$__fish_sysconf_dir\(ga (usually /etc/fish/config.fish\fP);
+System\-wide configuration files, where administrators can include initialization that should be run for all users on the system \- similar to \fB/etc/profile\fP for POSIX\-style shells \- in \fB$__fish_sysconf_dir\fP (usually \fB/etc/fish/config.fish\fP).
 .IP \(bu 2
 User initialization, usually in \fI~/.config/fish/config.fish\fP (controlled by the \fBXDG_CONFIG_HOME\fP environment variable, and accessible as \fB$__fish_config_dir\fP).
 .UNINDENT
@@ -2109,7 +2109,7 @@ fish ships with the following commands:
 .nf
 .ft C
 abbr \-\-add [SCOPE] WORD EXPANSION
-abbr \-\-erase word
+abbr \-\-erase WORD
 abbr \-\-rename [SCOPE] OLD_WORD NEW_WORD
 abbr \-\-show
 abbr \-\-list
@@ -2128,7 +2128,7 @@ For example, a frequently\-run command like \fBgit checkout\fP can be abbreviate
 The following options are available:
 .INDENT 0.0
 .IP \(bu 2
-\fB\-a WORD EXPANSION\fP or \fB\-\-add WORD EXPANSION\fP Adds a new abbreviation, causing WORD to be expanded to PHRASE.
+\fB\-a WORD EXPANSION\fP or \fB\-\-add WORD EXPANSION\fP Adds a new abbreviation, causing WORD to be expanded to EXPANSION.
 .IP \(bu 2
 \fB\-r OLD_WORD NEW_WORD\fP or \fB\-\-rename OLD_WORD NEW_WORD\fP Renames an abbreviation, from OLD_WORD to NEW_WORD.
 .IP \(bu 2
@@ -2141,7 +2141,7 @@ The following options are available:
 \fB\-q\fP or \fB\-\-query\fP Return 0 (true) if one of the WORDs is an abbreviation.
 .UNINDENT
 .sp
-In addition, when adding abbreviations:
+In addition, when adding or renaming abbreviations:
 .INDENT 0.0
 .IP \(bu 2
 \fB\-g\fP or \fB\-\-global\fP to use a global variable.
@@ -2321,6 +2321,11 @@ make; and make install; or make clean
 .fi
 .UNINDENT
 .UNINDENT
+.SS See Also
+.INDENT 0.0
+.IP \(bu 2
+or command
+.UNINDENT
 .SS argparse \- parse options passed to a fish script or function
 .SS Synopsis
 .INDENT 0.0
@@ -2462,7 +2467,7 @@ Some OPTION_SPEC examples:
 .IP \(bu 2
 \fBn\-name=+\fP means that only \fB\-\-name\fP is valid. It requires a value and can be used more than once. If the flag is seen then \fB_flag_n\fP and \fB_flag_name\fP will be set with the values associated with each occurrence of the flag.
 .IP \(bu 2
-\fBx\fP means that only \fB\-x\fP is valid. It is a boolean can can be used more than once. If it is seen then \fB_flag_x\fP will be set to the count of how many times the flag was seen.
+\fBx\fP means that only \fB\-x\fP is valid. It is a boolean that can be used more than once. If it is seen then \fB_flag_x\fP will be set to the count of how many times the flag was seen.
 .IP \(bu 2
 \fBx=\fP, \fBx=?\fP, and \fBx=+\fP are similar to the n/name examples above but there is no long flag alternative to the short flag \fB\-x\fP\&.
 .IP \(bu 2
@@ -2689,6 +2694,8 @@ The following special input functions are available:
 .IP \(bu 2
 \fBexecute\fP run the current commandline
 .IP \(bu 2
+\fBforce\-repaint\fP reexecute the prompt functions without coalescing
+.IP \(bu 2
 \fBforward\-bigword\fP, move one whitespace\-delimited word to the right
 .IP \(bu 2
 \fBforward\-char\fP, move one character to the right
@@ -2729,7 +2736,9 @@ The following special input functions are available:
 .IP \(bu 2
 \fBrepaint\-mode\fP reexecutes the fish_mode_prompt function and redraws the prompt. This is useful for vi\-mode. If no fish_mode_prompt exists, it acts like a normal repaint.
 .IP \(bu 2
-\fBforce\-repaint\fP reexecute the prompt functions without coalescing.
+\fBself\-insert\fP, inserts the matching sequence into the command line
+.IP \(bu 2
+\fBself\-insert\-notfirst\fP, inserts the matching sequence into the command line, unless the cursor is at the beginning
 .IP \(bu 2
 \fBsuppress\-autosuggestion\fP, remove the current autosuggestion
 .IP \(bu 2
@@ -2787,11 +2796,11 @@ bind \-M insert \ecc kill\-whole\-line force\-repaint
 Turns on Vi key bindings and rebinds \fBControl+C\fP to clear the input line.
 .SS Special Case: The escape Character
 .sp
-The escape key can be used standalone, for example, to switch from insertion mode to normal mode when using Vi keybindings. Escape may also be used as a "meta" key, to indicate the start of an escape sequence, such as function or arrow keys. Custom bindings can also be defined that begin with an escape character.
+The escape key can be used standalone, for example, to switch from insertion mode to normal mode when using Vi keybindings. Escape can also be used as a "meta" key, to indicate the start of an escape sequence, like for function or arrow keys. Custom bindings can also be defined that begin with an escape character.
 .sp
-fish waits for a period after receiving the escape character, to determine whether it is standalone or part of an escape sequence. While waiting, additional key presses make the escape key behave as a meta key. If no other key presses come in, it is handled as a standalone escape. The waiting period is set to 300 milliseconds (0.3 seconds) in the default key bindings and 10 milliseconds in the vi key bindings. It can be configured by setting the \fBfish_escape_delay_ms\fP variable to a value between 10 and 5000 ms. It is recommended that this be a universal variable that you set once from an interactive session.
+Holding alt and something else also typically sends escape, for example holding alt+a will send an escape character and then an "a".
 .sp
-Note: fish 2.2.0 and earlier used a default of 10 milliseconds, and provided no way to configure it. That effectively made it impossible to use escape as a meta key.
+fish waits for a period after receiving the escape character, to determine whether it is standalone or part of an escape sequence. While waiting, additional key presses make the escape key behave as a meta key. If no other key presses come in, it is handled as a standalone escape. The waiting period is set to 30 milliseconds (0.03 seconds). It can be configured by setting the \fBfish_escape_delay_ms\fP variable to a value between 10 and 5000 ms. This can be a universal variable that you set once from an interactive session.
 .SS block \- temporarily block delivery of events
 .SS Synopsis
 .INDENT 0.0
@@ -3842,6 +3851,13 @@ false
 .SS Description
 .sp
 \fBfalse\fP sets the exit status to 1.
+.SS See Also
+.INDENT 0.0
+.IP \(bu 2
+true command
+.IP \(bu 2
+$status variable
+.UNINDENT
 .SS fg \- bring job to foreground
 .SS Synopsis
 .INDENT 0.0
@@ -4181,7 +4197,19 @@ The fish_hg_prompt function displays information about the current Mercurial rep
 .sp
 \fI\%Mercurial\fP (\fBhg\fP) must be installed.
 .sp
-There are numerous customization options, which can be controlled with fish variables.
+By default, only the current branch is shown because \fBhg status\fP can take be slow on large repository. You can enable a more informative prompt by setting the variable \fB$fish_prompt_hg_show_informative_status\fP, for example:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+set \-\-universal fish_prompt_hg_show_informative_status
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+If you enabled the informative status, there are numerous customization options, which can be controlled with fish variables.
 .INDENT 0.0
 .IP \(bu 2
 \fB$fish_color_hg_clean\fP, \fB$fish_color_hg_modified\fP and \fB$fish_color_hg_dirty\fP are colors used when the repository has the respective status.
@@ -4232,6 +4260,7 @@ A simple prompt that displays hg info:
 .ft C
 function fish_prompt
     ...
+    set \-g fish_prompt_hg_show_informative_status
     printf \(aq%s %s$\(aq $PWD (fish_hg_prompt)
 end
 .ft P
@@ -4694,6 +4723,8 @@ fish_svn_prompt
 .UNINDENT
 .sp
 If a VCS isn\(aqt installed, the respective function does nothing.
+.sp
+The svn prompt is disabled by default because it\(aqs slow on large svn repositories. To enable it, modify fish_vcs_prompt to uncomment it. See funced\&.
 .sp
 For more information, see the documentation for each of the functions above.
 .SS Example
@@ -5534,8 +5565,7 @@ COMMAND1; or COMMAND2
 .sp
 \fBor\fP is used to execute a command if the previous command was not successful (returned a status of something other than 0).
 .sp
-\fBor\fP statements may be used as part of the condition in an and or while block. See the documentation
-for if and while for examples.
+\fBor\fP statements may be used as part of the condition in an and or while block.
 .sp
 \fBor\fP does not change the current exit status itself, but the command it runs most likely will. The exit status of the last foreground command to exit can always be accessed using the $status variable.
 .SS Example
@@ -5550,6 +5580,11 @@ make; and make install; or make clean
 .ft P
 .fi
 .UNINDENT
+.UNINDENT
+.SS See Also
+.INDENT 0.0
+.IP \(bu 2
+and command
 .UNINDENT
 .SS popd \- move through directory stack
 .SS Synopsis
@@ -8102,6 +8137,13 @@ true
 .SS Description
 .sp
 \fBtrue\fP sets the exit status to 0.
+.SS See Also
+.INDENT 0.0
+.IP \(bu 2
+false command
+.IP \(bu 2
+$status variable
+.UNINDENT
 .SS type \- indicate how a command would be interpreted
 .SS Synopsis
 .INDENT 0.0
@@ -8203,7 +8245,7 @@ If limit is given, it is the new value of the specified resource. If no option i
 \fB\-S\fP or \fB\-\-soft\fP sets soft resource limit
 .UNINDENT
 .sp
-A hard limit can only be decreased. Once it is set it cannot be increased; a soft limit may be increased up to the value of the hard limit. If neither \-H nor \-S is specified, both the soft and hard limits are updated when assigning a new limit value, and the soft limit is used when reporting the current value.
+A hard limit can only be decreased. Once it is set it cannot be increased; a soft limit may be increased up to the value of the hard limit. If neither \fB\-H\fP nor \fB\-S\fP is specified, both the soft and hard limits are updated when assigning a new limit value, and the soft limit is used when reporting the current value.
 .sp
 The following additional options are also understood by \fBulimit\fP:
 .INDENT 0.0
@@ -8218,7 +8260,7 @@ Fish \fBulimit\fP supports GNU\-style long options for all switches
 .IP \(bu 2
 Fish \fBulimit\fP does not support the \fB\-p\fP option for getting the pipe size. The bash implementation consists of a compile\-time check that empirically guesses this number by writing to a pipe and waiting for SIGPIPE. Fish does not do this because it this method of determining pipe size is unreliable. Depending on bash version, there may also be further additional limits to set in bash that do not exist in fish.
 .IP \(bu 2
-Fish \fBulimit\fP does not support getting or setting multiple limits in one command, except reporting all values using the \-a switch
+Fish \fBulimit\fP does not support getting or setting multiple limits in one command, except reporting all values using the \fB\-a\fP switch
 .UNINDENT
 .SS Example
 .sp
@@ -8571,17 +8613,9 @@ set \- handle shell variables
 .UNINDENT
 .SS Syntax Highlighting
 .sp
-You\(aqll quickly notice that \fBfish\fP performs syntax highlighting as you type. Invalid commands are colored red by default:
-.INDENT 0.0
-.INDENT 3.5
+You\(aqll quickly notice that \fBfish\fP performs syntax highlighting as you type. Invalid commands are colored red by default
 .sp
-.nf
-.ft C
-> <red>/bin/mkd</red>
-.ft P
-.fi
-.UNINDENT
-.UNINDENT
+> /bin/mkd
 .sp
 A command may be invalid because it does not exist, or refers to a file that you cannot execute. When the command becomes valid, it is shown in a different color:
 .INDENT 0.0
@@ -8595,17 +8629,9 @@ A command may be invalid because it does not exist, or refers to a file that you
 .UNINDENT
 .UNINDENT
 .sp
-\fBfish\fP will underline valid file paths as you type them:
-.INDENT 0.0
-.INDENT 3.5
+\fBfish\fP will underline valid file paths as you type them
 .sp
-.nf
-.ft C
-> cat <underline>~/somefi</underline>
-.ft P
-.fi
-.UNINDENT
-.UNINDENT
+> cat ~/somefi
 .sp
 This tells you that there exists a file that starts with \(aq\fBsomefi\fP\(aq, which is useful feedback as you type.
 .sp
@@ -8671,7 +8697,7 @@ You can pipe between commands with the usual vertical bar:
 .UNINDENT
 .UNINDENT
 .sp
-stdin and stdout can be redirected via the familiar \fI<\fP and \fI<\fP\&. stderr is redirected with a \fI2>\fP\&.
+stdin and stdout can be redirected via the familiar \fI<\fP and \fI>\fP\&. stderr is redirected with a \fI2>\fP\&.
 .INDENT 0.0
 .INDENT 3.5
 .sp
@@ -8696,71 +8722,31 @@ To redirect stdout and stderr into one file, you need to first redirect stdout, 
 .UNINDENT
 .SS Autosuggestions
 .sp
-\fBfish\fP suggests commands as you type, and shows the suggestion to the right of the cursor, in gray. For example:
-.INDENT 0.0
-.INDENT 3.5
+\fBfish\fP suggests commands as you type, and shows the suggestion to the right of the cursor, in gray. For example
 .sp
-.nf
-.ft C
-> <red>/bin/h</red><gray>ostname</gray>
-.ft P
-.fi
-.UNINDENT
-.UNINDENT
+> /bin/hostname
 .sp
-It knows about paths and options:
-.INDENT 0.0
-.INDENT 3.5
+It knows about paths and options
 .sp
-.nf
-.ft C
-> grep \-\-i<gray>gnore\-case</gray>
-.ft P
-.fi
-.UNINDENT
-.UNINDENT
+\fI> grep \-\-i\fPgnore\-case
 .sp
-And history too. Type a command once, and you can re\-summon it by just typing a few letters:
-.INDENT 0.0
-.INDENT 3.5
+And history too. Type a command once, and you can re\-summon it by just typing a few letters
 .sp
-.nf
-.ft C
-> <red>r</red><gray>sync \-avze ssh . myname@somelonghost.com:/some/long/path/doo/dee/doo/dee/doo</gray>
-.ft P
-.fi
-.UNINDENT
-.UNINDENT
+> rsync \-avze ssh . myname@somelonghost.com:/some/long/path/doo/dee/doo/dee/doo
 .sp
 To accept the autosuggestion, hit \fB→\fP (right arrow) or \fBControl+F\fP\&. To accept a single word of the autosuggestion, \fBAlt+→\fP (right arrow). If the autosuggestion is not what you want, just ignore it.
 .SS Tab Completions
 .sp
 \fBfish\fP comes with a rich set of tab completions, that work "out of the box."
 .sp
-Press \fBTab\fP, and \fBfish\fP will attempt to complete the command, argument, or path:
-.INDENT 0.0
-.INDENT 3.5
+Press \fBTab\fP, and \fBfish\fP will attempt to complete the command, argument, or path
 .sp
-.nf
-.ft C
-> <red>/pri</red> :kbd:\(gaTab\(ga => /private/
-.ft P
-.fi
-.UNINDENT
-.UNINDENT
+> /pri \fBTab\fP => /private/
 .sp
-If there\(aqs more than one possibility, it will list them:
-.INDENT 0.0
-.INDENT 3.5
+If there\(aqs more than one possibility, it will list them
 .sp
-.nf
-.ft C
-> <red>~/stuff/s</red> :kbd:\(gaTab\(ga
+> ~/stuff/s \fBTab\fP
 ~/stuff/script.sh  (Executable, 4.8kB)  ~/stuff/sources/  (Directory)
-.ft P
-.fi
-.UNINDENT
-.UNINDENT
 .sp
 Hit tab again to cycle through the possibilities.
 .sp
