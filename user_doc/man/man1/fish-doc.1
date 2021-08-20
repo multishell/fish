@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FISH-DOC" "1" "Mar 01, 2021" "3.2" "fish-shell"
+.TH "FISH-DOC" "1" "Mar 18, 2021" "3.2" "fish-shell"
 .SH NAME
 fish-doc \- fish-shell Documentation
 .
@@ -419,8 +419,6 @@ To append the output of descriptor N to a file, use \fBN>>DESTINATION_FILE\fP\&.
 .UNINDENT
 .sp
 For example, \fBecho hello 2> output.stderr\fP writes the standard error (file descriptor 2) to \fBoutput.stderr\fP\&.
-.sp
-It is an error to redirect a builtin, function, or block to a file descriptor above 2. However this is supported for external commands.
 .IP [1] 5
 Previous versions of fish also allowed specifying this as \fB^DESTINATION\fP, but that made another character special so it was deprecated and will be removed in the future. See \fI\%feature flags\fP\&.
 .SH PIPING
@@ -6817,54 +6815,54 @@ Use them without a leading \fB$\fP \- \fBpi \- 3\fP should be about 0.
 \fBmath\fP supports the following functions:
 .INDENT 0.0
 .IP \(bu 2
-\fBabs\fP
+\fBabs\fP \- the absolute value, with positive sign
 .IP \(bu 2
-\fBacos\fP
+\fBacos\fP \- arc cosine
 .IP \(bu 2
-\fBasin\fP
+\fBasin\fP \- arc sine
 .IP \(bu 2
-\fBatan\fP
+\fBatan\fP \- arc tangent
 .IP \(bu 2
-\fBatan2\fP
+\fBatan2\fP \- arc tangent of two variables
 .IP \(bu 2
 \fBbitand\fP, \fBbitor\fP and \fBbitxor\fP to perform bitwise operations. These will throw away any non\-integer parts and interpret the rest as an int.
 .IP \(bu 2
-\fBceil\fP
+\fBceil\fP \- round number up to nearest integer
 .IP \(bu 2
-\fBcos\fP
+\fBcos\fP \- the cosine
 .IP \(bu 2
-\fBcosh\fP
+\fBcosh\fP \- hyperbolic cosine
 .IP \(bu 2
 \fBexp\fP \- the base\-e exponential function
 .IP \(bu 2
-\fBfac\fP \- factorial
+\fBfac\fP \- factorial \- also known as \fBx!\fP (\fBx * (x \- 1) * (x \- 2) * ... * 1\fP)
 .IP \(bu 2
-\fBfloor\fP
+\fBfloor\fP \- round number down to nearest integer
 .IP \(bu 2
 \fBln\fP \- the base\-e logarithm
 .IP \(bu 2
 \fBlog\fP or \fBlog10\fP \- the base\-10 logarithm
 .IP \(bu 2
-\fBncr\fP
+\fBncr\fP \- "from n choose r" combination function \- how many subsets of size r can be taken from n (order doesn\(aqt matter)
 .IP \(bu 2
-\fBnpr\fP
+\fBnpr\fP \- the number of subsets of size r that can be taken from a set of n elements (including different order)
 .IP \(bu 2
 \fBpow(x,y)\fP returns x to the y (and can be written as \fBx ^ y\fP)
 .IP \(bu 2
 \fBround\fP \- rounds to the nearest integer, away from 0
 .IP \(bu 2
-\fBsin\fP
+\fBsin\fP \- the sine function
 .IP \(bu 2
-\fBsinh\fP
+\fBsinh\fP \- the hyperbolic sine
 .IP \(bu 2
-\fBsqrt\fP
+\fBsqrt\fP \- the square root \- (can also be written as \fBx ^ 0.5\fP)
 .IP \(bu 2
-\fBtan\fP
+\fBtan\fP \- the tangent
 .IP \(bu 2
-\fBtanh\fP
+\fBtanh\fP \- the hyperbolic tangent
 .UNINDENT
 .sp
-All of the trigonometric functions use radians.
+All of the trigonometric functions use radians (the pi\-based scale, not 360°).
 .SS Examples
 .sp
 \fBmath 1+1\fP outputs 2.
@@ -6888,6 +6886,8 @@ All of the trigonometric functions use radians.
 \fBmath "bitor(9,2)"\fP outputs 11.
 .sp
 \fBmath \-\-base=hex 192\fP prints \fB0xc0\fP\&.
+.sp
+\fBmath \(aqncr(49,6)\(aq\fP prints 13983816 \- that\(aqs the number of possible picks in 6\-from\-49 lotto.
 .SS Compatibility notes
 .sp
 Fish 1.x and 2.x releases relied on the \fBbc\fP command for handling \fBmath\fP expressions. Starting with fish 3.0.0 fish uses the tinyexpr library and evaluates the expression without the involvement of any external commands.
@@ -11922,15 +11922,16 @@ The \fBopen\fP command uses the MIME type database and the \fB\&.desktop\fP file
 .. _faq\-ssh\-interactive:
 .SS Why won\(aqt SSH/SCP/rsync connect properly when fish is my login shell?
 .sp
-This problem may manifest as messages such as "\fBReceived message too long\fP", "\fBopen terminal
+This problem may show up as messages like "\fBReceived message too long\fP", "\fBopen terminal
 failed: not a terminal\fP", "\fBBad packet length\fP", or "\fBConnection refused\fP" with strange output
 in \fBssh_exchange_identification\fP messages in the debug log.
 .sp
-These problems are generally caused by the user initialization file (usually
-\fB~/.config/fish/config.fish\fP) producing output when started in non\-interactive mode.
+This usually happens because fish reads the user configuration file (\fB~/.config/fish/config.fish\fP) \fIalways\fP,
+whether it\(aqs in an interactive or login or non\-interactive or non\-login shell.
 .sp
-All statements in initialization files that output to the terminal should be guarded with something
-like the following:
+This simplifies matters, but it also means when config.fish generates output, it will do that even in non\-interactive shells like the one ssh/scp/rsync start when they connect.
+.sp
+Anything in config.fish that produces output should be guarded with \fBstatus is\-interactive\fP (or \fBstatus is\-login\fP if you prefer):
 .INDENT 0.0
 .INDENT 3.5
 .sp
@@ -11943,6 +11944,8 @@ end
 .fi
 .UNINDENT
 .UNINDENT
+.sp
+The same applies for example when you start \fBtmux\fP in config.fish without guards, which will cause a message like \fBsessions should be nested with care, unset $TMUX to force\fP\&.
 .SS I\(aqm getting weird graphical glitches (a staircase effect, ghost characters,...)?
 .sp
 In a terminal, the application running inside it and the terminal itself need to agree on the width of characters in order to handle cursor movement.
@@ -12253,6 +12256,63 @@ products or services of Licensee, or any third party.
 agrees to be bound by the terms and conditions of this License
 Agreement.
 .SH RELEASE NOTES
+.SS fish 3.2.1 (released March 18, 2021)
+.sp
+This release of fish fixes the following problems identified in fish 3.2.0:
+.INDENT 0.0
+.IP \(bu 2
+Commands in key bindings are run with fish\(aqs internal terminal modes, instead of the terminal modes typically used for commands. This fixes a bug introduced in 3.2.0, where text would unexpectedly appear on the terminal, especially when pasting (\fI\%#7770\fP).
+.IP \(bu 2
+Prompts which use the internal \fB__fish_print_pipestatus\fP function will display correctly rather than carrying certain modifiers (such as bold) further than intended (\fI\%#7771\fP).
+.IP \(bu 2
+Redirections to internal file descriptors is allowed again, reversing the changes in 3.2.0. This fixes a problem with Midnight Commander (\fI\%#7769\fP).
+.IP \(bu 2
+Universal variables should be fully reliable regardless of operating system again (\fI\%#7774\fP).
+.IP \(bu 2
+\fBfish_git_prompt\fP no longer causes screen flickering in certain terminals (\fI\%#7775\fP).
+.IP \(bu 2
+\fBfish_add_path\fP manipulates the \fBfish_user_paths\fP variable correctly when moving multiple paths (\fI\%#7776\fP).
+.IP \(bu 2
+Pasting with a multi\-line command no longer causes a \fB__fish_tokenizer_state\fP error (\fI\%#7782\fP).
+.IP \(bu 2
+\fBpsub\fP inside event handlers cleans up temporary files properly (\fI\%#7792\fP).
+.IP \(bu 2
+Event handlers declared with \fB\-\-on\-job\-exit $fish_pid\fP no longer run constantly (\fI\%#7721\fP), although these functions should use \fB\-\-on\-event fish_exit\fP instead.
+.IP \(bu 2
+Changing terminal modes inside \fBconfig.fish\fP works (\fI\%#7783\fP).
+.IP \(bu 2
+\fBset_color \-\-print\-colors\fP no longer prints all colors in bold (\fI\%#7805\fP)
+.IP \(bu 2
+Completing commands starting with a \fB\-\fP no longer prints an error (\fI\%#7809\fP).
+.IP \(bu 2
+Running \fBfish_command_not_found\fP directly no longer produces an error on macOS or other OSes which do not have a handler available (\fI\%#7777\fP).
+.IP \(bu 2
+The new \fBtype\fP builtin now has the (deprecated) \fB\-\-quiet\fP long form of \fB\-q\fP (\fI\%#7766\fP).
+.UNINDENT
+.sp
+It also includes some small enhancements:
+.INDENT 0.0
+.IP \(bu 2
+\fBhelp\fP and \fBfish_config\fP work correctly when fish is running in a Chrome OS Crostini Linux VM (\fI\%#7789\fP).
+.IP \(bu 2
+The history file can be made a symbolic link without it being overwritten (\fI\%#7754\fP), matching a similar improvement for the universal variable file in 3.2.0.
+.IP \(bu 2
+An unhelpful error ("access: No error"), seen on Cygwin, is no longer produced (\fI\%#7785\fP).
+.IP \(bu 2
+Improvements to the \fBrsync\fP completions (\fI\%#7763\fP), some completion descriptions (\fI\%#7788\fP), and completions that use IP address (\fI\%#7787\fP).
+.IP \(bu 2
+Improvements to the appearance of \fBfish_config\fP (\fI\%#7811\fP).
+.UNINDENT
+.sp
+If you are upgrading from version 3.1.2 or before, please also review
+the release notes for 3.2.0 (included below).
+
+.sp
+.ce
+----
+
+.ce 0
+.sp
 .SS fish 3.2.0 (released March 1, 2021)
 .SS Notable improvements and fixes
 .INDENT 0.0

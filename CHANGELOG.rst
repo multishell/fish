@@ -1,3 +1,36 @@
+fish 3.2.1 (released March 18, 2021)
+====================================
+
+This release of fish fixes the following problems identified in fish 3.2.0:
+
+-  Commands in key bindings are run with fish's internal terminal modes, instead of the terminal modes typically used for commands. This fixes a bug introduced in 3.2.0, where text would unexpectedly appear on the terminal, especially when pasting (:issue:`7770`).
+-  Prompts which use the internal ``__fish_print_pipestatus`` function will display correctly rather than carrying certain modifiers (such as bold) further than intended (:issue:`7771`).
+-  Redirections to internal file descriptors is allowed again, reversing the changes in 3.2.0. This fixes a problem with Midnight Commander (:issue:`7769`).
+-  Universal variables should be fully reliable regardless of operating system again (:issue:`7774`).
+-  ``fish_git_prompt`` no longer causes screen flickering in certain terminals (:issue:`7775`).
+-  ``fish_add_path`` manipulates the ``fish_user_paths`` variable correctly when moving multiple paths (:issue:`7776`).
+-  Pasting with a multi-line command no longer causes a ``__fish_tokenizer_state`` error (:issue:`7782`).
+-  ``psub`` inside event handlers cleans up temporary files properly (:issue:`7792`).
+-  Event handlers declared with ``--on-job-exit $fish_pid`` no longer run constantly (:issue:`7721`), although these functions should use ``--on-event fish_exit`` instead.
+-  Changing terminal modes inside ``config.fish`` works (:issue:`7783`).
+-  ``set_color --print-colors`` no longer prints all colors in bold (:issue:`7805`)
+-  Completing commands starting with a ``-`` no longer prints an error (:issue:`7809`).
+-  Running ``fish_command_not_found`` directly no longer produces an error on macOS or other OSes which do not have a handler available (:issue:`7777`).
+-  The new ``type`` builtin now has the (deprecated) ``--quiet`` long form of ``-q`` (:issue:`7766`).
+
+It also includes some small enhancements:
+
+-  ``help`` and ``fish_config`` work correctly when fish is running in a Chrome OS Crostini Linux VM (:issue:`7789`).
+-  The history file can be made a symbolic link without it being overwritten (:issue:`7754`), matching a similar improvement for the universal variable file in 3.2.0.
+-  An unhelpful error ("access: No error"), seen on Cygwin, is no longer produced (:issue:`7785`).
+-  Improvements to the ``rsync`` completions (:issue:`7763`), some completion descriptions (:issue:`7788`), and completions that use IP address (:issue:`7787`).
+-  Improvements to the appearance of ``fish_config`` (:issue:`7811`).
+
+If you are upgrading from version 3.1.2 or before, please also review
+the release notes for 3.2.0 (included below).
+
+--------------
+
 fish 3.2.0 (released March 1, 2021)
 ===================================
 

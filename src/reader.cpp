@@ -839,13 +839,15 @@ static void redirect_tty_after_sighup() {
 }
 
 /// Give up control of terminal.
-static void term_donate() {
+static void term_donate(bool quiet = false) {
     while (true) {
         if (tcsetattr(STDIN_FILENO, TCSANOW, &tty_modes_for_external_cmds) == -1) {
             if (errno == EIO) redirect_tty_output();
             if (errno != EINTR) {
-                FLOGF(warning, _(L"Could not set terminal mode for new job"));
-                wperror(L"tcsetattr");
+                if (!quiet) {
+                    FLOGF(warning, _(L"Could not set terminal mode for new job"));
+                    wperror(L"tcsetattr");
+                }
                 break;
             }
         } else
@@ -853,9 +855,8 @@ static void term_donate() {
     }
 }
 
-/// Grab control of terminal.
-static void term_steal() {
-    // Copy the (potentially changed) terminal modes and use them from now on.
+/// Copy the (potentially changed) terminal modes and use them from now on.
+void term_copy_modes() {
     struct termios modes;
     tcgetattr(STDIN_FILENO, &modes);
     std::memcpy(&tty_modes_for_external_cmds, &modes, sizeof tty_modes_for_external_cmds);
@@ -872,8 +873,11 @@ static void term_steal() {
     } else {
         shell_modes.c_iflag &= ~IXOFF;
     }
+}
 
-
+/// Grab control of terminal.
+void term_steal() {
+    term_copy_modes();
     while (true) {
         if (tcsetattr(STDIN_FILENO, TCSANOW, &shell_modes) == -1) {
             if (errno == EIO) redirect_tty_output();
@@ -1335,6 +1339,12 @@ void reader_init() {
     shell_modes.c_iflag &= ~IXOFF;
 
     term_fix_modes(&shell_modes);
+
+    // Set up our fixed terminal modes once,
+    // so we don't get flow control just because we inherited it.
+    if (getpgrp() == tcgetpgrp(STDIN_FILENO)) {
+        term_donate(/* quiet */ true);
+    }
 
     // We do this not because we actually need the window size but for its side-effect of correctly
     // setting the COLUMNS and LINES env vars.
@@ -2817,14 +2827,25 @@ struct readline_loop_state_t {
 
 /// Run a sequence of commands from an input binding.
 void reader_data_t::run_input_command_scripts(const wcstring_list_t &cmds) {
-    // Need to donate/steal the tty - see #2114.
-    term_donate();
     auto last_statuses = parser().get_last_statuses();
     for (const wcstring &cmd : cmds) {
         parser().eval(cmd, io_chain_t{});
     }
     parser().set_last_statuses(std::move(last_statuses));
-    term_steal();
+
+    // Restore tty to shell modes.
+    // Some input commands will take over the tty - see #2114 for an example where vim is invoked
+    // from a key binding. However we do NOT want to invoke term_donate(), because that will enable
+    // ECHO mode, causing a race between new input and restoring the mode (#7770). So we leave the
+    // tty alone, run the commands in shell mode, and then restore shell modes.
+    int res;
+    do {
+        res = tcsetattr(STDIN_FILENO, TCSANOW, &shell_modes);
+    } while (res < 0 && errno == EINTR);
+    if (res < 0) {
+        wperror(L"tcsetattr");
+    }
+    termsize_container_t::shared().invalidate_tty();
 }
 
 /// Read normal characters, inserting them into the command line.

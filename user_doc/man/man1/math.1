@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "MATH" "1" "Mar 01, 2021" "3.2" "fish-shell"
+.TH "MATH" "1" "Mar 18, 2021" "3.2" "fish-shell"
 .SH NAME
 math \- perform mathematics calculations
 .
@@ -101,54 +101,54 @@ Use them without a leading \fB$\fP \- \fBpi \- 3\fP should be about 0.
 \fBmath\fP supports the following functions:
 .INDENT 0.0
 .IP \(bu 2
-\fBabs\fP
+\fBabs\fP \- the absolute value, with positive sign
 .IP \(bu 2
-\fBacos\fP
+\fBacos\fP \- arc cosine
 .IP \(bu 2
-\fBasin\fP
+\fBasin\fP \- arc sine
 .IP \(bu 2
-\fBatan\fP
+\fBatan\fP \- arc tangent
 .IP \(bu 2
-\fBatan2\fP
+\fBatan2\fP \- arc tangent of two variables
 .IP \(bu 2
 \fBbitand\fP, \fBbitor\fP and \fBbitxor\fP to perform bitwise operations. These will throw away any non\-integer parts and interpret the rest as an int.
 .IP \(bu 2
-\fBceil\fP
+\fBceil\fP \- round number up to nearest integer
 .IP \(bu 2
-\fBcos\fP
+\fBcos\fP \- the cosine
 .IP \(bu 2
-\fBcosh\fP
+\fBcosh\fP \- hyperbolic cosine
 .IP \(bu 2
 \fBexp\fP \- the base\-e exponential function
 .IP \(bu 2
-\fBfac\fP \- factorial
+\fBfac\fP \- factorial \- also known as \fBx!\fP (\fBx * (x \- 1) * (x \- 2) * ... * 1\fP)
 .IP \(bu 2
-\fBfloor\fP
+\fBfloor\fP \- round number down to nearest integer
 .IP \(bu 2
 \fBln\fP \- the base\-e logarithm
 .IP \(bu 2
 \fBlog\fP or \fBlog10\fP \- the base\-10 logarithm
 .IP \(bu 2
-\fBncr\fP
+\fBncr\fP \- "from n choose r" combination function \- how many subsets of size r can be taken from n (order doesn\(aqt matter)
 .IP \(bu 2
-\fBnpr\fP
+\fBnpr\fP \- the number of subsets of size r that can be taken from a set of n elements (including different order)
 .IP \(bu 2
 \fBpow(x,y)\fP returns x to the y (and can be written as \fBx ^ y\fP)
 .IP \(bu 2
 \fBround\fP \- rounds to the nearest integer, away from 0
 .IP \(bu 2
-\fBsin\fP
+\fBsin\fP \- the sine function
 .IP \(bu 2
-\fBsinh\fP
+\fBsinh\fP \- the hyperbolic sine
 .IP \(bu 2
-\fBsqrt\fP
+\fBsqrt\fP \- the square root \- (can also be written as \fBx ^ 0.5\fP)
 .IP \(bu 2
-\fBtan\fP
+\fBtan\fP \- the tangent
 .IP \(bu 2
-\fBtanh\fP
+\fBtanh\fP \- the hyperbolic tangent
 .UNINDENT
 .sp
-All of the trigonometric functions use radians.
+All of the trigonometric functions use radians (the pi\-based scale, not 360°).
 .SH EXAMPLES
 .sp
 \fBmath 1+1\fP outputs 2.
@@ -172,6 +172,8 @@ All of the trigonometric functions use radians.
 \fBmath "bitor(9,2)"\fP outputs 11.
 .sp
 \fBmath \-\-base=hex 192\fP prints \fB0xc0\fP\&.
+.sp
+\fBmath \(aqncr(49,6)\(aq\fP prints 13983816 \- that\(aqs the number of possible picks in 6\-from\-49 lotto.
 .SH COMPATIBILITY NOTES
 .sp
 Fish 1.x and 2.x releases relied on the \fBbc\fP command for handling \fBmath\fP expressions. Starting with fish 3.0.0 fish uses the tinyexpr library and evaluates the expression without the involvement of any external commands.

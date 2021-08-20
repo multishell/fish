@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FISH-RELEASENOTES" "1" "Mar 01, 2021" "3.2" "fish-shell"
+.TH "FISH-RELEASENOTES" "1" "Mar 18, 2021" "3.2" "fish-shell"
 .SH NAME
 fish-releasenotes \- fish-shell release notes
 .
@@ -30,6 +30,63 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
+.SH FISH 3.2.1 (RELEASED MARCH 18, 2021)
+.sp
+This release of fish fixes the following problems identified in fish 3.2.0:
+.INDENT 0.0
+.IP \(bu 2
+Commands in key bindings are run with fish\(aqs internal terminal modes, instead of the terminal modes typically used for commands. This fixes a bug introduced in 3.2.0, where text would unexpectedly appear on the terminal, especially when pasting (\fI\%#7770\fP).
+.IP \(bu 2
+Prompts which use the internal \fB__fish_print_pipestatus\fP function will display correctly rather than carrying certain modifiers (such as bold) further than intended (\fI\%#7771\fP).
+.IP \(bu 2
+Redirections to internal file descriptors is allowed again, reversing the changes in 3.2.0. This fixes a problem with Midnight Commander (\fI\%#7769\fP).
+.IP \(bu 2
+Universal variables should be fully reliable regardless of operating system again (\fI\%#7774\fP).
+.IP \(bu 2
+\fBfish_git_prompt\fP no longer causes screen flickering in certain terminals (\fI\%#7775\fP).
+.IP \(bu 2
+\fBfish_add_path\fP manipulates the \fBfish_user_paths\fP variable correctly when moving multiple paths (\fI\%#7776\fP).
+.IP \(bu 2
+Pasting with a multi\-line command no longer causes a \fB__fish_tokenizer_state\fP error (\fI\%#7782\fP).
+.IP \(bu 2
+\fBpsub\fP inside event handlers cleans up temporary files properly (\fI\%#7792\fP).
+.IP \(bu 2
+Event handlers declared with \fB\-\-on\-job\-exit $fish_pid\fP no longer run constantly (\fI\%#7721\fP), although these functions should use \fB\-\-on\-event fish_exit\fP instead.
+.IP \(bu 2
+Changing terminal modes inside \fBconfig.fish\fP works (\fI\%#7783\fP).
+.IP \(bu 2
+\fBset_color \-\-print\-colors\fP no longer prints all colors in bold (\fI\%#7805\fP)
+.IP \(bu 2
+Completing commands starting with a \fB\-\fP no longer prints an error (\fI\%#7809\fP).
+.IP \(bu 2
+Running \fBfish_command_not_found\fP directly no longer produces an error on macOS or other OSes which do not have a handler available (\fI\%#7777\fP).
+.IP \(bu 2
+The new \fBtype\fP builtin now has the (deprecated) \fB\-\-quiet\fP long form of \fB\-q\fP (\fI\%#7766\fP).
+.UNINDENT
+.sp
+It also includes some small enhancements:
+.INDENT 0.0
+.IP \(bu 2
+\fBhelp\fP and \fBfish_config\fP work correctly when fish is running in a Chrome OS Crostini Linux VM (\fI\%#7789\fP).
+.IP \(bu 2
+The history file can be made a symbolic link without it being overwritten (\fI\%#7754\fP), matching a similar improvement for the universal variable file in 3.2.0.
+.IP \(bu 2
+An unhelpful error ("access: No error"), seen on Cygwin, is no longer produced (\fI\%#7785\fP).
+.IP \(bu 2
+Improvements to the \fBrsync\fP completions (\fI\%#7763\fP), some completion descriptions (\fI\%#7788\fP), and completions that use IP address (\fI\%#7787\fP).
+.IP \(bu 2
+Improvements to the appearance of \fBfish_config\fP (\fI\%#7811\fP).
+.UNINDENT
+.sp
+If you are upgrading from version 3.1.2 or before, please also review
+the release notes for 3.2.0 (included below).
+
+.sp
+.ce
+----
+
+.ce 0
+.sp
 .SH FISH 3.2.0 (RELEASED MARCH 1, 2021)
 .SS Notable improvements and fixes
 .INDENT 0.0

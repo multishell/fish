@@ -5058,9 +5058,11 @@ static void test_error_messages() {
 
 static void test_highlighting() {
     say(L"Testing syntax highlighting");
-    if (system("mkdir -p test/fish_highlight_test/")) err(L"mkdir failed");
-    if (system("touch test/fish_highlight_test/foo")) err(L"touch failed");
-    if (system("touch test/fish_highlight_test/bar")) err(L"touch failed");
+    if (!pushd("test/fish_highlight_test/")) return;
+    cleanup_t pop{[] { popd(); }};
+    if (system("mkdir -p dir")) err(L"mkdir failed");
+    if (system("touch foo")) err(L"touch failed");
+    if (system("touch bar")) err(L"touch failed");
 
     // Here are the components of our source and the colors we expect those to be.
     struct highlight_component_t {
@@ -5079,14 +5081,14 @@ static void test_highlighting() {
     param_valid_path.valid_path = true;
 
     highlight_tests.push_back({{L"echo", highlight_role_t::command},
-                               {L"test/fish_highlight_test/foo", param_valid_path},
+                               {L"./foo", param_valid_path},
                                {L"&", highlight_role_t::statement_terminator}});
 
     highlight_tests.push_back({
         {L"command", highlight_role_t::keyword},
         {L"echo", highlight_role_t::command},
         {L"abc", highlight_role_t::param},
-        {L"test/fish_highlight_test/foo", param_valid_path},
+        {L"foo", param_valid_path},
         {L"&", highlight_role_t::statement_terminator},
     });
 
@@ -5105,12 +5107,12 @@ static void test_highlighting() {
     // Verify that cd shows errors for non-directories.
     highlight_tests.push_back({
         {L"cd", highlight_role_t::command},
-        {L"test/fish_highlight_test", param_valid_path},
+        {L"dir", param_valid_path},
     });
 
     highlight_tests.push_back({
         {L"cd", highlight_role_t::command},
-        {L"test/fish_highlight_test/foo", highlight_role_t::error},
+        {L"foo", highlight_role_t::error},
     });
 
     highlight_tests.push_back({

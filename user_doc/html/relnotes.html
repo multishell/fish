@@ -6,25 +6,19 @@
   <head>
     <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>Release notes &#8212; fish-shell 3.2.0 documentation</title>
+    <title>Release notes &#8212; fish-shell 3.2.1 documentation</title>
     <link rel="stylesheet" href="_static/pydoctheme.css" type="text/css" />
     <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
-    <link rel="stylesheet" type="text/css" href="_static/custom.css" />
-    
     <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
     <script type="text/javascript" src="_static/jquery.js"></script>
     <script type="text/javascript" src="_static/underscore.js"></script>
     <script type="text/javascript" src="_static/doctools.js"></script>
     <script type="text/javascript" src="_static/language_data.js"></script>
-    
     <link rel="index" title="Index" href="genindex.html" />
     <link rel="search" title="Search" href="search.html" />
     <link rel="next" title="Fish for bash users" href="fish_for_bash_users.html" />
     <link rel="prev" title="License" href="license.html" />
     <link rel="shortcut icon" type="image/png" href="_static/fish.png" />
-    
-    <script type="text/javascript" src="_static/copybutton.js"></script>
-    
      
 
   </head><body><div id="fmain">  
@@ -32,10 +26,10 @@
       <h3>Navigation</h3>
       <ul>
     <li><img src="_static/fish.png" alt=""
-             style="max-width: 80px; vertical-align: middle; margin-top: -1px"/></li>
+             style="width: 80px; vertical-align: middle; margin-top: -1px"/></li>
     <li><a href="https://fishshell.com/">fish-shell</a> &#187;</li>
     
-    <a href="index.html">fish-shell 3.2.0 documentation</a> &#187;
+    <a href="index.html">fish-shell 3.2.1 documentation</a> &#187;
     
 
     <li class="right">
@@ -87,6 +81,7 @@
 <h4><a href="index.html">Sections</a></h4>
 <ul>
 <li><a class="reference internal" href="#">Release notes</a><ul>
+<li><a class="reference internal" href="#fish-3-2-1-released-march-18-2021">fish 3.2.1 (released March 18, 2021)</a></li>
 <li><a class="reference internal" href="#fish-3-2-0-released-march-1-2021">fish 3.2.0 (released March 1, 2021)</a><ul>
 <li><a class="reference internal" href="#notable-improvements-and-fixes">Notable improvements and fixes</a></li>
 <li><a class="reference internal" href="#syntax-changes-and-new-commands">Syntax changes and new commands</a></li>
@@ -254,6 +249,37 @@
             
   <div class="section" id="release-notes">
 <h1>Release notes<a class="headerlink" href="#release-notes" title="Permalink to this headline">¶</a></h1>
+<div class="section" id="fish-3-2-1-released-march-18-2021">
+<h2>fish 3.2.1 (released March 18, 2021)<a class="headerlink" href="#fish-3-2-1-released-march-18-2021" title="Permalink to this headline">¶</a></h2>
+<p>This release of fish fixes the following problems identified in fish 3.2.0:</p>
+<ul class="simple">
+<li>Commands in key bindings are run with fish's internal terminal modes, instead of the terminal modes typically used for commands. This fixes a bug introduced in 3.2.0, where text would unexpectedly appear on the terminal, especially when pasting (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7770">#7770</a>).</li>
+<li>Prompts which use the internal <code class="docutils literal notranslate"><span class="pre">__fish_print_pipestatus</span></code> function will display correctly rather than carrying certain modifiers (such as bold) further than intended (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7771">#7771</a>).</li>
+<li>Redirections to internal file descriptors is allowed again, reversing the changes in 3.2.0. This fixes a problem with Midnight Commander (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7769">#7769</a>).</li>
+<li>Universal variables should be fully reliable regardless of operating system again (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7774">#7774</a>).</li>
+<li><code class="docutils literal notranslate"><span class="pre">fish_git_prompt</span></code> no longer causes screen flickering in certain terminals (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7775">#7775</a>).</li>
+<li><code class="docutils literal notranslate"><span class="pre">fish_add_path</span></code> manipulates the <code class="docutils literal notranslate"><span class="pre">fish_user_paths</span></code> variable correctly when moving multiple paths (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7776">#7776</a>).</li>
+<li>Pasting with a multi-line command no longer causes a <code class="docutils literal notranslate"><span class="pre">__fish_tokenizer_state</span></code> error (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7782">#7782</a>).</li>
+<li><code class="docutils literal notranslate"><span class="pre">psub</span></code> inside event handlers cleans up temporary files properly (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7792">#7792</a>).</li>
+<li>Event handlers declared with <code class="docutils literal notranslate"><span class="pre">--on-job-exit</span> <span class="pre">$fish_pid</span></code> no longer run constantly (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7721">#7721</a>), although these functions should use <code class="docutils literal notranslate"><span class="pre">--on-event</span> <span class="pre">fish_exit</span></code> instead.</li>
+<li>Changing terminal modes inside <code class="docutils literal notranslate"><span class="pre">config.fish</span></code> works (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7783">#7783</a>).</li>
+<li><code class="docutils literal notranslate"><span class="pre">set_color</span> <span class="pre">--print-colors</span></code> no longer prints all colors in bold (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7805">#7805</a>)</li>
+<li>Completing commands starting with a <code class="docutils literal notranslate"><span class="pre">-</span></code> no longer prints an error (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7809">#7809</a>).</li>
+<li>Running <code class="docutils literal notranslate"><span class="pre">fish_command_not_found</span></code> directly no longer produces an error on macOS or other OSes which do not have a handler available (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7777">#7777</a>).</li>
+<li>The new <code class="docutils literal notranslate"><span class="pre">type</span></code> builtin now has the (deprecated) <code class="docutils literal notranslate"><span class="pre">--quiet</span></code> long form of <code class="docutils literal notranslate"><span class="pre">-q</span></code> (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7766">#7766</a>).</li>
+</ul>
+<p>It also includes some small enhancements:</p>
+<ul class="simple">
+<li><code class="docutils literal notranslate"><span class="pre">help</span></code> and <code class="docutils literal notranslate"><span class="pre">fish_config</span></code> work correctly when fish is running in a Chrome OS Crostini Linux VM (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7789">#7789</a>).</li>
+<li>The history file can be made a symbolic link without it being overwritten (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7754">#7754</a>), matching a similar improvement for the universal variable file in 3.2.0.</li>
+<li>An unhelpful error (&quot;access: No error&quot;), seen on Cygwin, is no longer produced (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7785">#7785</a>).</li>
+<li>Improvements to the <code class="docutils literal notranslate"><span class="pre">rsync</span></code> completions (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7763">#7763</a>), some completion descriptions (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7788">#7788</a>), and completions that use IP address (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7787">#7787</a>).</li>
+<li>Improvements to the appearance of <code class="docutils literal notranslate"><span class="pre">fish_config</span></code> (<a class="reference external" href="https://github.com/fish-shell/fish-shell/issues/7811">#7811</a>).</li>
+</ul>
+<p>If you are upgrading from version 3.1.2 or before, please also review
+the release notes for 3.2.0 (included below).</p>
+</div>
+<hr class="docutils" />
 <div class="section" id="fish-3-2-0-released-march-1-2021">
 <h2>fish 3.2.0 (released March 1, 2021)<a class="headerlink" href="#fish-3-2-0-released-march-1-2021" title="Permalink to this headline">¶</a></h2>
 <div class="section" id="notable-improvements-and-fixes">
@@ -3022,10 +3048,10 @@ track.</p>
       <h3>Navigation</h3>
       <ul>
     <li><img src="_static/fish.png" alt=""
-             style="max-width: 80px; vertical-align: middle; margin-top: -1px"/></li>
+             style="width: 80px; vertical-align: middle; margin-top: -1px"/></li>
     <li><a href="https://fishshell.com/">fish-shell</a> &#187;</li>
     
-    <a href="index.html">fish-shell 3.2.0 documentation</a> &#187;
+    <a href="index.html">fish-shell 3.2.1 documentation</a> &#187;
     
 
     <li class="right">

@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FISH-FAQ" "1" "Mar 01, 2021" "3.2" "fish-shell"
+.TH "FISH-FAQ" "1" "Mar 18, 2021" "3.2" "fish-shell"
 .SH NAME
 fish-faq \- fish-shell faq
 .
@@ -475,15 +475,16 @@ The \fBopen\fP command uses the MIME type database and the \fB\&.desktop\fP file
 .. _faq\-ssh\-interactive:
 .SH WHY WON'T SSH/SCP/RSYNC CONNECT PROPERLY WHEN FISH IS MY LOGIN SHELL?
 .sp
-This problem may manifest as messages such as "\fBReceived message too long\fP", "\fBopen terminal
+This problem may show up as messages like "\fBReceived message too long\fP", "\fBopen terminal
 failed: not a terminal\fP", "\fBBad packet length\fP", or "\fBConnection refused\fP" with strange output
 in \fBssh_exchange_identification\fP messages in the debug log.
 .sp
-These problems are generally caused by the user initialization file (usually
-\fB~/.config/fish/config.fish\fP) producing output when started in non\-interactive mode.
+This usually happens because fish reads the user configuration file (\fB~/.config/fish/config.fish\fP) \fIalways\fP,
+whether it\(aqs in an interactive or login or non\-interactive or non\-login shell.
 .sp
-All statements in initialization files that output to the terminal should be guarded with something
-like the following:
+This simplifies matters, but it also means when config.fish generates output, it will do that even in non\-interactive shells like the one ssh/scp/rsync start when they connect.
+.sp
+Anything in config.fish that produces output should be guarded with \fBstatus is\-interactive\fP (or \fBstatus is\-login\fP if you prefer):
 .INDENT 0.0
 .INDENT 3.5
 .sp
@@ -496,6 +497,8 @@ end
 .fi
 .UNINDENT
 .UNINDENT
+.sp
+The same applies for example when you start \fBtmux\fP in config.fish without guards, which will cause a message like \fBsessions should be nested with care, unset $TMUX to force\fP\&.
 .SH I'M GETTING WEIRD GRAPHICAL GLITCHES (A STAIRCASE EFFECT, GHOST CHARACTERS,...)?
 .sp
 In a terminal, the application running inside it and the terminal itself need to agree on the width of characters in order to handle cursor movement.
