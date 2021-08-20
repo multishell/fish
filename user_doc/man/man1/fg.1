@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FG" "1" "Jan 26, 2020" "3" "fish-shell"
+.TH "FG" "1" "Feb 12, 2020" "3.1" "fish-shell"
 .SH NAME
 fg \- bring job to foreground
 .
@@ -43,7 +43,7 @@ fg [PID]
 .UNINDENT
 .SH DESCRIPTION
 .sp
-\fBfg\fP brings the specified \fI\%job\fP to the foreground, resuming it if it is stopped. While a foreground job is executed, fish is suspended. If no job is specified, the last job to be used is put in the foreground. If PID is specified, the job with the specified group ID is put in the foreground.
+\fBfg\fP brings the specified job to the foreground, resuming it if it is stopped. While a foreground job is executed, fish is suspended. If no job is specified, the last job to be used is put in the foreground. If PID is specified, the job with the specified group ID is put in the foreground.
 .SH EXAMPLE
 .sp
 \fBfg\fP will put the last job in the foreground.

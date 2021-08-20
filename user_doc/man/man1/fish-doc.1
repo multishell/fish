@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FISH-DOC" "1" "Jan 26, 2020" "3" "fish-shell"
+.TH "FISH-DOC" "1" "Feb 12, 2020" "3.1" "fish-shell"
 .SH NAME
 fish-doc \- fish-shell Documentation
 .
@@ -123,7 +123,7 @@ You can make fish your default shell by adding fish\(aqs  executable in two plac
 \- add \fB/usr/local/bin/fish\fP  to  \fB/etc/shells\fP
 \- change your default shell with \fBchsh \-s\fP to \fB/usr/local/bin/fish\fP
 .sp
-For for detailed instructions see \fI\%Switching to fish\fP\&.
+For for detailed instructions see Switching to fish\&.
 .SH UNINSTALLING
 .sp
 For uninstalling fish: see FAQ: Uninstalling fish\&.
@@ -2307,7 +2307,7 @@ COMMAND1; and COMMAND2
 .sp
 \fBand\fP statements may be used as part of the condition in an while or if block.
 .sp
-\fBand\fP does not change the current exit status itself, but the command it runs most likely will. The exit status of the last foreground command to exit can always be accessed using the \fI\%$status\fP variable.
+\fBand\fP does not change the current exit status itself, but the command it runs most likely will. The exit status of the last foreground command to exit can always be accessed using the $status variable.
 .SS Example
 .sp
 The following code runs the \fBmake\fP command to build a program. If the build succeeds, \fBmake\fP\(aqs exit status is 0, and the program is installed. If either step fails, the exit status is 1, and \fBmake clean\fP is run, which removes the files created by the build process.
@@ -2551,7 +2551,7 @@ bg [PID...]
 .UNINDENT
 .SS Description
 .sp
-\fBbg\fP sends \fI\%jobs\fP to the background, resuming them if they are stopped.
+\fBbg\fP sends jobs to the background, resuming them if they are stopped.
 .sp
 A background job is executed simultaneously with fish, and does not have access to the keyboard. If no job is specified, the last job to be used is put in the background. If PID is specified, the jobs with the specified process group IDs are put in the background.
 .sp
@@ -2587,7 +2587,7 @@ bind (\-e | \-\-erase) [(\-M | \-\-mode) MODE] [\-\-preset] [\-\-user] (\-a | \-
 .sp
 \fBbind\fP adds a binding for the specified key sequence to the specified command.
 .sp
-SEQUENCE is the character sequence to bind to. These should be written as \fI\%fish escape sequences\fP\&. For example, because pressing the Alt key and another character sends that character prefixed with an escape character, Alt\-based key bindings can be written using the \fB\ee\fP escape. For example, \fBAlt+w\fP can be written as \fB\eew\fP\&. The control character can be written in much the same way using the \fB\ec\fP escape, for example \fBControl+X\fP (^X) can be written as \fB\ecx\fP\&. Note that Alt\-based key bindings are case sensitive and Control\-based key bindings are not. This is a constraint of text\-based terminals, not \fBfish\fP\&.
+SEQUENCE is the character sequence to bind to. These should be written as fish escape sequences\&. For example, because pressing the Alt key and another character sends that character prefixed with an escape character, Alt\-based key bindings can be written using the \fB\ee\fP escape. For example, \fBAlt+w\fP can be written as \fB\eew\fP\&. The control character can be written in much the same way using the \fB\ec\fP escape, for example \fBControl+X\fP (^X) can be written as \fB\ecx\fP\&. Note that Alt\-based key bindings are case sensitive and Control\-based key bindings are not. This is a constraint of text\-based terminals, not \fBfish\fP\&.
 .sp
 The default key binding can be set by specifying a \fBSEQUENCE\fP of the empty string (that is, \fB\(aq\(aq\fP ). It will be used whenever no other binding matches. For most key bindings, it makes sense to use the \fBself\-insert\fP function (i.e. \fBbind \(aq\(aq self\-insert\fP) as the default keybinding. This will insert any keystrokes not specifically bound to into the editor. Non\- printable characters are ignored by the editor, so this will not result in control sequences being printable.
 .sp
@@ -2603,7 +2603,7 @@ When multiple \fBCOMMAND\fPs are provided, they are all run in the specified ord
 .sp
 If no \fBSEQUENCE\fP is provided, all bindings (or just the bindings in the specified \fBMODE\fP) are printed. If \fBSEQUENCE\fP is provided without \fBCOMMAND\fP, just the binding matching that sequence is printed.
 .sp
-To save custom keybindings, put the \fBbind\fP statements into \fI\%config.fish\fP\&. Alternatively, fish also automatically executes a function called \fBfish_user_key_bindings\fP if it exists.
+To save custom keybindings, put the \fBbind\fP statements into config.fish\&. Alternatively, fish also automatically executes a function called \fBfish_user_key_bindings\fP if it exists.
 .sp
 Key bindings may use "modes", which mimics Vi\(aqs modal input behavior. The default mode is "default", and every bind applies to a single mode. The mode can be viewed/changed with the \fB$fish_bind_mode\fP variable.
 .sp
@@ -2898,7 +2898,7 @@ breakpoint
 .sp
 \fBbreakpoint\fP is used to halt a running script and launch an interactive debugging prompt.
 .sp
-For more details, see \fI\%Debugging fish scripts\fP in the \fBfish\fP manual.
+For more details, see Debugging fish scripts in the \fBfish\fP manual.
 .sp
 There are no parameters for \fBbreakpoint\fP\&.
 .SS builtin \- run a builtin command
@@ -3573,7 +3573,7 @@ disown [ PID ... ]
 .UNINDENT
 .SS Description
 .sp
-\fBdisown\fP removes the specified \fI\%job\fP from the list of jobs. The job itself continues to exist, but fish does not keep track of it any longer.
+\fBdisown\fP removes the specified job from the list of jobs. The job itself continues to exist, but fish does not keep track of it any longer.
 .sp
 Jobs in the list of jobs are sent a hang\-up signal when fish terminates, which usually causes the job to terminate; \fBdisown\fP allows these processes to continue regardless.
 .sp
@@ -3856,7 +3856,7 @@ fg [PID]
 .UNINDENT
 .SS Description
 .sp
-\fBfg\fP brings the specified \fI\%job\fP to the foreground, resuming it if it is stopped. While a foreground job is executed, fish is suspended. If no job is specified, the last job to be used is put in the foreground. If PID is specified, the job with the specified group ID is put in the foreground.
+\fBfg\fP brings the specified job to the foreground, resuming it if it is stopped. While a foreground job is executed, fish is suspended. If no job is specified, the last job to be used is put in the foreground. If PID is specified, the job with the specified group ID is put in the foreground.
 .SS Example
 .sp
 \fBfg\fP will put the last job in the foreground.
@@ -3927,7 +3927,7 @@ end
 .sp
 By defining the \fBfish_breakpoint_prompt\fP function, the user can choose a custom prompt when asking for input in response to a breakpoint command. The \fBfish_breakpoint_prompt\fP function is executed when the prompt is to be shown, and the output is used as a prompt.
 .sp
-The exit status of commands within \fBfish_breakpoint_prompt\fP will not modify the value of \fI\%$status\fP outside of the \fBfish_breakpoint_prompt\fP function.
+The exit status of commands within \fBfish_breakpoint_prompt\fP will not modify the value of $status outside of the \fBfish_breakpoint_prompt\fP function.
 .sp
 \fBfish\fP ships with a default version of this function that displays the function name and line number of the current execution context.
 .SS Example
@@ -4468,7 +4468,7 @@ end
 .sp
 By defining the \fBfish_prompt\fP function, the user can choose a custom prompt. The \fBfish_prompt\fP function is executed when the prompt is to be shown, and the output is used as a prompt.
 .sp
-The exit status of commands within \fBfish_prompt\fP will not modify the value of \fI\%$status\fP outside of the \fBfish_prompt\fP function.
+The exit status of commands within \fBfish_prompt\fP will not modify the value of $status outside of the \fBfish_prompt\fP function.
 .sp
 \fBfish\fP ships with a number of example prompts that can be chosen with the \fBfish_config\fP command.
 .SS Example
@@ -4854,7 +4854,7 @@ It\(aqs important to note that this does not capture referenced variables or the
 \fB\-V\fP or \fB\-\-inherit\-variable NAME\fP snapshots the value of the variable \fBNAME\fP and defines a local variable with that same name and value when the function is defined. This is similar to a closure in other languages like Python but a bit different. Note the word "snapshot" in the first sentence. If you change the value of the variable after defining the function, even if you do so in the same scope (typically another function) the new value will not be used by the function you just created using this option. See the \fBfunction notify\fP example below for how this might be used.
 .UNINDENT
 .sp
-If the user enters any additional arguments after the function, they are inserted into the environment \fI\%variable list\fP \fB$argv\fP\&. If the \fB\-\-argument\-names\fP option is provided, the arguments are also assigned to names specified in that option.
+If the user enters any additional arguments after the function, they are inserted into the environment variable list \fB$argv\fP\&. If the \fB\-\-argument\-names\fP option is provided, the arguments are also assigned to names specified in that option.
 .sp
 By using one of the event handler switches, a function can be made to run automatically at specific events. The user may generate new events using the emit builtin. Fish generates the following named events:
 .INDENT 0.0
@@ -5266,7 +5266,7 @@ jobs [OPTIONS] [PID]
 .UNINDENT
 .SS Description
 .sp
-\fBjobs\fP prints a list of the currently running \fI\%jobs\fP and their status.
+\fBjobs\fP prints a list of the currently running jobs and their status.
 .sp
 jobs accepts the following switches:
 .INDENT 0.0
@@ -9876,7 +9876,7 @@ If you want to reuse several arguments from the same line ("!!:3*" and the like)
 .UNINDENT
 .UNINDENT
 .sp
-See \fI\%documentation\fP for more details about line editing in fish.
+See documentation for more details about line editing in fish.
 .SS How can I use \fB\-\fP as a shortcut for \fBcd \-\fP?
 .sp
 In fish versions prior to 2.5.0 it was possible to create a function named \fB\-\fP that would do \fBcd \-\fP\&. Changes in the 2.5.0 release included several bug fixes that enforce the rule that a bare hyphen is not a valid function (or variable) name. However, you can achieve the same effect via an abbreviation:

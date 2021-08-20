@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "BIND" "1" "Jan 26, 2020" "3" "fish-shell"
+.TH "BIND" "1" "Feb 12, 2020" "3.1" "fish-shell"
 .SH NAME
 bind \- handle fish key bindings
 .
@@ -50,7 +50,7 @@ bind (\-e | \-\-erase) [(\-M | \-\-mode) MODE] [\-\-preset] [\-\-user] (\-a | \-
 .sp
 \fBbind\fP adds a binding for the specified key sequence to the specified command.
 .sp
-SEQUENCE is the character sequence to bind to. These should be written as \fI\%fish escape sequences\fP\&. For example, because pressing the Alt key and another character sends that character prefixed with an escape character, Alt\-based key bindings can be written using the \fB\ee\fP escape. For example, \fBAlt+w\fP can be written as \fB\eew\fP\&. The control character can be written in much the same way using the \fB\ec\fP escape, for example \fBControl+X\fP (^X) can be written as \fB\ecx\fP\&. Note that Alt\-based key bindings are case sensitive and Control\-based key bindings are not. This is a constraint of text\-based terminals, not \fBfish\fP\&.
+SEQUENCE is the character sequence to bind to. These should be written as fish escape sequences\&. For example, because pressing the Alt key and another character sends that character prefixed with an escape character, Alt\-based key bindings can be written using the \fB\ee\fP escape. For example, \fBAlt+w\fP can be written as \fB\eew\fP\&. The control character can be written in much the same way using the \fB\ec\fP escape, for example \fBControl+X\fP (^X) can be written as \fB\ecx\fP\&. Note that Alt\-based key bindings are case sensitive and Control\-based key bindings are not. This is a constraint of text\-based terminals, not \fBfish\fP\&.
 .sp
 The default key binding can be set by specifying a \fBSEQUENCE\fP of the empty string (that is, \fB\(aq\(aq\fP ). It will be used whenever no other binding matches. For most key bindings, it makes sense to use the \fBself\-insert\fP function (i.e. \fBbind \(aq\(aq self\-insert\fP) as the default keybinding. This will insert any keystrokes not specifically bound to into the editor. Non\- printable characters are ignored by the editor, so this will not result in control sequences being printable.
 .sp
@@ -66,7 +66,7 @@ When multiple \fBCOMMAND\fPs are provided, they are all run in the specified ord
 .sp
 If no \fBSEQUENCE\fP is provided, all bindings (or just the bindings in the specified \fBMODE\fP) are printed. If \fBSEQUENCE\fP is provided without \fBCOMMAND\fP, just the binding matching that sequence is printed.
 .sp
-To save custom keybindings, put the \fBbind\fP statements into \fI\%config.fish\fP\&. Alternatively, fish also automatically executes a function called \fBfish_user_key_bindings\fP if it exists.
+To save custom keybindings, put the \fBbind\fP statements into config.fish\&. Alternatively, fish also automatically executes a function called \fBfish_user_key_bindings\fP if it exists.
 .sp
 Key bindings may use "modes", which mimics Vi\(aqs modal input behavior. The default mode is "default", and every bind applies to a single mode. The mode can be viewed/changed with the \fB$fish_bind_mode\fP variable.
 .sp

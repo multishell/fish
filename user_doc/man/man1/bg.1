@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "BG" "1" "Jan 26, 2020" "3" "fish-shell"
+.TH "BG" "1" "Feb 12, 2020" "3.1" "fish-shell"
 .SH NAME
 bg \- send jobs to background
 .
@@ -43,7 +43,7 @@ bg [PID...]
 .UNINDENT
 .SH DESCRIPTION
 .sp
-\fBbg\fP sends \fI\%jobs\fP to the background, resuming them if they are stopped.
+\fBbg\fP sends jobs to the background, resuming them if they are stopped.
 .sp
 A background job is executed simultaneously with fish, and does not have access to the keyboard. If no job is specified, the last job to be used is put in the background. If PID is specified, the jobs with the specified process group IDs are put in the background.
 .sp

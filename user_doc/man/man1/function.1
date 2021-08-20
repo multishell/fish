@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FUNCTION" "1" "Jan 26, 2020" "3" "fish-shell"
+.TH "FUNCTION" "1" "Feb 12, 2020" "3.1" "fish-shell"
 .SH NAME
 function \- create a function
 .
@@ -75,7 +75,7 @@ It\(aqs important to note that this does not capture referenced variables or the
 \fB\-V\fP or \fB\-\-inherit\-variable NAME\fP snapshots the value of the variable \fBNAME\fP and defines a local variable with that same name and value when the function is defined. This is similar to a closure in other languages like Python but a bit different. Note the word "snapshot" in the first sentence. If you change the value of the variable after defining the function, even if you do so in the same scope (typically another function) the new value will not be used by the function you just created using this option. See the \fBfunction notify\fP example below for how this might be used.
 .UNINDENT
 .sp
-If the user enters any additional arguments after the function, they are inserted into the environment \fI\%variable list\fP \fB$argv\fP\&. If the \fB\-\-argument\-names\fP option is provided, the arguments are also assigned to names specified in that option.
+If the user enters any additional arguments after the function, they are inserted into the environment variable list \fB$argv\fP\&. If the \fB\-\-argument\-names\fP option is provided, the arguments are also assigned to names specified in that option.
 .sp
 By using one of the event handler switches, a function can be made to run automatically at specific events. The user may generate new events using the emit builtin. Fish generates the following named events:
 .INDENT 0.0

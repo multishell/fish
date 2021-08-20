@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "DISOWN" "1" "Jan 26, 2020" "3" "fish-shell"
+.TH "DISOWN" "1" "Feb 12, 2020" "3.1" "fish-shell"
 .SH NAME
 disown \- remove a process from the list of jobs
 .
@@ -43,7 +43,7 @@ disown [ PID ... ]
 .UNINDENT
 .SH DESCRIPTION
 .sp
-\fBdisown\fP removes the specified \fI\%job\fP from the list of jobs. The job itself continues to exist, but fish does not keep track of it any longer.
+\fBdisown\fP removes the specified job from the list of jobs. The job itself continues to exist, but fish does not keep track of it any longer.
 .sp
 Jobs in the list of jobs are sent a hang\-up signal when fish terminates, which usually causes the job to terminate; \fBdisown\fP allows these processes to continue regardless.
 .sp

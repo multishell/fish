@@ -6,7 +6,7 @@
   <head>
     <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <title>bind - handle fish key bindings &#8212; fish-shell 3.1b1 documentation</title>
+    <title>bind - handle fish key bindings &#8212; fish-shell 3.1.0 documentation</title>
     <link rel="stylesheet" href="../_static/nature.css" type="text/css" />
     <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
     <link rel="stylesheet" type="text/css" href="../_static/custom.css" />
@@ -32,7 +32,7 @@
         <li class="right" >
           <a href="bg.html" title="bg - send jobs to background"
              accesskey="P">previous</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../index.html">fish-shell 3.1b1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">fish-shell 3.1.0 documentation</a> &#187;</li>
           <li class="nav-item nav-item-1"><a href="../commands.html" accesskey="U">Commands</a> &#187;</li> 
       </ul>
     </div>  
@@ -58,7 +58,7 @@
 <div class="section" id="description">
 <h2>Description<a class="headerlink" href="#description" title="Permalink to this headline">¶</a></h2>
 <p><code class="docutils literal notranslate"><span class="pre">bind</span></code> adds a binding for the specified key sequence to the specified command.</p>
-<p>SEQUENCE is the character sequence to bind to. These should be written as <a class="reference external" href="index.html#escapes">fish escape sequences</a>. For example, because pressing the Alt key and another character sends that character prefixed with an escape character, Alt-based key bindings can be written using the <code class="docutils literal notranslate"><span class="pre">\e</span></code> escape. For example, <kbd class="kbd docutils literal notranslate">Alt+w</kbd> can be written as <code class="docutils literal notranslate"><span class="pre">\ew</span></code>. The control character can be written in much the same way using the <code class="docutils literal notranslate"><span class="pre">\c</span></code> escape, for example <kbd class="kbd docutils literal notranslate">Control+X</kbd> (^X) can be written as <code class="docutils literal notranslate"><span class="pre">\cx</span></code>. Note that Alt-based key bindings are case sensitive and Control-based key bindings are not. This is a constraint of text-based terminals, not <code class="docutils literal notranslate"><span class="pre">fish</span></code>.</p>
+<p>SEQUENCE is the character sequence to bind to. These should be written as <a class="reference internal" href="../index.html#escapes"><span class="std std-ref">fish escape sequences</span></a>. For example, because pressing the Alt key and another character sends that character prefixed with an escape character, Alt-based key bindings can be written using the <code class="docutils literal notranslate"><span class="pre">\e</span></code> escape. For example, <kbd class="kbd docutils literal notranslate">Alt+w</kbd> can be written as <code class="docutils literal notranslate"><span class="pre">\ew</span></code>. The control character can be written in much the same way using the <code class="docutils literal notranslate"><span class="pre">\c</span></code> escape, for example <kbd class="kbd docutils literal notranslate">Control+X</kbd> (^X) can be written as <code class="docutils literal notranslate"><span class="pre">\cx</span></code>. Note that Alt-based key bindings are case sensitive and Control-based key bindings are not. This is a constraint of text-based terminals, not <code class="docutils literal notranslate"><span class="pre">fish</span></code>.</p>
 <p>The default key binding can be set by specifying a <code class="docutils literal notranslate"><span class="pre">SEQUENCE</span></code> of the empty string (that is, <code class="docutils literal notranslate"><span class="pre">''</span></code> ). It will be used whenever no other binding matches. For most key bindings, it makes sense to use the <code class="docutils literal notranslate"><span class="pre">self-insert</span></code> function (i.e. <code class="docutils literal notranslate"><span class="pre">bind</span> <span class="pre">''</span> <span class="pre">self-insert</span></code>) as the default keybinding. This will insert any keystrokes not specifically bound to into the editor. Non- printable characters are ignored by the editor, so this will not result in control sequences being printable.</p>
 <p>If the <code class="docutils literal notranslate"><span class="pre">-k</span></code> switch is used, the name of the key (such as 'down', 'up' or 'backspace') is used instead of a sequence. The names used are the same as the corresponding curses variables, but without the 'key_' prefix. (See <code class="docutils literal notranslate"><span class="pre">terminfo(5)</span></code> for more information, or use <code class="docutils literal notranslate"><span class="pre">bind</span> <span class="pre">--key-names</span></code> for a list of all available named keys.) If used in conjunction with the <code class="docutils literal notranslate"><span class="pre">-s</span></code> switch, <code class="docutils literal notranslate"><span class="pre">bind</span></code> will silently ignore bindings to named keys that are not found in termcap for the current <code class="docutils literal notranslate"><span class="pre">$TERMINAL</span></code>, otherwise a warning is emitted.</p>
 <p><code class="docutils literal notranslate"><span class="pre">COMMAND</span></code> can be any fish command, but it can also be one of a set of special input functions. These include functions for moving the cursor, operating on the kill-ring, performing tab completion, etc. Use <code class="docutils literal notranslate"><span class="pre">bind</span> <span class="pre">--function-names</span></code> for a complete list of these input functions.</p>
@@ -66,7 +66,7 @@
 <p>If a script produces output, it should finish by calling <code class="docutils literal notranslate"><span class="pre">commandline</span> <span class="pre">-f</span> <span class="pre">repaint</span></code> to tell fish that a repaint is in order.</p>
 <p>When multiple <code class="docutils literal notranslate"><span class="pre">COMMAND</span></code>s are provided, they are all run in the specified order when the key is pressed. Note that special input functions cannot be combined with ordinary shell script commands. The commands must be entirely a sequence of special input functions (from <code class="docutils literal notranslate"><span class="pre">bind</span> <span class="pre">-f</span></code>) or all shell script commands (i.e., valid fish script).</p>
 <p>If no <code class="docutils literal notranslate"><span class="pre">SEQUENCE</span></code> is provided, all bindings (or just the bindings in the specified <code class="docutils literal notranslate"><span class="pre">MODE</span></code>) are printed. If <code class="docutils literal notranslate"><span class="pre">SEQUENCE</span></code> is provided without <code class="docutils literal notranslate"><span class="pre">COMMAND</span></code>, just the binding matching that sequence is printed.</p>
-<p>To save custom keybindings, put the <code class="docutils literal notranslate"><span class="pre">bind</span></code> statements into <a class="reference external" href="index.html#initialization">config.fish</a>. Alternatively, fish also automatically executes a function called <code class="docutils literal notranslate"><span class="pre">fish_user_key_bindings</span></code> if it exists.</p>
+<p>To save custom keybindings, put the <code class="docutils literal notranslate"><span class="pre">bind</span></code> statements into <a class="reference internal" href="../index.html#initialization"><span class="std std-ref">config.fish</span></a>. Alternatively, fish also automatically executes a function called <code class="docutils literal notranslate"><span class="pre">fish_user_key_bindings</span></code> if it exists.</p>
 <p>Key bindings may use &quot;modes&quot;, which mimics Vi's modal input behavior. The default mode is &quot;default&quot;, and every bind applies to a single mode. The mode can be viewed/changed with the <code class="docutils literal notranslate"><span class="pre">$fish_bind_mode</span></code> variable.</p>
 <p>The following parameters are available:</p>
 <ul class="simple">
@@ -224,7 +224,7 @@
         <li class="right" >
           <a href="bg.html" title="bg - send jobs to background"
              >previous</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../index.html">fish-shell 3.1b1 documentation</a> &#187;</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">fish-shell 3.1.0 documentation</a> &#187;</li>
           <li class="nav-item nav-item-1"><a href="../commands.html" >Commands</a> &#187;</li> 
       </ul>
     </div>
