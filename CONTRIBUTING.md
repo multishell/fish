@@ -69,7 +69,7 @@ Suppressing oclint warnings is more complicated to describe so I'll refer you to
 The following sections discuss the specific rules for the style that should be used when writing fish code. To ensure your changes conform to the style rules you simply need to run
 
 ```
-make style
+build_tools/style.fish
 ```
 
 before committing your change. That will run `git-clang-format` to rewrite only the lines you're modifying.
@@ -79,7 +79,7 @@ If you've already committed your changes that's okay since it will then check th
 If you want to check the style of the entire code base run
 
 ```
-make style-all
+build_tools/style.fish --all
 ```
 
 That command will refuse to restyle any files if you have uncommitted changes.
@@ -165,9 +165,24 @@ However, as I write this there are no places in the code where we use this and I
 
 1. Indent with spaces, not tabs and use four spaces per indent.
 
-1. Comments should always use the C++ style; i.e., each line of the comment should begin with a `//` and should be limited to 100 characters. Comments that do not begin a line should be separated from the previous text by two spaces.
-
-1. Comments that document the purpose of a function or class should begin with three slashes, `///`, so that OS X Xcode (and possibly other IDEs) will extract the comment and show it in the "Quick Help" window when the cursor is on the symbol.
+1. Document the purpose of a function or class with doxygen-style comment blocks. e.g.:
+```
+/**
+ * Sum numbers in a vector.
+ *
+ * @param values Container whose values are summed.
+ * @return sum of `values`, or 0.0 if `values` is empty.
+ */
+double sum(std::vector<double> & const values) {
+    ...
+}
+ */
+ ```
+or
+```
+/// brief description of somefunction()
+void somefunction() {
+```
 
 ## Testing
 
@@ -179,12 +194,9 @@ You are strongly encouraged to add tests when changing the functionality of fish
 
 The tests can be run on your local computer on all operating systems.
 
-Running the tests is only supported from the autotools build and not xcodebuild. On OS X, you will need to install autoconf &mdash; we suggest using [Homebrew](https://brew.sh/) to install these tools.
-
 ```
-autoconf
-./configure
-make test # or "gmake test" on BSD
+cmake path/to/fish-shell
+make test
 ```
 
 ### Travis CI Build and Test
@@ -285,7 +297,13 @@ sudo ln -s /usr/bin/clang-format-3.9 /usr/bin/clang-format
 
 ## Message Translations
 
-Fish uses the GNU gettext library to translate messages from English to other languages. To create or update a translation run `make po/[LANGUAGE CODE].po` where `LANGUAGE CODE` is the two letter ISO 639-1 language code of the language you are translating to (e.g. `de` for German). Make sure that you have the `xgettext`, `msgfmt` and `msgmerge` commands installed in order to do this.
+Fish uses the GNU gettext library to translate messages from English to other languages.
+
+All non-debug messages output for user consumption should be marked for translation. In C++, this requires the use of the `_` (underscore) macro:
+
+```
+streams.out.append_format(_(L"%ls: There are no jobs\n"), argv[0]);
+```
 
 All messages in fish script must be enclosed in single or double quote characters. They must also be translated via a subcommand. This means that the following are **not** valid:
 
@@ -303,6 +321,18 @@ echo (_ "goodbye")
 
 Note that you can use either single or double quotes to enclose the message to be translated. You can also optionally include spaces after the opening parentheses and once again before the closing parentheses.
 
-Be cautious about blindly updating an existing translation file. Trivial changes to an existing message (e.g., changing the punctuation) will cause existing translations to be removed, since the tools do literal string matching. Therefore, in general, you need to carefully review any recommended deletions.
+Creating and updating translations requires the Gettext tools, including `xgettext`, `msgfmt` and `msgmerge`. Translation sources are stored in the `po` directory, named `LANG.po`, where `LANG` is the two letter ISO 639-1 language code of the target language (eg `de` for German).
+
+To create a new translation, for example for German:
+* generate a `messages.pot` file by running `build_tools/fish_xgettext.fish` from the source tree
+* copy `messages.pot` to `po/LANG.po` ()
+
+To update a translation:
+* generate a `messages.pot` file by running `build_tools/fish_xgettext.fish` from the source tree
+* update the existing translation by running `msgmerge --update --no-fuzzy-matching po/LANG.po messages.pot`
+
+Many tools are available for editing translation files, including command-line and graphical user interface programs.
+
+Be cautious about blindly updating an existing translation file. Trivial changes to an existing message (eg changing the punctuation) will cause existing translations to be removed, since the tools do literal string matching. Therefore, in general, you need to carefully review any recommended deletions.
 
 Read the [translations wiki](https://github.com/fish-shell/fish-shell/wiki/Translations) for more information.

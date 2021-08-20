@@ -1,36 +1,37 @@
 // Implementation of the bg builtin.
 #include "config.h"  // IWYU pragma: keep
 
-#include <errno.h>
-#include <stdlib.h>
+#include "builtin_bg.h"
 
+#include <cerrno>
+#include <cstdlib>
 #include <memory>
 #include <vector>
 
 #include "builtin.h"
-#include "builtin_bg.h"
 #include "common.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "io.h"
+#include "parser.h"
 #include "proc.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 /// Helper function for builtin_bg().
 static int send_to_bg(parser_t &parser, io_streams_t &streams, job_t *j) {
-    assert(j != NULL);
-    if (!j->get_flag(job_flag_t::JOB_CONTROL)) {
-        streams.err.append_format(
+    assert(j != nullptr);
+    if (!j->wants_job_control()) {
+        wcstring error_message = format_string(
             _(L"%ls: Can't put job %d, '%ls' to background because it is not under job control\n"),
-            L"bg", j->job_id, j->command_wcstr());
-        builtin_print_help(parser, streams, L"bg", streams.err);
+            L"bg", j->job_id(), j->command_wcstr());
+        builtin_print_help(parser, streams, L"bg", &error_message);
         return STATUS_CMD_ERROR;
     }
 
-    streams.err.append_format(_(L"Send job %d '%ls' to background\n"), j->job_id,
+    streams.err.append_format(_(L"Send job %d '%ls' to background\n"), j->job_id(),
                               j->command_wcstr());
-    j->promote();
-    j->set_flag(job_flag_t::FOREGROUND, false);
-    j->continue_job(j->is_stopped());
+    parser.job_promote(j);
+    j->mut_flags().foreground = false;
+    j->continue_job(parser, true, j->is_stopped());
     return STATUS_CMD_OK;
 }
 
@@ -45,25 +46,25 @@ int builtin_bg(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     if (retval != STATUS_CMD_OK) return retval;
 
     if (opts.print_help) {
-        builtin_print_help(parser, streams, cmd, streams.out);
+        builtin_print_help(parser, streams, cmd);
         return STATUS_CMD_OK;
     }
 
     if (optind == argc) {
         // No jobs were specified so use the most recent (i.e., last) job.
-        job_t *j;
-        job_iterator_t jobs;
-        while ((j = jobs.next())) {
-            if (j->is_stopped() && j->get_flag(job_flag_t::JOB_CONTROL) && (!j->is_completed())) {
+        job_t *job = nullptr;
+        for (const auto &j : parser.jobs()) {
+            if (j->is_stopped() && j->wants_job_control() && (!j->is_completed())) {
+                job = j.get();
                 break;
             }
         }
 
-        if (!j) {
+        if (!job) {
             streams.err.append_format(_(L"%ls: There are no suitable jobs\n"), cmd);
             retval = STATUS_CMD_ERROR;
         } else {
-            retval = send_to_bg(parser, streams, j);
+            retval = send_to_bg(parser, streams, job);
         }
 
         return retval;

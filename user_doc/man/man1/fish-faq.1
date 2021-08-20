@@ -1,0 +1,422 @@
+.\" Man page generated from reStructuredText.
+.
+.TH "FISH-FAQ" "1" "Jan 26, 2020" "3" "fish-shell"
+.SH NAME
+fish-faq \- fish-shell faq
+.
+.nr rst2man-indent-level 0
+.
+.de1 rstReportMargin
+\\$1 \\n[an-margin]
+level \\n[rst2man-indent-level]
+level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
+-
+\\n[rst2man-indent0]
+\\n[rst2man-indent1]
+\\n[rst2man-indent2]
+..
+.de1 INDENT
+.\" .rstReportMargin pre:
+. RS \\$1
+. nr rst2man-indent\\n[rst2man-indent-level] \\n[an-margin]
+. nr rst2man-indent-level +1
+.\" .rstReportMargin post:
+..
+.de UNINDENT
+. RE
+.\" indent \\n[an-margin]
+.\" old: \\n[rst2man-indent\\n[rst2man-indent-level]]
+.nr rst2man-indent-level -1
+.\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
+.in \\n[rst2man-indent\\n[rst2man-indent-level]]u
+..
+.SH HOW DO I SET OR CLEAR AN ENVIRONMENT VARIABLE?
+.sp
+Use the set command:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+set \-x key value
+set \-e key
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+Since fish 3.1 you can set an environment variable for just one command using the \fBkey=value some command\fP syntax, like in other shells.  The two lines below behave identically \- unlike other shells, fish will output \fBvalue\fP both times:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+key=value echo $key
+begin; set \-lx key value; echo $key; end
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.SH HOW DO I RUN A COMMAND EVERY LOGIN? WHAT'S FISH'S EQUIVALENT TO .BASHRC OR .PROFILE?
+.sp
+Edit the file \fB~/.config/fish/config.fish\fP, creating it if it does not exist (Note the leading period).
+.SH HOW DO I SET MY PROMPT?
+.sp
+The prompt is the output of the \fBfish_prompt\fP function. Put it in \fB~/.config/fish/functions/fish_prompt.fish\fP\&. For example, a simple prompt is:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+function fish_prompt
+    set_color $fish_color_cwd
+    echo \-n (prompt_pwd)
+    set_color normal
+    echo \-n \(aq > \(aq
+end
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+You can also use the Web configuration tool, fish_config, to preview and choose from a gallery of sample prompts.
+.SH HOW DO I RUN A COMMAND FROM HISTORY?
+.sp
+Type some part of the command, and then hit the \fB↑\fP (up) or \fB↓\fP (down) arrow keys to navigate through history matches. Additional default key bindings include \fBControl+P\fP (up) and \fBControl+N\fP (down).
+.SH HOW DO I RUN A SUBCOMMAND? THE BACKTICK DOESN'T WORK!
+.sp
+\fBfish\fP uses parentheses for subcommands. For example:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+for i in (ls)
+    echo $i
+end
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.SH MY COMMAND (PKG-CONFIG) GIVES ITS OUTPUT AS A SINGLE LONG STRING?
+.sp
+Unlike other shells, fish splits command substitutions only on newlines, not spaces or tabs or the characters in $IFS.
+.sp
+That means if you run
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+echo x(printf \(aq%s \(aq a b c)x
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+It will print \fBxa b c x\fP, because the "a b c " is used in one piece. But if you do
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+echo x(printf \(aq%s\en\(aq a b c)x
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+it will print \fBxax xbx xcx\fP\&.
+.sp
+In the overwhelming majority of cases, splitting on spaces is unwanted, so this is an improvement.
+.sp
+However sometimes, especially with \fBpkg\-config\fP and related tools, splitting on spaces is needed.
+.sp
+In these cases use \fBstring split " "\fP like:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+g++ example_01.cpp (pkg\-config \-\-cflags \-\-libs gtk+\-2.0 | string split " ")
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.SH HOW DO I GET THE EXIT STATUS OF A COMMAND?
+.sp
+Use the \fB$status\fP variable. This replaces the \fB$?\fP variable used in some other shells.
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+somecommand
+if test $status \-eq 7
+    echo "That\(aqs my lucky number!"
+end
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+If you are just interested in success or failure, you can run the command directly as the if\-condition:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+if somecommand
+    echo "Command succeeded"
+else
+    echo "Command failed"
+end
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+Or if you just want to do one command in case the first succeeded or failed, use \fBand\fP or \fBor\fP:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+somecommand
+or someothercommand
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+See the documentation for test and if for more information.
+.SH HOW DO I CHECK WHETHER A VARIABLE IS DEFINED?
+.sp
+Use \fBset \-q var\fP\&.  For example, \fBif set \-q var; echo variable defined; end\fP\&.  To check multiple variables you can combine with \fBand\fP and \fBor\fP like so:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+if set \-q var1; or set \-q var2
+    echo either variable defined
+end
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+Keep in mind that a defined variabled could also be empty, either by having no elements (if set like \fBset var\fP) or only empty elements (if set like \fBset var ""\fP). Read on for how to deal with those.
+.SH HOW DO I CHECK WHETHER A VARIABLE IS NOT EMPTY?
+.sp
+Use \fBstring length \-q \-\- $var\fP\&.  For example, \fBif string length \-q \-\- $var; echo not empty; end\fP\&.  Note that \fBstring length\fP will interpret a list of multiple variables as a disjunction (meaning any/or):
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+if string length \-q \-\- $var1 $var2 $var3
+    echo at least one of these variables is not empty
+end
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+Alternatively, use \fBtest \-n "$var"\fP, but remember that \fBthe variable must be double\-quoted\fP\&.  For example, \fBif test \-n "$var"; echo not empty; end\fP\&. The \fBtest\fP command provides its own and (\-a) and or (\-o):
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+if test \-n "$var1" \-o \-n "$var2" \-o \-n "$var3"
+    echo at least one of these variables is not empty
+end
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+If you want to know if a variable has \fIno elements\fP, use \fBset \-q var[1]\fP\&.
+.SH WHY DOESN'T SET -UX (EXPORTED UNIVERSAL VARIABLES) SEEM TO WORK?
+.sp
+A global variable of the same name already exists.
+.sp
+Environment variables such as \fBEDITOR\fP or \fBTZ\fP can be set universally using \fBset \-Ux\fP\&.  However, if
+there is an environment variable already set before fish starts (such as by login scripts or system
+administrators), it is imported into fish as a global variable. The variable scopes are searched from the "inside out", which
+means that local variables are checked first, followed by global variables, and finally universal
+variables.
+.sp
+This means that the global value takes precedence over the universal value.
+.sp
+To avoid this problem, consider changing the setting which fish inherits. If this is not possible,
+add a statement to your user initialization file (usually
+\fB~/.config/fish/config.fish\fP):
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+set \-gx EDITOR vim
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.SH HOW DO I CUSTOMIZE MY SYNTAX HIGHLIGHTING COLORS?
+.sp
+Use the web configuration tool, fish_config, or alter the \fI\%fish_color family of environment variables\fP\&.
+.SH HOW DO I UPDATE MAN PAGE COMPLETIONS?
+.sp
+Use the fish_update_completions command.
+.SH I ACCIDENTALLY ENTERED A DIRECTORY PATH AND FISH CHANGED DIRECTORY. WHAT HAPPENED?
+.sp
+If fish is unable to locate a command with a given name, and it starts with \(aq\fB\&.\fP\(aq, \(aq\fB/\fP\(aq or \(aq\fB~\fP\(aq, fish will test if a directory of that name exists. If it does, it is implicitly assumed that you want to change working directory. For example, the fastest way to switch to your home directory is to simply press \fB~\fP and enter.
+.SH THE OPEN COMMAND DOESN'T WORK.
+.sp
+The \fBopen\fP command uses the MIME type database and the \fB\&.desktop\fP files used by Gnome and KDE to identify filetypes and default actions. If at least one of these environments is installed, but the open command is not working, this probably means that the relevant files are installed in a non\-standard location. Consider \fI\%asking for more help\fP\&.
+.SH HOW DO I MAKE FISH MY DEFAULT SHELL?
+.sp
+If you installed fish manually (e.g. by compiling it, not by using a package manager), you first need to add fish to the list of shells by executing the following command (assuming you installed fish in /usr/local):
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+echo /usr/local/bin/fish | sudo tee \-a /etc/shells
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+If you installed a prepackaged version of fish, the package manager should have already done this for you.
+.sp
+In order to change your default shell, type:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+chsh \-s /usr/local/bin/fish
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+You may need to adjust the above path to e.g. \fB/usr/bin/fish\fP\&. Use the command \fBwhich fish\fP if you are unsure of where fish is installed.
+.sp
+Unfortunately, there is no way to make the changes take effect at once. You will need to log out and back in again.
+.SH I'M SEEING WEIRD OUTPUT BEFORE EACH PROMPT WHEN USING SCREEN. WHAT'S WRONG?
+.sp
+Quick answer:
+.sp
+Run the following command in fish:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+function fish_title; end; funcsave fish_title
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+Problem solved!
+.sp
+The long answer:
+.sp
+Fish is trying to set the titlebar message of your terminal. While screen itself supports this feature, your terminal does not. Unfortunately, when the underlying terminal doesn\(aqt support setting the titlebar, screen simply passes through the escape codes and text to the underlying terminal instead of ignoring them. It is impossible to detect and resolve this problem from inside fish since fish has no way of knowing what the underlying terminal type is. For now, the only way to fix this is to unset the titlebar message, as suggested above.
+.sp
+Note that fish has a default titlebar message, which will be used if the fish_title function is undefined. So simply unsetting the fish_title function will not work.
+.SH HOW DO I CHANGE THE GREETING MESSAGE?
+.sp
+Change the value of the variable \fBfish_greeting\fP or create a \fBfish_greeting\fP function. For example, to remove the greeting use:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+set fish_greeting
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.SH WHY DOESN'T HISTORY SUBSTITUTION ("!$" ETC.) WORK?
+.sp
+Because history substitution is an awkward interface that was invented before interactive line editing was even possible.  Fish drops it in favor of perfecting the interactive history recall interface.  Switching requires a small change of habits: if you want to modify an old line/word, first recall it, then edit.  E.g. don\(aqt type "sudo !!" \- first press Up, then Home, then type "sudo ".
+.sp
+Fish history recall is very simple yet effective:
+.INDENT 0.0
+.IP \(bu 2
+As in any modern shell, the Up arrow, \fB↑\fP recalls whole lines, starting from the last line executed.  A single press replaces "!!", later presses replace "!\-3" and the like.
+.INDENT 2.0
+.IP \(bu 2
+If the line you want is far back in the history, type any part of the line and then press Up one or more times.  This will constrain the recall to lines that include this text, and you will get to the line you want much faster.  This replaces "!vi", "!?bar.c" and the like.
+.UNINDENT
+.IP \(bu 2
+\fBAlt+↑,Up\fP recalls individual arguments, starting from the last argument in the last line executed.  A single press replaces "!$", later presses replace "!!:4" and the like. An alternate key binding is \fBAlt+.\fP\&.
+.INDENT 2.0
+.IP \(bu 2
+If the argument you want is far back in history (e.g. 2 lines back \- that\(aqs a lot of words!), type any part of it and then press \fBAlt+↑,Up\fP\&.  This will show only arguments containing that part and you will get what you want much faster.  Try it out, this is very convenient!
+.IP \(bu 2
+If you want to reuse several arguments from the same line ("!!:3*" and the like), consider recalling the whole line and removing what you don\(aqt need (\fBAlt+D\fP and \fBAlt+Backspace\fP are your friends).
+.UNINDENT
+.UNINDENT
+.sp
+See \fI\%documentation\fP for more details about line editing in fish.
+.SH HOW CAN I USE - AS A SHORTCUT FOR CD -?
+.sp
+In fish versions prior to 2.5.0 it was possible to create a function named \fB\-\fP that would do \fBcd \-\fP\&. Changes in the 2.5.0 release included several bug fixes that enforce the rule that a bare hyphen is not a valid function (or variable) name. However, you can achieve the same effect via an abbreviation:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+abbr \-a \-\- \- \(aqcd \-\(aq
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.SH UNINSTALLING FISH
+.sp
+Should you wish to uninstall fish, first ensure fish is not set as your shell. Run \fBchsh \-s /bin/bash\fP if you are not sure.
+.sp
+Next, do the following (assuming fish was installed to /usr/local):
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+rm \-Rf /usr/local/etc/fish /usr/local/share/fish ~/.config/fish
+rm /usr/local/share/man/man1/fish*.1
+cd /usr/local/bin
+rm \-f fish fish_indent
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.SH UNICODE PRIVATE-USE CHARACTERS RESERVED BY FISH
+.sp
+Fish reserves the \fI\%Unicode private\-use character range\fP from U+F600 thru U+F73F for internal use. Any attempt to feed characters in that range to fish will result in them being replaced by the Unicode "replacement character" U+FFFD. This includes both interactive input as well as any file read by fish (but not programs run by fish).
+.SH WHERE CAN I FIND EXTRA TOOLS FOR FISH?
+.sp
+The fish user community extends fish in unique and useful ways via scripts that aren\(aqt always appropriate for bundling with the fish package. Typically because they solve a niche problem unlikely to appeal to a broad audience. You can find those extensions, including prompts, themes and useful functions, in various third\-party repositories. These include:
+.INDENT 0.0
+.IP \(bu 2
+\fI\%Fisher\fP
+.IP \(bu 2
+\fI\%Fundle\fP
+.IP \(bu 2
+\fI\%Oh My Fish\fP
+.IP \(bu 2
+\fI\%Tacklebox\fP
+.UNINDENT
+.sp
+This is not an exhaustive list and the fish project has no opinion regarding the merits of the repositories listed above or the scripts found therein.
+.SH AUTHOR
+fish-shell developers
+.SH COPYRIGHT
+2019, fish-shell developers
+.\" Generated by docutils manpage writer.
+.

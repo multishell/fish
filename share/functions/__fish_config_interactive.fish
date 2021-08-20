@@ -4,13 +4,11 @@
 # This function is called by the __fish_on_interactive function, which is defined in config.fish.
 #
 function __fish_config_interactive -d "Initializations that should be performed when entering interactive mode"
-    if not set -q __fish_init_3_x
+    if test $__fish_initialized -lt 3000
         # Perform transitions relevant to going from fish 2.x to 3.x.
 
         # Migrate old universal abbreviations to the new scheme.
         __fish_abbr_old | source
-
-        set -U __fish_init_3_x
     end
 
     # Make sure this function is only run once.
@@ -21,100 +19,75 @@ function __fish_config_interactive -d "Initializations that should be performed 
     set -g __fish_config_interactive_done
     set -g __fish_active_key_bindings
 
-    # Set the correct user data directory
-    set -l userdatadir ~/.local/share
-    if set -q XDG_DATA_HOME
-        set userdatadir $XDG_DATA_HOME
-    end
-
     if not set -q fish_greeting
         set -l line1 (_ 'Welcome to fish, the friendly interactive shell')
         set -l line2 ''
-        if not set -q __fish_init_2_3_0
+        if test $__fish_initialized -lt 2300
             set line2 \n(_ 'Type `help` for instructions on how to use fish')
         end
         set -U fish_greeting "$line1$line2"
     end
 
-    if set -q fish_private_mode
+    if set -q fish_private_mode; and string length -q -- $fish_greeting
         set -l line (_ "fish is running in private mode, history will not be persisted.")
         set -g fish_greeting $fish_greeting.\n$line
     end
 
+    # usage: __init_uvar VARIABLE VALUES...
+    function __init_uvar -d "Sets a universal variable if it's not already set"
+        if not set --query $argv[1]
+            set --universal $argv
+        end
+    end
+
     #
     # If we are starting up for the first time, set various defaults.
-    #
-    # bump this to 2_4_0 when rolling release if anything changes after 9/10/2016
-    if not set -q __fish_init_2_39_8
+    if test $__fish_initialized -lt 3100
+
         # Regular syntax highlighting colors
-        set -q fish_color_normal
-        or set -U fish_color_normal normal
-        set -q fish_color_command
-        or set -U fish_color_command 005fd7
-        set -q fish_color_param
-        or set -U fish_color_param 00afff
-        set -q fish_color_redirection
-        or set -U fish_color_redirection 00afff
-        set -q fish_color_comment
-        or set -U fish_color_comment 990000
-        set -q fish_color_error
-        or set -U fish_color_error ff0000
-        set -q fish_color_escape
-        or set -U fish_color_escape 00a6b2
-        set -q fish_color_operator
-        or set -U fish_color_operator 00a6b2
-        set -q fish_color_end
-        or set -U fish_color_end 009900
-        set -q fish_color_quote
-        or set -U fish_color_quote 999900
-        set -q fish_color_autosuggestion
-        or set -U fish_color_autosuggestion 555 brblack
-        set -q fish_color_user
-        or set -U fish_color_user brgreen
+        __init_uvar fish_color_normal normal
+        __init_uvar fish_color_command 005fd7
+        __init_uvar fish_color_param 00afff
+        __init_uvar fish_color_redirection 00afff
+        __init_uvar fish_color_comment 990000
+        __init_uvar fish_color_error ff0000
+        __init_uvar fish_color_escape 00a6b2
+        __init_uvar fish_color_operator 00a6b2
+        __init_uvar fish_color_end 009900
+        __init_uvar fish_color_quote 999900
+        __init_uvar fish_color_autosuggestion 555 brblack
+        __init_uvar fish_color_user brgreen
+        __init_uvar fish_color_host normal
+        __init_uvar fish_color_host_remote yellow
+        __init_uvar fish_color_valid_path --underline
+        __init_uvar fish_color_status red
 
-        set -q fish_color_host
-        or set -U fish_color_host normal
-        set -q fish_color_valid_path
-        or set -U fish_color_valid_path --underline
-
-        set -q fish_color_cwd
-        or set -U fish_color_cwd green
-        set -q fish_color_cwd_root
-        or set -U fish_color_cwd_root red
+        __init_uvar fish_color_cwd green
+        __init_uvar fish_color_cwd_root red
 
         # Background color for matching quotes and parenthesis
-        set -q fish_color_match
-        or set -U fish_color_match --background=brblue
+        __init_uvar fish_color_match --background=brblue
 
         # Background color for search matches
-        set -q fish_color_search_match
-        or set -U fish_color_search_match bryellow --background=brblack
+        __init_uvar fish_color_search_match bryellow --background=brblack
 
         # Background color for selections
-        set -q fish_color_selection
-        or set -U fish_color_selection white --bold --background=brblack
+        __init_uvar fish_color_selection white --bold --background=brblack
 
-        set -q fish_color_cancel
-        or set -U fish_color_cancel -r
+        # XXX fish_color_cancel was added in 2.6, but this was added to post-2.3 initialization
+        # when 2.4 and 2.5 were already released
+        __init_uvar fish_color_cancel -r
 
         # Pager colors
-        set -q fish_pager_color_prefix
-        or set -U fish_pager_color_prefix white --bold --underline
-        set -q fish_pager_color_completion
-        or set -U fish_pager_color_completion
-        set -q fish_pager_color_description
-        or set -U fish_pager_color_description B3A06D yellow
-        set -q fish_pager_color_progress
-        or set -U fish_pager_color_progress brwhite --background=cyan
+        __init_uvar fish_pager_color_prefix white --bold --underline
+        __init_uvar fish_pager_color_completion
+        __init_uvar fish_pager_color_description B3A06D yellow
+        __init_uvar fish_pager_color_progress brwhite --background=cyan
 
         #
         # Directory history colors
         #
-        set -q fish_color_history_current
-        or set -U fish_color_history_current --bold
-
-
-        set -U __fish_init_2_39_8
+        __init_uvar fish_color_history_current --bold
     end
 
     #
@@ -122,7 +95,7 @@ function __fish_config_interactive -d "Initializations that should be performed 
     #
     # Don't do this if we're being invoked as part of running unit tests.
     if not set -q FISH_UNIT_TESTS_RUNNING
-        if not test -d $userdatadir/fish/generated_completions
+        if not test -d $__fish_user_data_dir/generated_completions
             # Generating completions from man pages needs python (see issue #3588).
 
             # We cannot simply do `fish_update_completions &` because it is a function.
@@ -133,7 +106,11 @@ function __fish_config_interactive -d "Initializations that should be performed 
             set -l update_args -B $__fish_data_dir/tools/create_manpage_completions.py --manpath --cleanup-in '~/.config/fish/completions' --cleanup-in '~/.config/fish/generated_completions'
             for py in python{3,2,}
                 if command -sq $py
-                    $py $update_args >/dev/null 2>&1 &
+                    set -l c $py $update_args
+                    # Run python directly in the background and swallow all output
+                    $c (: fish_update_completions: generating completions from man pages) >/dev/null 2>&1 &
+                    # Then disown the job so that it continues to run in case of an early exit (#6269)
+                    disown 2>&1 >/dev/null
                     break
                 end
             end
@@ -157,17 +134,14 @@ function __fish_config_interactive -d "Initializations that should be performed 
 
     #
     # This event handler makes sure the prompt is repainted when
-    # fish_color_cwd changes value. Like all event handlers, it can't be
+    # fish_color_cwd{,_root} changes value. Like all event handlers, it can't be
     # autoloaded.
     #
-    function __fish_repaint --on-variable fish_color_cwd --description "Event handler, repaints the prompt when fish_color_cwd changes"
-        if status --is-interactive
-            set -e __fish_prompt_cwd
-            commandline -f repaint 2>/dev/null
-        end
+    set -l varargs --on-variable fish_key_bindings
+    for var in user host cwd{,_root} status
+        set -a varargs --on-variable fish_color_$var
     end
-
-    function __fish_repaint_root --on-variable fish_color_cwd_root --description "Event handler, repaints the prompt when fish_color_cwd_root changes"
+    function __fish_repaint $varargs -d "Event handler, repaints the prompt when fish_color_cwd* changes"
         if status --is-interactive
             set -e __fish_prompt_cwd
             commandline -f repaint 2>/dev/null
@@ -192,13 +166,17 @@ function __fish_config_interactive -d "Initializations that should be performed 
     # the user tries [ interactively.
     #
     complete -c [ --wraps test
+    complete -c ! --wraps not
+
+    #
+    # Only a few builtins take filenames; initialize the rest with no file completions
+    #
+    complete -c(builtin -n | string match -rv '(source|cd|exec|realpath|set|\\[|test|for)') --no-files
 
     # Reload key bindings when binding variable change
     function __fish_reload_key_bindings -d "Reload key bindings when binding variable change" --on-variable fish_key_bindings
         # Make sure some key bindings are set
-        if not set -q fish_key_bindings
-            set -U fish_key_bindings fish_default_key_bindings
-        end
+        __init_uvar fish_key_bindings fish_default_key_bindings
 
         # Do nothing if the key bindings didn't actually change.
         # This could be because the variable was set to the existing value
@@ -266,23 +244,37 @@ function __fish_config_interactive -d "Initializations that should be performed 
         __fish_enable_bracketed_paste
     end
 
+    # Similarly, enable TMUX's focus reporting when in tmux.
+    # This will be handled by
+    # - The keybindings (reading the sequence and triggering an event)
+    # - Any listeners (like the vi-cursor)
+    if set -q TMUX
+        and not set -q FISH_UNIT_TESTS_RUNNING
+        function __fish_enable_focus --on-event fish_postexec
+            echo -n \e\[\?1004h
+        end
+        function __fish_disable_focus --on-event fish_preexec
+            echo -n \e\[\?1004l
+        end
+        # Note: Don't call this initially because, even though we're in a fish_prompt event,
+        # tmux reacts sooo quickly that we'll still get a sequence before we're prepared for it.
+        # So this means that we won't get focus events until you've run at least one command, but that's preferable
+        # to always seeing `^[[I` when starting fish.
+        # __fish_enable_focus
+    end
+
     function __fish_winch_handler --on-signal WINCH -d "Repaint screen when window changes size"
         commandline -f repaint >/dev/null 2>/dev/null
     end
 
     # Notify terminals when $PWD changes (issue #906).
-    # VTE based terminals, Terminal.app, and iTerm.app support this.
-    set -q VTE_VERSION
-    or set -l VTE_VERSION 0
-    set -q TERM_PROGRAM
-    or set -l TERM_PROGRAM
-    if test "$VTE_VERSION" -ge 3405 -o "$TERM_PROGRAM" = "Apple_Terminal"
+    # VTE based terminals, Terminal.app, and iTerm.app (TODO) support this.
+    if test 0"$VTE_VERSION" -ge 3405 -o "$TERM_PROGRAM" = "Apple_Terminal" -a (string match -r '\d+' 0"$TERM_PROGRAM_VERSION") -ge 309
         function __update_cwd_osc --on-variable PWD --description 'Notify capable terminals when $PWD changes'
-            if status --is-command-substitution
-                or set -q INSIDE_EMACS
+            if status --is-command-substitution || set -q INSIDE_EMACS
                 return
             end
-            printf \e\]7\;file://\%s\%s\a $hostname (string escape --style=url $PWD)
+            printf \e\]7\;file://%s%s\a $hostname (string escape --style=url $PWD)
         end
         __update_cwd_osc # Run once because we might have already inherited a PWD from an old tab
     end
@@ -302,9 +294,7 @@ function __fish_config_interactive -d "Initializations that should be performed 
 
         # First check if we are on OpenSUSE since SUSE's handler has no options
         # but the same name and path as Ubuntu's.
-        if contains -- suse $os
-            or contains -- sles $os
-            and type -q command-not-found
+        if contains -- suse $os || contains -- sles $os && type -q command-not-found
             function __fish_command_not_found_handler --on-event fish_command_not_found
                 /usr/bin/command-not-found $argv[1]
             end
@@ -347,4 +337,8 @@ function __fish_config_interactive -d "Initializations that should be performed 
             end
         end
     end
+
+    # Bump this whenever some code below needs to run once when upgrading to a new version.
+    # The universal variable __fish_initialized is initialized in share/config.fish.
+    set __fish_initialized 3100
 end

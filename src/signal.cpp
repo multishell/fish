@@ -15,6 +15,8 @@
 #include "parser.h"
 #include "proc.h"
 #include "reader.h"
+#include "signal.h"
+#include "topic_monitor.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 /// Struct describing an entry for the lookup table used to convert between signal names and signal
@@ -28,11 +30,8 @@ struct lookup_entry {
     const wchar_t *desc;
 };
 
-/// The number of signal blocks in place. Increased by signal_block, decreased by signal_unblock.
-static int block_count = 0;
-
 /// Lookup table used to convert between signal names and signal ids, etc.
-static const struct lookup_entry lookup[] = {
+static const struct lookup_entry signal_table[] = {
 #ifdef SIGHUP
     {SIGHUP, L"SIGHUP", N_(L"Terminal hung up")},
 #endif
@@ -141,7 +140,7 @@ static const struct lookup_entry lookup[] = {
 #ifdef SIGUNUSED
     {SIGUNUSED, L"SIGUNUSED", N_(L"Unused signal")},
 #endif
-    {0, NULL, NULL}};
+};
 
 /// Test if \c name is a string describing the signal named \c canonical.
 static int match_signal_name(const wchar_t *canonical, const wchar_t *name) {
@@ -151,9 +150,9 @@ static int match_signal_name(const wchar_t *canonical, const wchar_t *name) {
 }
 
 int wcs2sig(const wchar_t *str) {
-    for (int i = 0; lookup[i].desc; i++) {
-        if (match_signal_name(lookup[i].name, str)) {
-            return lookup[i].signal;
+    for (const auto &data : signal_table) {
+        if (match_signal_name(data.name, str)) {
+            return data.signal;
         }
     }
 
@@ -163,11 +162,9 @@ int wcs2sig(const wchar_t *str) {
 }
 
 const wchar_t *sig2wcs(int sig) {
-    int i;
-
-    for (i = 0; lookup[i].desc; i++) {
-        if (lookup[i].signal == sig) {
-            return lookup[i].name;
+    for (const auto &data : signal_table) {
+        if (data.signal == sig) {
+            return data.name;
         }
     }
 
@@ -175,100 +172,106 @@ const wchar_t *sig2wcs(int sig) {
 }
 
 const wchar_t *signal_get_desc(int sig) {
-    int i;
-
-    for (i = 0; lookup[i].desc; i++) {
-        if (lookup[i].signal == sig) {
-            return _(lookup[i].desc);
+    for (const auto &data : signal_table) {
+        if (data.signal == sig) {
+            return _(data.desc);
         }
     }
 
     return _(L"Unknown");
 }
 
-/// Standard signal handler.
-static void default_handler(int signal, siginfo_t *info, void *context) {
-    UNUSED(info);
-    UNUSED(context);
-    if (event_is_signal_observed(signal)) {
-        event_fire_signal(signal);
+/// Store the "main" pid. This allows us to reliably determine if we are in a forked child.
+static const pid_t s_main_pid = getpid();
+
+/// It's possible that we receive a signal after we have forked, but before we have reset the signal
+/// handlers (or even run the pthread_atfork calls). In that event we will do something dumb like
+/// swallow SIGINT. Ensure that doesn't happen. Check if we are the main fish process; if not reset
+/// and re-raise the signal. \return whether we re-raised the signal.
+static bool reraise_if_forked_child(int sig) {
+    // Don't use is_forked_child, that relies on atfork handlers which maybe have not run yet.
+    if (getpid() == s_main_pid) {
+        return false;
     }
+    signal(sig, SIG_DFL);
+    raise(sig);
+    return true;
 }
 
-#ifdef SIGWINCH
-/// Respond to a winch signal by checking the terminal size.
-static void handle_winch(int sig, siginfo_t *info, void *context) {
+/// The single signal handler. By centralizing signal handling we ensure that we can never install
+/// the "wrong" signal handler (see #5969).
+static void fish_signal_handler(int sig, siginfo_t *info, void *context) {
     UNUSED(info);
     UNUSED(context);
-    common_handle_winch(sig);
-    default_handler(sig, 0, 0);
-}
+
+    // Check if we are a forked child.
+    if (reraise_if_forked_child(sig)) {
+        return;
+    }
+
+    // Check if fish script cares about this.
+    const bool observed = event_is_signal_observed(sig);
+    if (observed) {
+        event_enqueue_signal(sig);
+    }
+
+    // Do some signal-specific stuff.
+    switch (sig) {
+#ifdef SIGWINCH
+        case SIGWINCH:
+            /// Respond to a winch signal by checking the terminal size.
+            common_handle_winch(sig);
+            break;
 #endif
 
-/// Respond to a hup signal by exiting, unless it is caught by a shellscript function, in which case
-/// we do nothing.
-static void handle_hup(int sig, siginfo_t *info, void *context) {
-    UNUSED(info);
-    UNUSED(context);
-    if (event_is_signal_observed(SIGHUP)) {
-        default_handler(sig, 0, 0);
-    } else {
-        reader_exit(1, 1);
+        case SIGHUP:
+            /// Respond to a hup signal by exiting, unless it is caught by a shellscript function,
+            /// in which case we do nothing.
+            if (!observed) {
+                reader_force_exit();
+            }
+            topic_monitor_t::principal().post(topic_t::sighupint);
+            break;
+
+        case SIGTERM:
+            /// Handle sigterm. The only thing we do is restore the front process ID, then die.
+            restore_term_foreground_process_group();
+            signal(SIGTERM, SIG_DFL);
+            raise(SIGTERM);
+            break;
+
+        case SIGINT:
+            /// Interactive mode ^C handler. Respond to int signal by setting interrupted-flag and
+            /// stopping all loops and conditionals.
+            reader_handle_sigint();
+            topic_monitor_t::principal().post(topic_t::sighupint);
+            break;
+
+        case SIGCHLD:
+            // A child process stopped or exited.
+            topic_monitor_t::principal().post(topic_t::sigchld);
+            break;
+
+        case SIGALRM:
+            // We have a sigalarm handler that does nothing. This is used in the signal torture
+            // test, to verify that we behave correctly when receiving lots of irrelevant signals.
+            break;
     }
-}
-
-/// Handle sigterm. The only thing we do is restore the front process ID, then die.
-static void handle_sigterm(int sig, siginfo_t *info, void *context) {
-    UNUSED(sig);
-    UNUSED(info);
-    UNUSED(context);
-    restore_term_foreground_process_group();
-    signal(SIGTERM, SIG_DFL);
-    raise(SIGTERM);
-}
-
-/// Interactive mode ^C handler. Respond to int signal by setting interrupted-flag and stopping all
-/// loops and conditionals.
-static void handle_int(int sig, siginfo_t *info, void *context) {
-    reader_handle_sigint();
-    default_handler(sig, info, context);
-}
-
-/// Non-interactive ^C handler.
-static void handle_int_notinteractive(int sig, siginfo_t *info, void *context) {
-    parser_t::skip_all_blocks();
-    default_handler(sig, info, context);
-}
-
-/// sigchld handler. Does notification and calls the handler in proc.c.
-static void handle_chld(int sig, siginfo_t *info, void *context) {
-    job_handle_signal(sig, info, context);
-    default_handler(sig, info, context);
-}
-
-// We have a sigalarm handler that does nothing. This is used in the signal torture test, to verify
-// that we behave correctly when receiving lots of irrelevant signals.
-static void handle_sigalarm(int sig, siginfo_t *info, void *context) {
-    UNUSED(sig);
-    UNUSED(info);
-    UNUSED(context);
 }
 
 void signal_reset_handlers() {
-    int i;
-
     struct sigaction act;
     sigemptyset(&act.sa_mask);
     act.sa_flags = 0;
     act.sa_handler = SIG_DFL;
 
-    for (i = 0; lookup[i].desc; i++) {
-        if (lookup[i].signal == SIGHUP) {
+    for (const auto &data : signal_table) {
+        if (data.signal == SIGHUP) {
             struct sigaction oact;
-            sigaction(SIGHUP, NULL, &oact);
+            sigaction(SIGHUP, nullptr, &oact);
             if (oact.sa_handler == SIG_IGN) continue;
         }
-        sigaction(lookup[i].signal, &act, NULL);
+        sigaction(data.signal, &act, nullptr);
     }
 }
 
@@ -281,85 +284,82 @@ static void set_interactive_handlers() {
     // Interactive mode. Ignore interactive signals.  We are a shell, we know what is best for
     // the user.
     act.sa_handler = SIG_IGN;
-    sigaction(SIGINT, &act, NULL);
-    sigaction(SIGQUIT, &act, NULL);
-    sigaction(SIGTSTP, &act, NULL);
-    sigaction(SIGTTOU, &act, NULL);
+    sigaction(SIGTSTP, &act, nullptr);
+    sigaction(SIGTTOU, &act, nullptr);
 
     // We don't ignore SIGTTIN because we might send it to ourself.
-    act.sa_sigaction = &default_handler;
+    act.sa_sigaction = &fish_signal_handler;
     act.sa_flags = SA_SIGINFO;
-    sigaction(SIGTTIN, &act, NULL);
-
-    act.sa_sigaction = &handle_int;
-    act.sa_flags = SA_SIGINFO;
-    sigaction(SIGINT, &act, NULL);
+    sigaction(SIGTTIN, &act, nullptr);
 
     // SIGTERM restores the terminal controlling process before dying.
-    act.sa_sigaction = &handle_sigterm;
+    act.sa_sigaction = &fish_signal_handler;
     act.sa_flags = SA_SIGINFO;
-    sigaction(SIGTERM, &act, NULL);
+    sigaction(SIGTERM, &act, nullptr);
 
-    sigaction(SIGHUP, NULL, &oact);
+    sigaction(SIGHUP, nullptr, &oact);
     if (oact.sa_handler == SIG_DFL) {
-        act.sa_sigaction = &handle_hup;
+        act.sa_sigaction = &fish_signal_handler;
         act.sa_flags = SA_SIGINFO;
-        sigaction(SIGHUP, &act, NULL);
+        sigaction(SIGHUP, &act, nullptr);
     }
 
     // SIGALARM as part of our signal torture test
-    act.sa_sigaction = &handle_sigalarm;
+    act.sa_sigaction = &fish_signal_handler;
     act.sa_flags = SA_SIGINFO;
-    sigaction(SIGALRM, &act, NULL);
+    sigaction(SIGALRM, &act, nullptr);
 
 #ifdef SIGWINCH
-    act.sa_sigaction = &handle_winch;
+    act.sa_sigaction = &fish_signal_handler;
     act.sa_flags = SA_SIGINFO;
-    sigaction(SIGWINCH, &act, NULL);
+    sigaction(SIGWINCH, &act, nullptr);
 #endif
 }
 
-static void set_non_interactive_handlers() {
-    struct sigaction act;
-    act.sa_flags = 0;
-    sigemptyset(&act.sa_mask);
-
-    act.sa_handler = SIG_IGN;
-    sigaction(SIGQUIT, &act, 0);
-
-    act.sa_sigaction = &handle_int_notinteractive;
-    act.sa_flags = SA_SIGINFO;
-    sigaction(SIGINT, &act, NULL);
-}
-
 /// Sets up appropriate signal handlers.
-void signal_set_handlers() {
+void signal_set_handlers(bool interactive) {
     struct sigaction act;
     act.sa_flags = 0;
     sigemptyset(&act.sa_mask);
 
     // Ignore SIGPIPE. We'll detect failed writes and deal with them appropriately. We don't want
     // this signal interrupting other syscalls or terminating us.
+    act.sa_sigaction = nullptr;
     act.sa_handler = SIG_IGN;
-    sigaction(SIGPIPE, &act, 0);
+    sigaction(SIGPIPE, &act, nullptr);
+
+    // Ignore SIGQUIT.
+    act.sa_handler = SIG_IGN;
+    sigaction(SIGQUIT, &act, nullptr);
+
+    // Apply our SIGINT handler.
+    act.sa_sigaction = &fish_signal_handler;
+    act.sa_flags = SA_SIGINFO;
+    sigaction(SIGINT, &act, nullptr);
 
     // Whether or not we're interactive we want SIGCHLD to not interrupt restartable syscalls.
     act.sa_flags = SA_SIGINFO;
-    act.sa_sigaction = &handle_chld;
+    act.sa_sigaction = &fish_signal_handler;
     act.sa_flags = SA_SIGINFO | SA_RESTART;
-    if (sigaction(SIGCHLD, &act, 0)) {
+    if (sigaction(SIGCHLD, &act, nullptr)) {
         wperror(L"sigaction");
         FATAL_EXIT();
     }
 
-    if (shell_is_interactive()) {
+    if (interactive) {
         set_interactive_handlers();
-    } else {
-        set_non_interactive_handlers();
     }
 }
 
-void signal_handle(int sig, int do_handle) {
+void signal_set_handlers_once(bool interactive) {
+    static std::once_flag s_noninter_once;
+    std::call_once(s_noninter_once, signal_set_handlers, false);
+
+    static std::once_flag s_inter_once;
+    if (interactive) std::call_once(s_inter_once, set_interactive_handlers);
+}
+
+void signal_handle(int sig) {
     struct sigaction act;
 
     // These should always be handled.
@@ -369,65 +369,47 @@ void signal_handle(int sig, int do_handle) {
 
     act.sa_flags = 0;
     sigemptyset(&act.sa_mask);
-    if (do_handle) {
-        act.sa_flags = SA_SIGINFO;
-        act.sa_sigaction = &default_handler;
-    } else {
-        act.sa_flags = 0;
-        act.sa_handler = SIG_DFL;
-    }
-
-    sigaction(sig, &act, 0);
+    act.sa_flags = SA_SIGINFO;
+    act.sa_sigaction = &fish_signal_handler;
+    sigaction(sig, &act, nullptr);
 }
 
 void get_signals_with_handlers(sigset_t *set) {
     sigemptyset(set);
-    for (int i = 0; lookup[i].desc; i++) {
+    for (const auto &data : signal_table) {
         struct sigaction act = {};
-        sigaction(lookup[i].signal, NULL, &act);
+        sigaction(data.signal, nullptr, &act);
         // If SIGHUP is being ignored (e.g., because were were run via `nohup`) don't reset it.
         // We don't special case other signals because if they're being ignored that shouldn't
         // affect processes we spawn. They should get the default behavior for those signals.
-        if (lookup[i].signal == SIGHUP && act.sa_handler == SIG_IGN) continue;
-        if (act.sa_handler != SIG_DFL) sigaddset(set, lookup[i].signal);
+        if (data.signal == SIGHUP && act.sa_handler == SIG_IGN) continue;
+        if (act.sa_handler != SIG_DFL) sigaddset(set, data.signal);
     }
-}
-
-void signal_block() {
-    ASSERT_IS_MAIN_THREAD();
-    sigset_t chldset;
-
-    if (!block_count) {
-        sigfillset(&chldset);
-        DIE_ON_FAILURE(pthread_sigmask(SIG_BLOCK, &chldset, NULL));
-    }
-
-    block_count++;
-    // debug( 0, L"signal block level increased to %d", block_count );
 }
 
 /// Ensure we did not inherit any blocked signals. See issue #3964.
 void signal_unblock_all() {
     sigset_t iset;
     sigemptyset(&iset);
-    sigprocmask(SIG_SETMASK, &iset, NULL);
+    sigprocmask(SIG_SETMASK, &iset, nullptr);
 }
 
-void signal_unblock() {
-    ASSERT_IS_MAIN_THREAD();
-
-    block_count--;
-    if (block_count < 0) {
-        debug(0, _(L"Signal block mismatch"));
-        bugreport();
-        FATAL_EXIT();
-    }
-
-    if (!block_count) {
-        sigset_t chldset;
-        sigfillset(&chldset);
-        DIE_ON_FAILURE(pthread_sigmask(SIG_UNBLOCK, &chldset, 0));
-    }
+sigint_checker_t::sigint_checker_t() {
+    // Call check() to update our generation.
+    check();
 }
 
-bool signal_is_blocked() { return static_cast<bool>(block_count); }
+bool sigint_checker_t::check() {
+    auto &tm = topic_monitor_t::principal();
+    generation_t gen = tm.generation_for_topic(topic_t::sighupint);
+    bool changed = this->gen_ != gen;
+    this->gen_ = gen;
+    return changed;
+}
+
+void sigint_checker_t::wait() {
+    auto &tm = topic_monitor_t::principal();
+    generation_list_t gens{};
+    gens[topic_t::sighupint] = this->gen_;
+    tm.check(&gens, {topic_t::sighupint}, true /* wait */);
+}

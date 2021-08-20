@@ -14,13 +14,14 @@
 #include <stdarg.h>  // IWYU pragma: keep
 #include <stdio.h>   // IWYU pragma: keep
 #include <stdlib.h>
-#include <string.h>
 #include <sys/stat.h>   // IWYU pragma: keep
 #include <sys/types.h>  // IWYU pragma: keep
 #include <unistd.h>
-#include <wchar.h>
 #include <wctype.h>
+
 #include <algorithm>
+#include <cstring>
+#include <cwchar>
 #if HAVE_GETTEXT
 #include <libintl.h>
 #endif
@@ -37,17 +38,17 @@
 #include <ncurses/term.h>
 #endif
 #include <signal.h>  // IWYU pragma: keep
-#include <wchar.h>   // IWYU pragma: keep
+
+#include <cwchar>  // IWYU pragma: keep
 
 #include "common.h"    // IWYU pragma: keep
 #include "fallback.h"  // IWYU pragma: keep
-#include "util.h"      // IWYU pragma: keep
 
-#ifdef TPARM_SOLARIS_KLUDGE
+#if defined(TPARM_SOLARIS_KLUDGE)
 #undef tparm
 
-char *tparm_solaris_kludge(char *str, long p1, long p2, long p3, long p4,
-                           long p5, long p6, long p7, long p8, long p9) {
+char *tparm_solaris_kludge(char *str, long p1, long p2, long p3, long p4, long p5, long p6, long p7,
+                           long p8, long p9) {
     return tparm(str, p1, p2, p3, p4, p5, p6, p7, p8, p9);
 }
 
@@ -74,18 +75,18 @@ int fish_mkstemp_cloexec(char *name_template) {
 /// building on Linux) these should end up just being stripped, as they are static functions that
 /// are not referenced in this file.
 // cppcheck-suppress unusedFunction
-__attribute__((unused)) static wchar_t *wcsdup_fallback(const wchar_t *in) {
-    size_t len = wcslen(in);
-    wchar_t *out = (wchar_t *)malloc(sizeof(wchar_t) * (len + 1));
-    if (out == 0) {
-        return 0;
+[[gnu::unused]] static wchar_t *wcsdup_fallback(const wchar_t *in) {
+    size_t len = std::wcslen(in);
+    wchar_t *out = static_cast<wchar_t *>(malloc(sizeof(wchar_t) * (len + 1)));
+    if (out == nullptr) {
+        return nullptr;
     }
 
-    memcpy(out, in, sizeof(wchar_t) * (len + 1));
+    std::memcpy(out, in, sizeof(wchar_t) * (len + 1));
     return out;
 }
 
-__attribute__((unused)) static int wcscasecmp_fallback(const wchar_t *a, const wchar_t *b) {
+[[gnu::unused]] static int wcscasecmp_fallback(const wchar_t *a, const wchar_t *b) {
     if (*a == 0) {
         return *b == 0 ? 0 : -1;
     } else if (*b == 0) {
@@ -98,8 +99,7 @@ __attribute__((unused)) static int wcscasecmp_fallback(const wchar_t *a, const w
     return wcscasecmp_fallback(a + 1, b + 1);
 }
 
-__attribute__((unused)) static int wcsncasecmp_fallback(const wchar_t *a, const wchar_t *b,
-                                                        size_t count) {
+[[gnu::unused]] static int wcsncasecmp_fallback(const wchar_t *a, const wchar_t *b, size_t count) {
     if (count == 0) return 0;
 
     if (*a == 0) {
@@ -162,9 +162,9 @@ int wcsncasecmp(const wchar_t *a, const wchar_t *b, size_t n) {
 
 #ifndef HAVE_WCSNDUP
 wchar_t *wcsndup(const wchar_t *in, size_t c) {
-    wchar_t *res = (wchar_t *)malloc(sizeof(wchar_t) * (c + 1));
-    if (res == 0) {
-        return 0;
+    wchar_t *res = static_cast<wchar_t *>(malloc(sizeof(wchar_t) * (c + 1)));
+    if (res == nullptr) {
+        return nullptr;
     }
     wcslcpy(res, in, c + 1);
     return res;
@@ -219,10 +219,7 @@ int futimes(int fd, const struct timeval *times) {
 #endif
 
 #if HAVE_GETTEXT
-char *fish_gettext(const char *msgid) {
-    return gettext(msgid);
-    ;
-}
+char *fish_gettext(const char *msgid) { return gettext(msgid); }
 
 char *fish_bindtextdomain(const char *domainname, const char *dirname) {
     return bindtextdomain(domainname, dirname);
@@ -268,24 +265,32 @@ int fish_get_emoji_width(wchar_t c) {
 
 // Big hack to use our versions of wcswidth where we know them to be broken, which is
 // EVERYWHERE (https://github.com/fish-shell/fish-shell/issues/2199)
-#ifndef HAVE_BROKEN_WCWIDTH
-#define HAVE_BROKEN_WCWIDTH 1
-#endif
-
-#if !HAVE_BROKEN_WCWIDTH
-int fish_wcwidth(wchar_t wc) { return wcwidth(wc); }
-int fish_wcswidth(const wchar_t *str, size_t n) { return wcswidth(str, n); }
-#else
-
 #include "widecharwidth/widechar_width.h"
 
 int fish_wcwidth(wchar_t wc) {
+    // The system version of wcwidth should accurately reflect the ability to represent characters
+    // in the console session, but knows nothing about the capabilities of other terminal emulators
+    // or ttys. Use it from the start only if we are logged in to the physical console.
+    if (is_console_session()) {
+        return wcwidth(wc);
+    }
+
     // Check for VS16 which selects emoji presentation. This "promotes" a character like U+2764
     // (width 1) to an emoji (probably width 2). So treat it as width 1 so the sums work. See #2652.
-    const int variation_selector_16 = 0xFE0F;
-    if (wc == variation_selector_16) return 1;
+    // VS15 selects text presentation.
+    const wchar_t variation_selector_16 = L'\uFE0F', variation_selector_15 = L'\uFE0E';
+    if (wc == variation_selector_16)
+        return 1;
+    else if (wc == variation_selector_15)
+        return 0;
 
+    // Korean Hangul Jamo median vowels and final consonants.
+    // These can either appear in combined form, taking 0 width themselves,
+    // or standalone with a 1 width. Since that's literally not expressible with wcwidth(),
+    // we take the position that the typical way for them to show up is composed.
+    if (wc >= L'\u1160' && wc <= L'\u11FF') return 0;
     int width = widechar_wcwidth(wc);
+
     switch (width) {
         case widechar_nonprint:
         case widechar_combining:
@@ -317,8 +322,6 @@ int fish_wcswidth(const wchar_t *str, size_t n) {
     }
     return result;
 }
-
-#endif  // HAVE_BROKEN_WCWIDTH
 
 #ifndef HAVE_FLOCK
 /*	$NetBSD: flock.c,v 1.6 2008/04/28 20:24:12 martin Exp $	*/
@@ -389,18 +392,15 @@ int flock(int fd, int op) {
 
 #endif  // HAVE_FLOCK
 
-#ifndef HAVE_WCSTOD_L
+#if !defined(HAVE_WCSTOD_L) && !defined(__NetBSD__)
 #undef wcstod_l
+#include <locale.h>
 // For platforms without wcstod_l C extension, wrap wcstod after changing the
 // thread-specific locale.
 double fish_compat::wcstod_l(const wchar_t *enptr, wchar_t **endptr, locale_t loc) {
-    // Create and use a new, thread-specific locale
-    locale_t locale = newlocale(LC_NUMERIC, "C", nullptr);
-    locale_t prev_locale = uselocale(locale);
-    double ret = wcstod(enptr, endptr);
-    // Restore the old locale before freeing the locale we created and are still using
+    locale_t prev_locale = uselocale(loc);
+    double ret = std::wcstod(enptr, endptr);
     uselocale(prev_locale);
-    freelocale(locale);
     return ret;
 }
-#endif // defined(wcstod_l)
+#endif  // defined(wcstod_l)

@@ -9,12 +9,9 @@ if test "$TRAVIS_OS_NAME" = osx
     exit 0
 end
 
-# This is a list of flakey tests that often succeed when rerun.
-set TESTS_TO_RETRY bind.expect
-
 # Set this var to modify behavior of the code being tests. Such as avoiding running
 # `fish_update_completions` when running tests.
-set -x FISH_UNIT_TESTS_RUNNING 1
+set -gx FISH_UNIT_TESTS_RUNNING 1
 
 # Change to directory containing this script
 cd (dirname (status -f))
@@ -22,7 +19,7 @@ cd (dirname (status -f))
 # These env vars should not be inherited from the user environment because they can affect the
 # behavior of the tests. So either remove them or set them to a known value.
 # See also tests/test.fish.
-set TERM xterm
+set -gx TERM xterm
 set -e ITERM_PROFILE
 
 # Test files specified on commandline, or all *.expect files
@@ -39,20 +36,20 @@ cat interactive.config >>$XDG_CONFIG_HOME/fish/config.fish
 say -o cyan "Testing interactive functionality"
 if not type -q expect
     say red "Tests disabled: `expect` not found"
-    exit 1
+    exit 0
 end
 
 function test_file
     set -l file $argv[1]
     echo -n "Testing file $file ... "
-    set starttime (date +%s)
+    set starttime (timestamp)
     begin
         set -lx TERM dumb
         expect -n -c 'source interactive.expect.rc' -f $file >$file.tmp.out 2>$file.tmp.err
     end
     set -l exit_status $status
     set -l res ok
-    set test_duration (math (date +%s) - $starttime)
+    set test_duration (delta $starttime)
     mv -f interactive.tmp.log $file.tmp.log
 
     diff $file.tmp.out $file.out >/dev/null
@@ -61,7 +58,7 @@ function test_file
     set -l err_status $status
 
     if test $out_status -eq 0 -a $err_status -eq 0 -a $exit_status -eq 0
-        say green "ok ($test_duration sec)"
+        say green "ok ($test_duration $unit)"
         # clean up tmp files
         rm -f $file.tmp.{err,out,log}
         return 0
@@ -69,11 +66,11 @@ function test_file
         say red "fail"
         if test $out_status -ne 0
             say yellow "Output differs for file $file. Diff follows:"
-            colordiff -u $file.tmp.out $file.out
+            colordiff -u $file.out $file.tmp.out
         end
         if test $err_status -ne 0
             say yellow "Error output differs for file $file. Diff follows:"
-            colordiff -u $file.tmp.err $file.err
+            colordiff -u $file.err $file.tmp.err
         end
         if test $exit_status -ne 0
             say yellow "Exit status differs for file $file."
@@ -92,14 +89,9 @@ end
 set failed
 for i in $files_to_test
     if not test_file $i
-        # Retry flakey tests once.
-        if contains $i $TESTS_TO_RETRY
-            say -o cyan "Rerunning test $i since it is known to be flakey"
-            rm -f $i.tmp.*
-            if not test_file $i
-                set failed $failed $i
-            end
-        else
+        say -o cyan "Rerunning test $i"
+        rm -f $i.tmp.*
+        if not test_file $i
             set failed $failed $i
         end
     end

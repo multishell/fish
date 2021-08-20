@@ -1,0 +1,171 @@
+.\" Man page generated from reStructuredText.
+.
+.TH "MATH" "1" "Jan 26, 2020" "3" "fish-shell"
+.SH NAME
+math \- Perform mathematics calculations
+.
+.nr rst2man-indent-level 0
+.
+.de1 rstReportMargin
+\\$1 \\n[an-margin]
+level \\n[rst2man-indent-level]
+level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
+-
+\\n[rst2man-indent0]
+\\n[rst2man-indent1]
+\\n[rst2man-indent2]
+..
+.de1 INDENT
+.\" .rstReportMargin pre:
+. RS \\$1
+. nr rst2man-indent\\n[rst2man-indent-level] \\n[an-margin]
+. nr rst2man-indent-level +1
+.\" .rstReportMargin post:
+..
+.de UNINDENT
+. RE
+.\" indent \\n[an-margin]
+.\" old: \\n[rst2man-indent\\n[rst2man-indent-level]]
+.nr rst2man-indent-level -1
+.\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
+.in \\n[rst2man-indent\\n[rst2man-indent-level]]u
+..
+.SH SYNOPSIS
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+math [\-sN | \-\-scale=N] [\-\-] EXPRESSION
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.SH DESCRIPTION
+.sp
+\fBmath\fP is used to perform mathematical calculations. It supports all the usual operations such as addition, subtraction, etc. As well as functions like \fBabs()\fP, \fBsqrt()\fP and \fBlog2()\fP\&.
+.sp
+By default, the output is as a float with trailing zeroes trimmed. To get a fixed representation, the \fB\-\-scale\fP option can be used, including \fB\-\-scale=0\fP for integer output.
+.sp
+Keep in mind that parameter expansion takes before expressions are evaluated. This can be very useful in order to perform calculations involving shell variables or the output of command substitutions, but it also means that parenthesis (\fB()\fP) and the asterisk (\fB*\fP) glob character have to be escaped or quoted. \fBx\fP can also be used to denote multiplication, but it needs to be followed by whitespace to distinguish it from hexadecimal numbers.
+.sp
+\fBmath\fP ignores whitespace between arguments and takes its input as multiple arguments (internally joined with a space), so \fBmath 2 +2\fP and \fBmath "2 +    2"\fP work the same. \fBmath 2 2\fP is an error.
+.sp
+The following options are available:
+.INDENT 0.0
+.IP \(bu 2
+\fB\-sN\fP or \fB\-\-scale=N\fP sets the scale of the result. \fBN\fP must be an integer or the word "max" for the maximum scale. A scale of zero causes results to be rounded down to the nearest integer. So \fB3/2\fP returns \fB1\fP rather than \fB2\fP which \fB1.5\fP would normally round to. This is for compatibility with \fBbc\fP which was the basis for this command prior to fish 3.0.0. Scale values greater than zero causes the result to be rounded using the usual rules to the specified number of decimal places.
+.UNINDENT
+.SH RETURN VALUES
+.sp
+If the expression is successfully evaluated and doesn\(aqt over/underflow or return NaN the return \fBstatus\fP is zero (success) else one.
+.SH SYNTAX
+.sp
+\fBmath\fP knows some operators, constants, functions and can (obviously) read numbers.
+.sp
+For numbers, \fB\&.\fP is always the radix character regardless of locale \- \fB2.5\fP, not \fB2,5\fP\&. Scientific notation (\fB10e5\fP) is also available.
+.SH OPERATORS
+.sp
+\fBmath\fP knows the following operators:
+.INDENT 0.0
+.IP \(bu 2
+\fB+\fP for addition and \fB\-\fP for subtraction.
+.IP \(bu 2
+\fB*\fP or \fBx\fP for multiplication, \fB/\fP for division. (Note that \fB*\fP is the glob character and needs to be quoted or escaped, \fBx\fP needs to be followed by whitespace or it looks like \fB0x\fP hexadecimal notation.)
+.IP \(bu 2
+\fB^\fP for exponentiation.
+.IP \(bu 2
+\fB%\fP for modulo.
+.IP \(bu 2
+\fB(\fP and \fB)\fP for grouping. (These need to be quoted or escaped because \fB()\fP denotes a command substitution.)
+.UNINDENT
+.sp
+They are all used in an infix manner \- \fB5 + 2\fP, not \fB+ 5 2\fP\&.
+.SH CONSTANTS
+.sp
+\fBmath\fP knows the following constants:
+.INDENT 0.0
+.IP \(bu 2
+\fBe\fP \- Euler\(aqs number.
+.IP \(bu 2
+\fBpi\fP \- You know that one. Half of Tau. (Tau is not implemented)
+.UNINDENT
+.sp
+Use them without a leading \fB$\fP \- \fBpi \- 3\fP should be about 0.
+.SH FUNCTIONS
+.sp
+\fBmath\fP supports the following functions:
+.INDENT 0.0
+.IP \(bu 2
+\fBabs\fP
+.IP \(bu 2
+\fBacos\fP
+.IP \(bu 2
+\fBasin\fP
+.IP \(bu 2
+\fBatan\fP
+.IP \(bu 2
+\fBatan2\fP
+.IP \(bu 2
+\fBceil\fP
+.IP \(bu 2
+\fBcos\fP
+.IP \(bu 2
+\fBcosh\fP
+.IP \(bu 2
+\fBexp\fP \- the base\-e exponential function
+.IP \(bu 2
+\fBfac\fP \- factorial
+.IP \(bu 2
+\fBfloor\fP
+.IP \(bu 2
+\fBln\fP
+.IP \(bu 2
+\fBlog\fP or \fBlog10\fP \- the base\-10 logarithm
+.IP \(bu 2
+\fBncr\fP
+.IP \(bu 2
+\fBnpr\fP
+.IP \(bu 2
+\fBpow(x,y)\fP returns x to the y (and can be written as \fBx ^ y\fP)
+.IP \(bu 2
+\fBround\fP \- rounds to the nearest integer, away from 0
+.IP \(bu 2
+\fBsin\fP
+.IP \(bu 2
+\fBsinh\fP
+.IP \(bu 2
+\fBsqrt\fP
+.IP \(bu 2
+\fBtan\fP
+.IP \(bu 2
+\fBtanh\fP
+.UNINDENT
+.sp
+All of the trigonometric functions use radians.
+.SH EXAMPLES
+.sp
+\fBmath 1+1\fP outputs 2.
+.sp
+\fBmath $status \- 128\fP outputs the numerical exit status of the last command minus 128.
+.sp
+\fBmath 10 / 6\fP outputs \fB1.666667\fP\&.
+.sp
+\fBmath \-s0 10.0 / 6.0\fP outputs \fB1\fP\&.
+.sp
+\fBmath \-s3 10 / 6\fP outputs \fB1.666\fP\&.
+.sp
+\fBmath "sin(pi)"\fP outputs \fB0\fP\&.
+.sp
+\fBmath 5 \e* 2\fP or \fBmath "5 * 2"\fP or \fBmath 5 "*" 2\fP all output \fB10\fP\&.
+.sp
+\fBmath 0xFF\fP outputs 255, \fBmath 0 x 3\fP outputs 0 (because it computes 0 multiplied by 3).
+.SH COMPATIBILITY NOTES
+.sp
+Fish 1.x and 2.x releases relied on the \fBbc\fP command for handling \fBmath\fP expressions. Starting with fish 3.0.0 fish uses the tinyexpr library and evaluates the expression without the involvement of any external commands.
+.sp
+You don\(aqt need to use \fB\-\-\fP before the expression even if it begins with a minus sign which might otherwise be interpreted as an invalid option. If you do insert \fB\-\-\fP before the expression it will cause option scanning to stop just like for every other command and it won\(aqt be part of the expression.
+.SH COPYRIGHT
+2019, fish-shell developers
+.\" Generated by docutils manpage writer.
+.

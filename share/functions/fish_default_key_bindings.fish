@@ -31,6 +31,9 @@ function fish_default_key_bindings -d "Default (Emacs-like) key bindings for fis
     bind --preset $argv "" self-insert
     or exit # protect against invalid $argv
 
+    # Space expands abbrs _and_ inserts itself.
+    bind --preset $argv " " self-insert expand-abbr
+
     bind --preset $argv \n execute
     bind --preset $argv \r execute
 
@@ -83,11 +86,6 @@ function fish_default_key_bindings -d "Default (Emacs-like) key bindings for fis
     bind --preset $argv \e\> end-of-buffer
 
     bind --preset $argv \ed kill-word
-
-    # Ignore some known-bad control sequences
-    # https://github.com/fish-shell/fish-shell/issues/1917
-    bind --preset $argv \e\[I 'begin;end'
-    bind --preset $argv \e\[O 'begin;end'
 
     # term-specific special bindings
     switch "$TERM"

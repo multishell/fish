@@ -1,11 +1,14 @@
 // Implementation of the cd builtin.
 #include "config.h"  // IWYU pragma: keep
 
-#include <errno.h>
+#include "builtin_cd.h"
+
+#include <fcntl.h>
 #include <sys/stat.h>
 
+#include <cerrno>
+
 #include "builtin.h"
-#include "builtin_cd.h"
 #include "common.h"
 #include "env.h"
 #include "fallback.h"  // IWYU pragma: keep
@@ -29,17 +32,15 @@ int builtin_cd(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     if (retval != STATUS_CMD_OK) return retval;
 
     if (opts.print_help) {
-        builtin_print_help(parser, streams, cmd, streams.out);
+        builtin_print_help(parser, streams, cmd);
         return STATUS_CMD_OK;
     }
 
     wcstring dir_in;
-    wcstring dir;
-
     if (argv[optind]) {
         dir_in = argv[optind];
     } else {
-        auto maybe_dir_in = env_get(L"HOME");
+        auto maybe_dir_in = parser.vars().get(L"HOME");
         if (maybe_dir_in.missing_or_empty()) {
             streams.err.append_format(_(L"%ls: Could not find home directory\n"), cmd);
             return STATUS_CMD_ERROR;
@@ -47,7 +48,9 @@ int builtin_cd(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         dir_in = maybe_dir_in->as_string();
     }
 
-    if (!path_get_cdpath(dir_in, &dir, env_get_pwd_slash())) {
+    wcstring pwd = parser.vars().get_pwd_slash();
+    maybe_t<wcstring> mdir = path_get_cdpath(dir_in, pwd, parser.vars());
+    if (!mdir) {
         if (errno == ENOTDIR) {
             streams.err.append_format(_(L"%ls: '%ls' is not a directory\n"), cmd, dir_in.c_str());
         } else if (errno == ENOENT) {
@@ -60,32 +63,41 @@ int builtin_cd(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
                                       cmd, dir_in.c_str());
         }
 
-        if (!shell_is_interactive()) streams.err.append(parser.current_line());
+        if (!parser.is_interactive()) streams.err.append(parser.current_line());
 
         return STATUS_CMD_ERROR;
     }
+    const wcstring &dir = *mdir;
 
     wcstring norm_dir = normalize_path(dir);
 
-    if (wchdir(norm_dir) != 0) {
+    // We need to keep around the fd for this directory, in the parser.
+    autoclose_fd_t dir_fd(wopen_cloexec(norm_dir, O_RDONLY));
+    bool success = dir_fd.valid() && fchdir(dir_fd.fd()) == 0;
+
+    if (!success) {
         struct stat buffer;
         int status;
 
         status = wstat(dir, &buffer);
         if (!status && S_ISDIR(buffer.st_mode)) {
             streams.err.append_format(_(L"%ls: Permission denied: '%ls'\n"), cmd, dir_in.c_str());
-
         } else {
             streams.err.append_format(_(L"%ls: '%ls' is not a directory\n"), cmd, dir_in.c_str());
         }
 
-        if (!shell_is_interactive()) {
+        if (!parser.is_interactive()) {
             streams.err.append(parser.current_line());
         }
 
         return STATUS_CMD_ERROR;
     }
 
-    env_set_one(L"PWD", ENV_EXPORT | ENV_GLOBAL, std::move(norm_dir));
+    parser.libdata().cwd_fd = std::make_shared<const autoclose_fd_t>(std::move(dir_fd));
+    std::vector<event_t> evts;
+    parser.vars().set_one(L"PWD", ENV_EXPORT | ENV_GLOBAL, std::move(norm_dir), &evts);
+    for (const auto &evt : evts) {
+        event_fire(parser, evt);
+    }
     return STATUS_CMD_OK;
 }

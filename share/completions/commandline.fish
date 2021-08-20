@@ -4,8 +4,8 @@ complete -c commandline -s a -l append -d "Add text to the end of the selected a
 complete -c commandline -s i -l insert -d "Add text at cursor"
 complete -c commandline -s r -l replace -d "Replace selected part"
 
-complete -c commandline -s j -l current-job  -d "Select job under cursor"
-complete -c commandline -s p -l current-process  -d "Select process under cursor"
+complete -c commandline -s j -l current-job -d "Select job under cursor"
+complete -c commandline -s p -l current-process -d "Select process under cursor"
 complete -c commandline -s t -l current-token -d "Select token under cursor"
 complete -c commandline -s b -l current-buffer -d "Select entire command line (default)"
 
@@ -20,4 +20,4 @@ complete -c commandline -s S -l search-mode -d "Return true if performing a hist
 complete -c commandline -s P -l paging-mode -d "Return true if showing pager content"
 
 
-complete -c commandline -n __fish_commandline_test -a '(bind --function-names)' -d 'Function name' -x
+complete -c commandline -n '__fish_contains_opt -s f function' -a '(bind --function-names)' -d 'Function name' -x

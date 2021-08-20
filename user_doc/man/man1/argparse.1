@@ -1,0 +1,190 @@
+.\" Man page generated from reStructuredText.
+.
+.TH "ARGPARSE" "1" "Jan 26, 2020" "3" "fish-shell"
+.SH NAME
+argparse \- parse options passed to a fish script or function
+.
+.nr rst2man-indent-level 0
+.
+.de1 rstReportMargin
+\\$1 \\n[an-margin]
+level \\n[rst2man-indent-level]
+level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
+-
+\\n[rst2man-indent0]
+\\n[rst2man-indent1]
+\\n[rst2man-indent2]
+..
+.de1 INDENT
+.\" .rstReportMargin pre:
+. RS \\$1
+. nr rst2man-indent\\n[rst2man-indent-level] \\n[an-margin]
+. nr rst2man-indent-level +1
+.\" .rstReportMargin post:
+..
+.de UNINDENT
+. RE
+.\" indent \\n[an-margin]
+.\" old: \\n[rst2man-indent\\n[rst2man-indent-level]]
+.nr rst2man-indent-level -1
+.\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
+.in \\n[rst2man-indent\\n[rst2man-indent-level]]u
+..
+.SH SYNOPSIS
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+argparse [OPTIONS] OPTION_SPEC... \-\- [ARG...]
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.SH DESCRIPTION
+.sp
+This command makes it easy for fish scripts and functions to handle arguments like how fish builtin commands handle their arguments. You pass arguments that define the known options, followed by a literal \fB\-\-\fP, then the arguments to be parsed (which might also include a literal \fB\-\-\fP). \fBargparse\fP then sets variables to indicate the passed options with their values, and sets $argv (and always $argv) to the remaining arguments. More on this in the \fI\%usage\fP section below.
+.sp
+Each option specification (\fBOPTION_SPEC\fP) is written in the \fI\%domain specific language\fP described below. All OPTION_SPECs must appear after any argparse flags and before the \fB\-\-\fP that separates them from the arguments to be parsed.
+.sp
+Each option that is seen in the ARG list will result in a var name of the form \fB_flag_X\fP, where \fBX\fP is the short flag letter and the long flag name. The OPTION_SPEC always requires a short flag even if it can\(aqt be used. So there will always be \fB_flag_X\fP var set using the short flag letter if the corresponding short or long flag is seen. The long flag name var (e.g., \fB_flag_help\fP) will only be defined, obviously, if the OPTION_SPEC includes a long flag name.
+.sp
+For example \fB_flag_h\fP and \fB_flag_help\fP if \fB\-h\fP or \fB\-\-help\fP is seen. The var will be set with local scope (i.e., as if the script had done \fBset \-l _flag_X\fP). If the flag is a boolean (that is, it just is passed or not, it doesn\(aqt have a value) the values are the short and long flags seen. If the option is not a boolean the values will be zero or more values corresponding to the values collected when the ARG list is processed. If the flag was not seen the flag var will not be set.
+.SH OPTIONS
+.sp
+The following \fBargparse\fP options are available. They must appear before all OPTION_SPECs:
+.INDENT 0.0
+.IP \(bu 2
+\fB\-n\fP or \fB\-\-name\fP is the command name for use in error messages. By default the current function name will be used, or \fIargparse\fP if run outside of a function.
+.IP \(bu 2
+\fB\-x\fP or \fB\-\-exclusive\fP should be followed by a comma separated list of short or long options that are mutually exclusive. You can use this more than once to define multiple sets of mutually exclusive options.
+.IP \(bu 2
+\fB\-N\fP or \fB\-\-min\-args\fP is followed by an integer that defines the minimum number of acceptable non\-option arguments. The default is zero.
+.IP \(bu 2
+\fB\-X\fP or \fB\-\-max\-args\fP is followed by an integer that defines the maximum number of acceptable non\-option arguments. The default is infinity.
+.IP \(bu 2
+\fB\-i\fP or \fB\-\-ignore\-unknown\fP ignores unknown options, keeping them and their arguments in $argv instead.
+.IP \(bu 2
+\fB\-s\fP or \fB\-\-stop\-nonopt\fP causes scanning the arguments to stop as soon as the first non\-option argument is seen. Among other things, this is useful to implement subcommands that have their own options.
+.IP \(bu 2
+\fB\-h\fP or \fB\-\-help\fP displays help about using this command.
+.UNINDENT
+.SH USAGE
+.sp
+Using this command requires first passing option specifications (\fBOPTION_SPEC\fP below), then a mandatory \fB\-\-\fP, and then the arguments you want to have parsed. More about this below but here is a simple example that might be used in a function named \fBmy_function\fP:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+argparse \-\-name=my_function \(aqh/help\(aq \(aqn/name=\(aq \-\- $argv
+or return
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+If \fB$argv\fP is empty then there is nothing to parse and \fBargparse\fP returns zero to indicate success. If \fB$argv\fP is not empty then it is checked for flags \fB\-h\fP, \fB\-\-help\fP, \fB\-n\fP and \fB\-\-name\fP\&. If they are found they are removed from the arguments and local variables are set so the script can determine which options were seen. Assuming \fB$argv\fP doesn\(aqt have any errors, such as a missing mandatory value for an option, then \fBargparse\fP exits with status zero. Otherwise it writes appropriate error messages to stderr and exits with a status of one.
+.sp
+The \fB\-\-\fP argument is required. You do not have to include any arguments after the \fB\-\-\fP but you must include the \fB\-\-\fP\&. For example, this is acceptable:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+set \-l argv
+argparse \(aqh/help\(aq \(aqn/name\(aq \-\- $argv
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+But this is not:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+set \-l argv
+argparse \(aqh/help\(aq \(aqn/name\(aq $argv
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+The first \fB\-\-\fP seen is what allows the \fBargparse\fP command to reliably separate the option specifications from the command arguments.
+.SH OPTION SPECIFICATIONS
+.sp
+Each option specification is a string composed of
+.INDENT 0.0
+.IP \(bu 2
+A short flag letter (which is mandatory). It must be an alphanumeric or "#". The "#" character is special and means that a flag of the form \fB\-123\fP is valid. The short flag "#" must be followed by "\-" (since the short name isn\(aqt otherwise valid since \fB_flag_#\fP is not a valid var name) and must be followed by a long flag name with no modifiers.
+.IP \(bu 2
+A \fB/\fP if the short flag can be used by someone invoking your command else \fB\-\fP if it should not be exposed as a valid short flag. If there is no long flag name these characters should be omitted. You can also specify a \(aq#\(aq to indicate the short and long flag names can be used and the value can be specified as an implicit int; i.e., a flag of the form \fB\-NNN\fP\&.
+.IP \(bu 2
+A long flag name which is optional. If not present then only the short flag letter can be used.
+.IP \(bu 2
+Nothing if the flag is a boolean that takes no argument or is an implicit int flag, else
+.IP \(bu 2
+\fB=\fP if it requires a value and only the last instance of the flag is saved, else
+.IP \(bu 2
+\fB=?\fP it takes an optional value and only the last instance of the flag is saved, else
+.IP \(bu 2
+\fB=+\fP if it requires a value and each instance of the flag is saved.
+.IP \(bu 2
+Optionally a \fB!\fP followed by fish script to validate the value. Typically this will be a function to run. If the exit status is zero the value for the flag is valid. If non\-zero the value is invalid. Any error messages should be written to stdout (not stderr). See the section on \fI\%Flag Value Validation\fP for more information.
+.UNINDENT
+.sp
+See the fish_opt command for a friendlier but more verbose way to create option specifications.
+.sp
+In the following examples if a flag is not seen when parsing the arguments then the corresponding _flag_X var(s) will not be set.
+.SH FLAG VALUE VALIDATION
+.sp
+Sometimes you need to validate the option values. For example, that it is a valid integer within a specific range, or an ip address, or something entirely different. You can always do this after \fBargparse\fP returns but you can also request that \fBargparse\fP perform the validation by executing arbitrary fish script. To do so simply append an \fB!\fP (exclamation\-mark) then the fish script to be run. When that code is executed three vars will be defined:
+.INDENT 0.0
+.IP \(bu 2
+\fB_argparse_cmd\fP will be set to the value of the value of the \fBargparse \-\-name\fP value.
+.IP \(bu 2
+\fB_flag_name\fP will be set to the short or long flag that being processed.
+.IP \(bu 2
+\fB_flag_value\fP will be set to the value associated with the flag being processed.
+.UNINDENT
+.sp
+If you do this via a function it should be defined with the \fB\-\-no\-scope\-shadowing\fP flag. Otherwise it won\(aqt have access to those variables.
+.sp
+The script should write any error messages to stdout, not stderr. It should return a status of zero if the flag value is valid otherwise a non\-zero status to indicate it is invalid.
+.sp
+Fish ships with a \fB_validate_int\fP function that accepts a \fB\-\-min\fP and \fB\-\-max\fP flag. Let\(aqs say your command accepts a \fB\-m\fP or \fB\-\-max\fP flag and the minimum allowable value is zero and the maximum is 5. You would define the option like this: \fBm/max=!_validate_int \-\-min 0 \-\-max 5\fP\&. The default if you just call \fB_validate_int\fP without those flags is to simply check that the value is a valid integer with no limits on the min or max value allowed.
+.SH EXAMPLE OPTION_SPECS
+.sp
+Some OPTION_SPEC examples:
+.INDENT 0.0
+.IP \(bu 2
+\fBh/help\fP means that both \fB\-h\fP and \fB\-\-help\fP are valid. The flag is a boolean and can be used more than once. If either flag is used then \fB_flag_h\fP and \fB_flag_help\fP will be set to the count of how many times either flag was seen.
+.IP \(bu 2
+\fBh\-help\fP means that only \fB\-\-help\fP is valid. The flag is a boolean and can be used more than once. If the long flag is used then \fB_flag_h\fP and \fB_flag_help\fP will be set to the count of how many times the long flag was seen.
+.IP \(bu 2
+\fBn/name=\fP means that both \fB\-n\fP and \fB\-\-name\fP are valid. It requires a value and can be used at most once. If the flag is seen then \fB_flag_n\fP and \fB_flag_name\fP will be set with the single mandatory value associated with the flag.
+.IP \(bu 2
+\fBn/name=?\fP means that both \fB\-n\fP and \fB\-\-name\fP are valid. It accepts an optional value and can be used at most once. If the flag is seen then \fB_flag_n\fP and \fB_flag_name\fP will be set with the value associated with the flag if one was provided else it will be set with no values.
+.IP \(bu 2
+\fBn\-name=+\fP means that only \fB\-\-name\fP is valid. It requires a value and can be used more than once. If the flag is seen then \fB_flag_n\fP and \fB_flag_name\fP will be set with the values associated with each occurrence of the flag.
+.IP \(bu 2
+\fBx\fP means that only \fB\-x\fP is valid. It is a boolean can can be used more than once. If it is seen then \fB_flag_x\fP will be set to the count of how many times the flag was seen.
+.IP \(bu 2
+\fBx=\fP, \fBx=?\fP, and \fBx=+\fP are similar to the n/name examples above but there is no long flag alternative to the short flag \fB\-x\fP\&.
+.IP \(bu 2
+\fBx\-\fP is not valid since there is no long flag name and therefore the short flag, \fB\-x\fP, has to be usable.
+.IP \(bu 2
+\fB#\-max\fP means that flags matching the regex "^\-\-?d+$" are valid. When seen they are assigned to the variable \fB_flag_max\fP\&. This allows any valid positive or negative integer to be specified by prefixing it with a single "\-". Many commands support this idiom. For example \fBhead \-3 /a/file\fP to emit only the first three lines of /a/file.
+.IP \(bu 2
+\fBn#max\fP means that flags matching the regex "^\-\-?d+$" are valid. When seen they are assigned to the variables \fB_flag_n\fP and \fB_flag_max\fP\&. This allows any valid positive or negative integer to be specified by prefixing it with a single "\-". Many commands support this idiom. For example \fBhead \-3 /a/file\fP to emit only the first three lines of /a/file. You can also specify the value using either flag: \fB\-n NNN\fP or \fB\-\-max NNN\fP in this example.
+.UNINDENT
+.sp
+After parsing the arguments the \fBargv\fP var is set with local scope to any values not already consumed during flag processing. If there are not unbound values the var is set but \fBcount $argv\fP will be zero.
+.sp
+If an error occurs during argparse processing it will exit with a non\-zero status and print error messages to stderr.
+.SH COPYRIGHT
+2019, fish-shell developers
+.\" Generated by docutils manpage writer.
+.

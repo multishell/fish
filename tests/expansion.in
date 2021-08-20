@@ -130,7 +130,7 @@ set expandedtilde (env HOME=$tmpdir/linkhome ../test/root/bin/fish -c 'echo ~')
 if test $expandedtilde != $tmpdir/linkhome
 	echo '~ expands to' $expandedtilde ' - expected ' $tmpdir/linkhome
 end
-unlink $tmpdir/linkhome
+rm $tmpdir/linkhome
 rmdir $tmpdir/realhome
 rmdir $tmpdir
 
@@ -148,3 +148,10 @@ set testvar "$testvar:FOUR"
 echo "Appended path: $testvar" (count $testvar)
 set --unpath testvar $testvar
 echo "Back to normal variable: $testvar" (count $testvar)
+
+logmsg Test fatal syntax errors
+../test/root/bin/fish -c 'echo $,foo'
+../test/root/bin/fish -c 'echo {'
+../test/root/bin/fish -c 'echo {}}'
+../test/root/bin/fish -c 'command (asd)'
+true

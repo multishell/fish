@@ -10,7 +10,7 @@ function fish_prompt
     # - the current path (with prompt_pwd)
     # - date +%X
     # - the current virtual environment, if any
-    # - the current git status, if any, with __fish_git_prompt
+    # - the current git status, if any, with fish_git_prompt
     # - the current battery state, if any, and if your power cable is unplugged, and if you have "acpi"
     # - current background jobs, if any
 
@@ -23,6 +23,9 @@ function fish_prompt
     # │ 2	15054	0%	arrêtée	sleep 100000
     # │ 1	15048	0%	arrêtée	sleep 100000
     # ╰─>$ echo there
+
+    set -l retc red
+    test $status = 0; and set retc green
 
     set -q __fish_git_prompt_showupstream
     or set -g __fish_git_prompt_showupstream auto
@@ -45,8 +48,6 @@ function fish_prompt
         set_color -o green
         echo -n ']'
     end
-    and set retc green
-    or set retc red
 
     set_color $retc
     echo -n '┬─'
@@ -75,11 +76,13 @@ function fish_prompt
     _nim_prompt_wrapper $retc '' (date +%X)
 
     # Virtual Environment
+    set -q VIRTUAL_ENV_DISABLE_PROMPT
+    or set -g VIRTUAL_ENV_DISABLE_PROMPT true
     set -q VIRTUAL_ENV
     and _nim_prompt_wrapper $retc V (basename "$VIRTUAL_ENV")
 
     # git
-    set prompt_git (__fish_git_prompt | string trim -c ' ()')
+    set prompt_git (fish_git_prompt | string trim -c ' ()')
     test -n "$prompt_git"
     and _nim_prompt_wrapper $retc G $prompt_git
 

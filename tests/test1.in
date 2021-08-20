@@ -11,14 +11,16 @@ for i in 1 2 # Comment on same line as command
 	end;
 end
 
-logmsg Bracket expansion
+logmsg Brace expansion
 echo x-{1}
 echo x-{1,2}
 echo foo-{1,2{3,4}}
 
 echo foo-{} # literal "{}" expands to itself
 echo foo-{{},{}} # the inner "{}" expand to themselves, the outer pair expands normally.
-echo foo-{""} # still expands to foo-
+echo foo-{{a},{}} # also works with something in the braces.
+echo foo-{""} # still expands to foo-{}
+echo banana # just as a marker
 echo foo-{$undefinedvar} # still expands to nothing
 
 echo foo-{,,,} # four empty items in the braces.
@@ -92,10 +94,7 @@ else
 end
 echo Test 4 $sta
 
-logmsg "Ensure eval doesn't unnecessarily mess with the exit status"
-function empty_func ; end
-false ; eval empty_func ; echo $status
-true ; eval empty_func ; echo $status
+logmsg "Testing builtin status"
 
 function test_builtin_status
 	return 1
@@ -109,8 +108,8 @@ end
 echo Test 5 $sta
 
 logmsg Verify that we can turn stderr into stdout and then pipe it
-# Note that the order here seems unspecified - 'errput' appears before 'output', why?
-begin ; echo output ; echo errput 1>&2  ; end 2>&1 | tee ../test/temp/tee_test.txt ; cat ../test/temp/tee_test.txt
+# Note that the order here has historically been unspecified - 'errput' could conceivably appear before 'output'.
+begin ; echo output ; echo errput 1>&2  ; end 2>&1 | sort | tee ../test/temp/tee_test.txt ; cat ../test/temp/tee_test.txt
 
 logmsg "Test that trailing ^ doesn't trigger redirection, see #1873"
 echo caret_no_redirect 12345^
@@ -218,9 +217,6 @@ echo 'echo "source argv {$argv}"' | source
 echo 'echo "source argv {$argv}"' | source -
 echo 'echo "source argv {$argv}"' | source - abc
 echo 'echo "source argv {$argv}"' | source - abc def
-# This hangs if it fails!
-source </dev/tty
-echo $status
 
 always_fails
 echo $status

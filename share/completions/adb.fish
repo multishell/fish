@@ -24,7 +24,7 @@ function __fish_adb_run_command -d 'Runs adb with any -s parameters already give
     set -l cmd (commandline -poc)
     set -e cmd[1]
     for i in $cmd
-        if test $sopt_is_next
+        if test -n "$sopt_is_next"
             set sopt -s $i
             break
         else
@@ -59,17 +59,17 @@ function __fish_adb_list_uninstallable_packages
 end
 
 function __fish_adb_list_files
-   set -l token (commandline -ct)
+    set -l token (commandline -ct)
 
-   # Have tab complete show initial / if nothing on current token
-   if test -z "$token"
-       set token "/"
-   end
+    # Have tab complete show initial / if nothing on current token
+    if test -z "$token"
+        set token "/"
+    end
 
-   # Return list of directories suffixed with '/'
-   __fish_adb_run_command find -H "$token*" -maxdepth 0 -type d 2>/dev/null | awk '{print $1"/"}'
-   # Return list of files
-   __fish_adb_run_command find -H "$token*" -maxdepth 0 -type f 2>/dev/null
+    # Return list of directories suffixed with '/'
+    __fish_adb_run_command find -H "$token*" -maxdepth 0 -type d 2>/dev/null | awk '{print $1"/"}'
+    # Return list of files
+    __fish_adb_run_command find -H "$token*" -maxdepth 0 -type f 2>/dev/null
 end
 
 

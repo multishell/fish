@@ -17,40 +17,35 @@ const wchar_t *signal_get_desc(int sig);
 void signal_reset_handlers();
 
 /// Set signal handlers to fish default handlers.
-void signal_set_handlers();
+void signal_set_handlers(bool interactive);
+
+/// Latch function. This sets signal handlers, but only the first time it is called.
+void signal_set_handlers_once(bool interactive);
 
 /// Tell fish what to do on the specified signal.
 ///
 /// \param sig The signal to specify the action of
-/// \param do_handle If true fish will catch the specified signal and fire an event, otherwise the
-/// default action (SIG_DFL) will be set
-void signal_handle(int sig, int do_handle);
+void signal_handle(int sig);
 
 /// Ensure we did not inherit any blocked signals. See issue #3964.
 void signal_unblock_all();
 
-/// Block all signals.
-void signal_block();
-
-/// Unblock all signals.
-void signal_unblock();
-
-/// Returns true if signals are being blocked.
-bool signal_is_blocked();
-
 /// Returns signals with non-default handlers.
 void get_signals_with_handlers(sigset_t *set);
 
-/// A RAII wrapper for signal_block/signal_unblock that triggers a signal block on creation, and then
-/// automatically releases the block when the object is destroyed, handling control flow and exceptions.
-struct signal_block_t {
-    signal_block_t() {
-        signal_block();
-    }
+/// A sigint_detector_t can be used to check if a SIGINT (or SIGHUP) has been delivered.
+class sigint_checker_t {
+    uint64_t gen_{0};
 
-    ~signal_block_t() {
-        signal_unblock();
-    }
+   public:
+    sigint_checker_t();
+
+    /// Check if a sigint has been delivered since the last call to check(), or since the detector
+    /// was created.
+    bool check();
+
+    /// Wait until a sigint is delivered.
+    void wait();
 };
 
 #endif

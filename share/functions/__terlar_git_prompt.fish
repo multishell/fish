@@ -16,7 +16,7 @@ set -g fish_prompt_git_status_renamed '➜'
 set -g fish_prompt_git_status_copied '⇒'
 set -g fish_prompt_git_status_deleted '✖'
 set -g fish_prompt_git_status_untracked '?'
-set -g fish_prompt_git_status_unmerged '!'
+set -g fish_prompt_git_status_unmerged !
 
 set -g fish_prompt_git_status_order added modified renamed copied deleted untracked unmerged
 
@@ -46,7 +46,7 @@ function __terlar_git_prompt --description 'Write out the git prompt'
     set -l staged
 
     for i in $index
-        if echo $i | grep '^[AMRCD]' >/dev/null
+        if string match -rq '^[AMRCD]' -- $i
             set staged 1
         end
 

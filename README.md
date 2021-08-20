@@ -32,14 +32,14 @@ fish can be installed:
 
 Packages for Debian, Fedora, openSUSE, and Red Hat Enterprise Linux/CentOS are available from the
 [openSUSE Build
-Service](https://software.opensuse.org/download.html?project=shells%3Afish%3Arelease%3A2&package=fish).
+Service](https://software.opensuse.org/download.html?project=shells%3Afish&package=fish).
 
 Packages for Ubuntu are available from the [fish
-PPA](https://launchpad.net/~fish-shell/+archive/ubuntu/release-2), and can be installed using the
+PPA](https://launchpad.net/~fish-shell/+archive/ubuntu/release-3), and can be installed using the
 following commands:
 
 ```
-sudo apt-add-repository ppa:fish-shell/release-2
+sudo apt-add-repository ppa:fish-shell/release-3
 sudo apt-get update
 sudo apt-get install fish
 ```
@@ -66,18 +66,17 @@ Once installed, run `fish` from your current shell to try fish out!
 Running fish requires:
 
 * curses or ncurses (preinstalled on most \*nix systems)
-* some common \*nix system utilities (currently `mktemp` and `seq`), in addition to the basic POSIX utilities
+* some common \*nix system utilities (currently `mktemp`), in addition to the basic POSIX utilities (`cat`, `cut`, `dirname`, `ls`, `mkdir`, `mkfifo`, `rm`, `sort`, `tee`, `tr`, `uname` and `sed` at least, but the full coreutils plus find, sed and awk is preferred)
 * gettext (library and `gettext` command), if compiled with translation support
 
 The following optional features also have specific requirements:
 
-* builtin commands that have the `--help` option or print usage messages require `nroff` and `ul`
+* builtin commands that have the `--help` option or print usage messages require `ul` and either `nroff` or `mandoc` for display
 * automated completion generation from manual pages requires Python (2.7+ or 3.3+) and possibly the
   `backports.lzma` module for Python 2.7
 * the `fish_config` web configuration tool requires Python (2.7+ or 3.3 +) and a web browser
 * system clipboard integration (with the default Ctrl-V and Ctrl-X bindings) require either the
-  `xsel` or `pbcopy`/`pbpaste` utilities
-* full completions for `yarn` and `bower` require the `jq` utility
+  `xsel`, `xclip`, `wl-copy`/`wl-paste` or `pbcopy`/`pbpaste` utilities
 * full completions for `yarn` and `npm` require the `all-the-package-names` NPM module
 
 ### Switching to fish
@@ -86,7 +85,7 @@ If you wish to use fish as your default shell, use the following command:
 
 	chsh -s /usr/local/bin/fish
 
-`chsh` will prompt you for your password and change your default shell. (Substitute `/usr/local/bin/fish` with whatever path fish was installed to, if it differs.)
+`chsh` will prompt you for your password and change your default shell. (Substitute `/usr/local/bin/fish` with whatever path fish was installed to, if it differs.) Log out, then log in again for the changes to take effect.
 
 Use the following command if fish isn't already added to `/etc/shells` to permit fish to be your login shell:
 
@@ -101,16 +100,16 @@ To switch your default shell back, you can run `chsh -s /bin/bash` (substituting
 Compiling fish requires:
 
 * a C++11 compiler (g++ 4.8 or later, or clang 3.3 or later)
-* any of CMake, GNU Make, or (on macOS only) Xcode
+* CMake (version 3.2 or later)
 * a curses implementation such as ncurses (headers and libraries)
 * PCRE2 (headers and libraries) - a copy is included with fish
 * gettext (headers and libraries) - optional, for translation support
 
-Additionally, if compiling fish with GNU Make from git (that is, not from an officially released tarball), `autoconf` 2.60+ and `automake` 1.13+ are required. Doxygen (1.8.7 or later) is also optionally required to build the documentation from a cloned git repository.
+Sphinx is also optionally required to build the documentation from a cloned git repository.
 
-### Building from source (all platforms)
+### Building from source (all platforms) - Makefile generator
 
-#### Using CMake (preferred)
+To install into `/usr/local`, run:
 
 ```bash
 mkdir build; cd build
@@ -119,27 +118,24 @@ make
 sudo make install
 ```
 
-#### Using autotools
+The install directory can be changed using the `-DCMAKE_INSTALL_PREFIX` parameter for `cmake`.
+
+### Building from source (macOS) - Xcode
 
 ```bash
-autoreconf --no-recursive #if building from Git
-./configure
-make
-sudo make install
+mkdir build; cd build
+cmake .. -G Xcode
 ```
 
-### Building from source (macOS only)
-
-* Build the `base` target in Xcode
-* Run the fish executable, for example, in `DerivedData/fish/Build/Products/Debug/base/bin/fish`
-
-To build and install fish with Xcode on macOS, execute the following in a terminal:
+An Xcode project will now be available in the `build` subdirectory. You can open it with Xcode,
+or run the following to build and install in `/usr/local`:
 
 ```bash
-xcodebuild install
-sudo ditto /tmp/fish.dst /
-sudo make install-doc
+xcodebuild
+xcodebuild -scheme install
 ```
+
+The install directory can be changed using the `-DCMAKE_INSTALL_PREFIX` parameter for `cmake`.
 
 ### Help, it didn't build!
 
@@ -147,7 +143,7 @@ If fish reports that it could not find curses, try installing a curses developme
 
 On Debian or Ubuntu you want:
 
-    sudo apt-get install build-essential ncurses-dev libncurses5-dev gettext autoconf
+    sudo apt-get install build-essential cmake ncurses-dev libncurses5-dev libpcre2-dev gettext
 
 On RedHat, CentOS, or Amazon EC2:
 
@@ -159,6 +155,6 @@ See the [Guide for Developers](CONTRIBUTING.md).
 
 ## Contact Us
 
-Questions, comments, rants and raves can be posted to the official fish mailing list at <https://lists.sourceforge.net/lists/listinfo/fish-users> or join us on our [gitter.im channel](https://gitter.im/fish-shell/fish-shell) or IRC channel [#fish at irc.oftc.net](https://webchat.oftc.net/?channels=fish). Or use the [fish tag on Stackoverflow](https://stackoverflow.com/questions/tagged/fish) for questions related to fish script and the [fish tag on Superuser](https://superuser.com/questions/tagged/fish) for all other questions (e.g., customizing colors, changing key bindings).
+Questions, comments, rants and raves can be posted to the official fish mailing list at <https://lists.sourceforge.net/lists/listinfo/fish-users> or join us on our [gitter.im channel](https://gitter.im/fish-shell/fish-shell). Or use the [fish tag on Stackoverflow](https://stackoverflow.com/questions/tagged/fish) for questions related to fish script and the [fish tag on Superuser](https://superuser.com/questions/tagged/fish) for all other questions (e.g., customizing colors, changing key bindings).
 
 Found a bug? Have an awesome idea? Please [open an issue](https://github.com/fish-shell/fish-shell/issues/new).
