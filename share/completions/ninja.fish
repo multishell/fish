@@ -1,11 +1,10 @@
 function __fish_ninja
     set -l saved_args $argv
     set -l dir .
-    argparse -i C/dir= -- (commandline -opc)
-    and set -ql _flag_C
-    and set -l dir $_flag_C
-    test -f $dir/build.ninja
-    and command ninja -C$dir $saved_args
+    if argparse -i C/dir= -- (commandline -opc)
+        # Using eval to expand ~ and variables specified on the commandline.
+        eval command ninja -C$_flag_C \$saved_args
+    end
 end
 
 function __fish_print_ninja_tools
@@ -18,7 +17,7 @@ end
 complete -c ninja -f -a '(__fish_print_ninja_targets)' -d target
 complete -x -c ninja -s t -x -a "(__fish_print_ninja_tools)" -d subtool
 complete -x -c ninja -s C -x -a "(__fish_complete_directories (commandline -ct))" -d "change to specified directory"
-complete -c ninja -s f -x -a "(__fish_complete_suffix .ninja)" -d "specify build file [default=build.ninja]"
+complete -c ninja -s f -k -x -a "(__fish_complete_suffix .ninja)" -d "specify build file [default=build.ninja]"
 complete -f -c ninja -s n -d "dry run"
 complete -f -c ninja -s v -d "show all command lines while building"
 complete -f -c ninja -s j -d "number of jobs to run in parallel [default derived from CPUs]"

@@ -79,7 +79,7 @@ class latch_t : detail::fixed_t {
     void operator=(T &&value) { *this = make_unique<T>(std::move(value)); }
 
     template <typename... Args>
-    void emplace(Args &&... args) {
+    void emplace(Args &&...args) {
         *this = make_unique<T>(std::forward<Args>(args)...);
     }
 };
@@ -93,9 +93,15 @@ class relaxed_atomic_t {
     relaxed_atomic_t() = default;
     relaxed_atomic_t(T value) : value_(value) {}
 
-    operator T() const { return value_.load(std::memory_order_relaxed); }
+    operator T() const volatile { return value_.load(std::memory_order_relaxed); }
 
     void operator=(T v) { return value_.store(v, std::memory_order_relaxed); }
+    void operator=(T v) volatile { return value_.store(v, std::memory_order_relaxed); }
+
+    // Perform a CAS operation, returning whether it succeeded.
+    bool compare_exchange(T expected, T desired) {
+        return value_.compare_exchange_strong(expected, desired, std::memory_order_relaxed);
+    }
 
     // postincrement
     T operator++(int) { return value_.fetch_add(1, std::memory_order_relaxed); }

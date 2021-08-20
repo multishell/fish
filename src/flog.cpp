@@ -46,6 +46,10 @@ void logger_t::log1(wchar_t c) { std::fputwc(c, file_); }
 
 void logger_t::log1(char c) { std::fwprintf(file_, L"%c", c); }
 
+void logger_t::log1(int64_t v) { std::fwprintf(file_, L"%lld", v); }
+
+void logger_t::log1(uint64_t v) { std::fwprintf(file_, L"%llu", v); }
+
 void logger_t::log_fmt(const category_t &cat, const wchar_t *fmt, ...) {
     va_list va;
     va_start(va, fmt);
@@ -88,10 +92,15 @@ using namespace flog_details;
 /// For each category, if its name matches the wildcard, set its enabled to the given sense.
 static void apply_one_wildcard(const wcstring &wc_esc, bool sense) {
     wcstring wc = parse_util_unescape_wildcards(wc_esc);
+    bool match_found = false;
     for (category_t *cat : s_all_categories) {
         if (wildcard_match(cat->name, wc)) {
             cat->enabled = sense;
+            match_found = true;
         }
+    }
+    if (!match_found) {
+        fprintf(stderr, "Failed to match debug category: %ls\n", wc_esc.c_str());
     }
 }
 

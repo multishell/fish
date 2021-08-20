@@ -42,6 +42,51 @@ string length "hello, world"
 string length -q ""; and echo not zero length; or echo zero length
 # CHECK: zero length
 
+string pad foo
+# CHECK: foo
+
+string pad -r -w 7 -c - foo
+# CHECK: foo----
+
+string pad --width 7 -c '=' foo
+# CHECK: ====foo
+
+echo \|(string pad --width 10 --right foo)\|
+# CHECK: |foo       |
+
+begin
+    set -l fish_emoji_width 2
+    # Pad string with multi-width emoji.
+    string pad -w 4 -c . 🐟
+    # CHECK: ..🐟
+
+    # Pad with multi-width character.
+    string pad -w 3 -c 🐟 .
+    # CHECK: 🐟.
+
+    # Multi-width pad with remainder, complemented with a space.
+    string pad -w 4 -c 🐟 . ..
+    # CHECK: 🐟 .
+    # CHECK: 🐟..
+end
+
+# Pad to the maximum length.
+string pad -c . long longer longest
+# CHECK: ...long
+# CHECK: .longer
+# CHECK: longest
+
+# This tests current behavior where the max width of an argument overrules
+# the width parameter. This could be changed if needed.
+string pad -c_ --width 5 longer-than-width-param x
+# CHECK: longer-than-width-param
+# CHECK: ______________________x
+
+# Current behavior is that only a single padding character is supported.
+# We can support longer strings in future without breaking compatibilty.
+string pad -c ab -w4 .
+# CHECKERR: string pad: Padding should be a character 'ab'
+
 string sub --length 2 abcde
 # CHECK: ab
 
@@ -50,6 +95,30 @@ string sub -s 2 -l 2 abcde
 
 string sub --start=-2 abcde
 # CHECK: de
+
+string sub --end=3 abcde
+# CHECK: abc
+
+string sub --end=-4 abcde
+# CHECK: a
+
+string sub --start=2 --end=-2 abcde
+# CHECK: bc
+
+string sub -s -5 -e -2 abcdefgh
+# CHECK: def
+
+string sub -s -100 -e -2 abcde
+# CHECK: abc
+
+string sub -s -5 -e 2 abcde
+# CHECK: ab
+
+string sub -s -50 -e -100 abcde
+# CHECK:
+
+string sub -s 2 -e -5 abcde
+# CHECK:
 
 string split . example.com
 # CHECK: example
@@ -63,6 +132,32 @@ string split "" abc
 # CHECK: a
 # CHECK: b
 # CHECK: c
+
+string split --fields=2 "" abc
+# CHECK: b
+
+string split --fields=3,2 "" abc
+# CHECK: c
+# CHECK: b
+
+string split --fields=2,9 "" abc; or echo "exit 1"
+# CHECK: exit 1
+
+string split --fields=1-3,5,9-7 "" 123456789
+# CHECK: 1
+# CHECK: 2
+# CHECK: 3
+# CHECK: 5
+# CHECK: 9
+# CHECK: 8
+# CHECK: 7
+
+string split -f1 ' ' 'a b' 'c d'
+# CHECK: a
+# CHECK: c
+
+string split --allow-empty --fields=2,9 "" abc
+# CHECK: b
 
 seq 3 | string join ...
 # CHECK: 1...2...3
@@ -92,10 +187,10 @@ string escape --style=var 'a b#c"\'d'
 string escape --style=var a\nghi_
 # CHECK: a_0A_ghi__
 
-string escape --style=var 'abc'
+string escape --style=var abc
 # CHECK: abc
 
-string escape --style=var '_a_b_c_'
+string escape --style=var _a_b_c_
 # CHECK: __a__b__c__
 
 string escape --style=var -- -
@@ -142,7 +237,7 @@ string unescape --style=url (string escape --style=url 'a b#c"\'d')
 # CHECK: a b#c"'d
 
 string unescape --style=url (string escape --style=url \na\nb%c~d\n)
-# CHECK: 
+# CHECK:
 # CHECK: a
 # CHECK: b%c~d
 
@@ -210,7 +305,7 @@ string replace -a " " _ "spaces to underscores"
 # CHECK: spaces_to_underscores
 
 string replace -r -a "[^\d.]+" " " "0 one two 3.14 four 5x"
-# CHECK: 0 3.14 5 
+# CHECK: 0 3.14 5
 
 string replace -r "(\w+)\s+(\w+)" "\$2 \$1 \$\$" "left right"
 # CHECK: right left $
@@ -238,14 +333,14 @@ or echo Unexpected exit status at line (status --current-line-number)
 # CHECK: dXf
 # CHECK: jkX
 
-string replace --regex -f "Z" X 1bc axc 2 d3f jk4 xyz
+string replace --regex -f Z X 1bc axc 2 d3f jk4 xyz
 and echo Unexpected exit status at line (status --current-line-number)
 
 # From https://github.com/fish-shell/fish-shell/issues/5201
 # 'string match -r with empty capture groups'
 string match -r '^([ugoa]*)([=+-]?)([rwx]*)$' '=r'
 #CHECK: =r
-#CHECK: 
+#CHECK:
 #CHECK: =
 #CHECK: r
 
@@ -272,22 +367,22 @@ string match -rvn a bbb; or echo "exit 1"
 # CHECK: 1 3
 
 ### Test repeat subcommand
-string repeat -n 2 "foo"
+string repeat -n 2 foo
 # CHECK: foofoo
 
-string repeat --count 2 "foo"
+string repeat --count 2 foo
 # CHECK: foofoo
 
 echo foo | string repeat -n 2
 # CHECK: foofoo
 
-string repeat -n2 -q "foo"; and echo "exit 0"
+string repeat -n2 -q foo; and echo "exit 0"
 # CHECK: exit 0
 
-string repeat -n2 --quiet "foo"; and echo "exit 0"
+string repeat -n2 --quiet foo; and echo "exit 0"
 # CHECK: exit 0
 
-string repeat -n0 "foo"; or echo "exit 1"
+string repeat -n0 foo; or echo "exit 1"
 # CHECK: exit 1
 
 string repeat -n0; or echo "exit 1"
@@ -304,31 +399,52 @@ string repeat -n1 --no-newline "there is "
 echo "no newline"
 # CHECK: there is no newline
 
-string repeat -n10 -m4 "foo"
+string repeat -n10 -m4 foo
 # CHECK: foof
 
-string repeat -n10 --max 5 "foo"
+string repeat -n10 --max 5 foo
 # CHECK: foofo
 
-string repeat -n3 -m20 "foo"
+string repeat -n3 -m20 foo
 # CHECK: foofoofoo
 
-string repeat -m4 "foo"
+string repeat -m4 foo
 # CHECK: foof
 
-string repeat -n-1 "foo"; and echo "exit 0"
+string repeat -n 5 a b c
+# CHECK: aaaaa
+# CHECK: bbbbb
+# CHECK: ccccc
+
+string repeat -n 5 --max 4 123 456 789
+# CHECK: 1231
+# CHECK: 4564
+# CHECK: 7897
+
+string repeat -n 5 --max 4 123 '' 789
+# CHECK: 1231
+# CHECK:
+# CHECK: 7897
+
+# Historical string repeat behavior is no newline if no output.
+echo -n before
+string repeat -n 5 ''
+echo after
+# CHECK: beforeafter
+
+string repeat -n-1 foo; and echo "exit 0"
 # CHECKERR: string repeat: Invalid count value '-1'
 
-string repeat -m-1 "foo"; and echo "exit 0"
+string repeat -m-1 foo; and echo "exit 0"
 # CHECKERR: string repeat: Invalid max value '-1'
 
-string repeat -n notanumber "foo"; and echo "exit 0"
+string repeat -n notanumber foo; and echo "exit 0"
 # CHECKERR: string repeat: Argument 'notanumber' is not a valid integer
 
-string repeat -m notanumber "foo"; and echo "exit 0"
+string repeat -m notanumber foo; and echo "exit 0"
 # CHECKERR: string repeat: Argument 'notanumber' is not a valid integer
 
-echo "stdin" | string repeat -n1 "and arg"; and echo "exit 0"
+echo stdin | string repeat -n1 "and arg"; and echo "exit 0"
 # CHECKERR: string repeat: Too many arguments
 
 string repeat -n; and echo "exit 0"
@@ -417,7 +533,7 @@ or echo exit 1
 # Test `string lower` and `string upper`.
 set x (string lower abc DEF gHi)
 or echo string lower exit 1
-test $x[1] = 'abc' -a $x[2] = 'def' -a $x[3] = 'ghi'
+test $x[1] = abc -a $x[2] = def -a $x[3] = ghi
 or echo strings not converted to lowercase
 
 set x (echo abc DEF gHi | string lower)
@@ -430,7 +546,7 @@ and echo lowercasing a lowercase string did not fail as expected
 
 set x (string upper abc DEF gHi)
 or echo string upper exit 1
-test $x[1] = 'ABC' -a $x[2] = 'DEF' -a $x[3] = 'GHI'
+test $x[1] = ABC -a $x[2] = DEF -a $x[3] = GHI
 or echo strings not converted to uppercase
 
 set x (echo abc DEF gHi | string upper)
@@ -444,7 +560,7 @@ and echo uppercasing a uppercase string did not fail as expected
 # 'Check NUL'
 # Note: We do `string escape` at the end to make a `\0` literal visible.
 printf 'a\0b' | string escape
-printf 'a\0c' | string match -e 'a' | string escape
+printf 'a\0c' | string match -e a | string escape
 printf 'a\0d' | string split '' | string escape
 printf 'a\0b' | string match -r '.*b$' | string escape
 printf 'a\0b' | string replace b g | string escape
@@ -525,13 +641,13 @@ printf '[%s]\n' (string collect one\n\n two\n)
 # CHECK: [two]
 printf '[%s]\n' (string collect -N one\n\n two\n)
 # CHECK: [one
-# CHECK: 
+# CHECK:
 # CHECK: ]
 # CHECK: [two
 # CHECK: ]
 printf '[%s]\n' (string collect --no-trim-newlines one\n\n two\n)
 # CHECK: [one
-# CHECK: 
+# CHECK:
 # CHECK: ]
 # CHECK: [two
 # CHECK: ]
@@ -569,3 +685,31 @@ echo $status
 string match -eq asd asd
 echo $status
 # CHECK: 0
+
+# Unmatched capturing groups are treated as empty
+echo az | string replace -r -- 'a(b.+)?z' 'a:$1z'
+# CHECK: a:z
+
+# --quiet should quit early
+echo "Checking that --quiet quits early - if this is broken it hangs"
+# CHECK: Checking that --quiet quits early - if this is broken it hangs
+yes | string match -q y
+echo $status
+# CHECK: 0
+yes | string length -q
+echo $status
+# CHECK: 0
+yes | string replace -q y n
+echo $status
+# CHECK: 0
+
+# `string` can't be wrapped properly anymore, since `string match` creates variables:
+function string
+    builtin string $argv
+end
+# CHECKERR: checks/string.fish (line {{\d+}}): function: The name 'string' is reserved, and cannot be used as a function name
+# CHECKERR: function string
+# CHECKERR: ^
+
+string escape \x7F
+# CHECK: \x7f

@@ -302,7 +302,7 @@ void wgetopter_t::_update_long_opt(int argc, wchar_t **argv, const struct woptio
 // Find a matching long opt.
 const struct woption *wgetopter_t::_find_matching_long_opt(const struct woption *longopts,
                                                            wchar_t *nameend, int *exact, int *ambig,
-                                                           int *indfound) {
+                                                           int *indfound) const {
     const struct woption *pfound = nullptr;
     int option_index = 0;
 
@@ -370,7 +370,7 @@ bool wgetopter_t::_handle_long_opt(int argc, wchar_t **argv, const struct woptio
                 std::fwprintf(stderr, _(L"%ls: Unrecognized option '%lc%ls'\n"), argv[0],
                               argv[woptind][0], nextchar);
         }
-        nextchar = (wchar_t *)L"";
+        nextchar = const_cast<wchar_t *>(L"");
         woptind++;
         *retval = '?';
         return true;
@@ -456,12 +456,3 @@ int wgetopter_t::wgetopt_long(int argc, wchar_t **argv, const wchar_t *options,
                               const struct woption *long_options, int *opt_index) {
     return _wgetopt_internal(argc, argv, options, long_options, opt_index, 0);
 }
-
-#if 0
-// This function should never be used by fish. We keep the signature just in case we find a
-// need to use it in the future.
-int wgetopter_t::wgetopt_long_only(int argc, wchar_t **argv, const wchar_t *options,
-                                   const struct woption *long_options, int *opt_index) {
-    return _wgetopt_internal(argc, argv, options, long_options, opt_index, 1);
-}
-#endif

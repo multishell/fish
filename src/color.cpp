@@ -3,10 +3,12 @@
 
 #include "color.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cwchar>  // IWYU pragma: keep
+#include <cwctype>
 
 #include "common.h"
 #include "fallback.h"  // IWYU pragma: keep
@@ -14,12 +16,23 @@
 bool rgb_color_t::try_parse_special(const wcstring &special) {
     std::memset(&data, 0, sizeof data);
     const wchar_t *name = special.c_str();
-    if (!wcscasecmp(name, L"normal")) {
-        this->type = type_normal;
-    } else if (!wcscasecmp(name, L"reset")) {
-        this->type = type_reset;
-    } else {
-        this->type = type_none;
+
+    // wcscasecmp is so slow that using it directly causes `try_parse_special` to consume up to
+    // 3% of all of fish's cpu time due to extremely inefficient invariant case lookups for wide
+    // characters (tested: Fedora Server 32 w/ glibc 2.31 with -O2). (This function is also called
+    // virtually non-stop while emitting output to determine colorization.)
+
+    // Take advantage of the fact that std::string length is O(1) to speed things up, and perform
+    // what amounts to a simple memcmp before needing to access the invariant case lookup tables.
+    this->type = type_none;
+    if (special.size() == const_strlen(L"normal")) {
+        if (!wcscmp(name, L"normal") || !wcscasecmp(name, L"normal")) {
+            this->type = type_normal;
+        }
+    } else if (special.size() == const_strlen(L"reset")) {
+        if (!wcscmp(name, L"reset") || !wcscasecmp(name, L"reset")) {
+            this->type = type_reset;
+        }
     }
     return this->type != type_none;
 }
@@ -87,16 +100,16 @@ static int parse_hex_digit(wchar_t x) {
 }
 
 static unsigned long squared_difference(long p1, long p2) {
-    unsigned long diff = static_cast<unsigned long>(labs(p1 - p2));
+    auto diff = static_cast<unsigned long>(labs(p1 - p2));
     return diff * diff;
 }
 
-static unsigned char convert_color(const unsigned char rgb[3], const uint32_t *colors,
+static uint8_t convert_color(const uint8_t rgb[3], const uint32_t *colors,
                                    size_t color_count) {
     long r = rgb[0], g = rgb[1], b = rgb[2];
-    unsigned long best_distance = static_cast<unsigned long>(-1);
-    unsigned char best_index = static_cast<unsigned char>(-1);
-    for (unsigned char idx = 0; idx < color_count; idx++) {
+    auto best_distance = static_cast<unsigned long>(-1);
+    auto best_index = static_cast<uint8_t>(-1);
+    for (size_t idx = 0; idx < color_count; idx++) {
         uint32_t color = colors[idx];
         long test_r = (color >> 16) & 0xFF, test_g = (color >> 8) & 0xFF,
              test_b = (color >> 0) & 0xFF;
@@ -150,32 +163,34 @@ bool rgb_color_t::try_parse_rgb(const wcstring &name) {
 
 struct named_color_t {
     const wchar_t *name;
-    unsigned char idx;
-    unsigned char rgb[3];
+    uint8_t idx;
+    uint8_t rgb[3];
     bool hidden;
 };
 
-static const named_color_t named_colors[] = {
-    {L"black", 0, {0x00, 0x00, 0x00}, false},      {L"red", 1, {0x80, 0x00, 0x00}, false},
-    {L"green", 2, {0x00, 0x80, 0x00}, false},      {L"brown", 3, {0x72, 0x50, 0x00}, true},
-    {L"yellow", 3, {0x80, 0x80, 0x00}, false},     {L"blue", 4, {0x00, 0x00, 0x80}, false},
-    {L"magenta", 5, {0x80, 0x00, 0x80}, false},    {L"purple", 5, {0x80, 0x00, 0x80}, true},
-    {L"cyan", 6, {0x00, 0x80, 0x80}, false},       {L"white", 7, {0xC0, 0xC0, 0xC0}, false},
-    {L"grey", 7, {0xE5, 0xE5, 0xE5}, true},        {L"brblack", 8, {0x80, 0x80, 0x80}, false},
-    {L"brgrey", 8, {0x55, 0x55, 0x55}, true},      {L"brred", 9, {0xFF, 0x00, 0x00}, false},
-    {L"brgreen", 10, {0x00, 0xFF, 0x00}, false},   {L"brbrown", 11, {0xFF, 0xFF, 0x00}, true},
-    {L"bryellow", 11, {0xFF, 0xFF, 0x00}, false},  {L"brblue", 12, {0x00, 0x00, 0xFF}, false},
-    {L"brmagenta", 13, {0xFF, 0x00, 0xFF}, false}, {L"brpurple", 13, {0xFF, 0x00, 0xFF}, true},
-    {L"brcyan", 14, {0x00, 0xFF, 0xFF}, false},    {L"brwhite", 15, {0xFF, 0xFF, 0xFF}, false},
+// Keep this sorted alphabetically
+static constexpr named_color_t named_colors[] = {
+    {L"black", 0, {0x00, 0x00, 0x00}, false},      {L"blue", 4, {0x00, 0x00, 0x80}, false},
+    {L"brblack", 8, {0x80, 0x80, 0x80}, false},    {L"brblue", 12, {0x00, 0x00, 0xFF}, false},
+    {L"brbrown", 11, {0xFF, 0xFF, 0x00}, true},    {L"brcyan", 14, {0x00, 0xFF, 0xFF}, false},
+    {L"brgreen", 10, {0x00, 0xFF, 0x00}, false},   {L"brgrey", 8, {0x55, 0x55, 0x55}, true},
+    {L"brmagenta", 13, {0xFF, 0x00, 0xFF}, false}, {L"brown", 3, {0x72, 0x50, 0x00}, true},
+    {L"brpurple", 13, {0xFF, 0x00, 0xFF}, true},   {L"brred", 9, {0xFF, 0x00, 0x00}, false},
+    {L"brwhite", 15, {0xFF, 0xFF, 0xFF}, false},   {L"bryellow", 11, {0xFF, 0xFF, 0x00}, false},
+    {L"cyan", 6, {0x00, 0x80, 0x80}, false},       {L"green", 2, {0x00, 0x80, 0x00}, false},
+    {L"grey", 7, {0xE5, 0xE5, 0xE5}, true},        {L"magenta", 5, {0x80, 0x00, 0x80}, false},
+    {L"purple", 5, {0x80, 0x00, 0x80}, true},      {L"red", 1, {0x80, 0x00, 0x00}, false},
+    {L"white", 7, {0xC0, 0xC0, 0xC0}, false},      {L"yellow", 3, {0x80, 0x80, 0x00}, false},
 };
+ASSERT_SORT_ORDER(named_colors, .name);
 
 wcstring_list_t rgb_color_t::named_color_names() {
-    size_t count = sizeof named_colors / sizeof *named_colors;
     wcstring_list_t result;
-    result.reserve(1 + count);
-    for (size_t i = 0; i < count; i++) {
-        if (!named_colors[i].hidden) {
-            result.push_back(named_colors[i].name);
+    constexpr size_t colors_count = sizeof(named_colors) / sizeof(named_colors[0]);
+    result.reserve(1 + colors_count);
+    for (const auto &named_color : named_colors) {
+        if (!named_color.hidden) {
+            result.push_back(named_color.name);
         }
     }
     // "normal" isn't really a color and does not have a color palette index or
@@ -188,29 +203,63 @@ wcstring_list_t rgb_color_t::named_color_names() {
 }
 
 bool rgb_color_t::try_parse_named(const wcstring &str) {
+    constexpr size_t colors_count = sizeof(named_colors) / sizeof(named_colors[0]);
+    constexpr const named_color_t *named_colors_begin = &named_colors[0];
+    constexpr const named_color_t *named_colors_end = &named_colors[0] + colors_count;
     std::memset(&data, 0, sizeof data);
-    size_t max = sizeof named_colors / sizeof *named_colors;
-    for (size_t idx = 0; idx < max; idx++) {
-        if (0 == wcscasecmp(str.c_str(), named_colors[idx].name)) {
-            data.name_idx = named_colors[idx].idx;
-            this->type = type_named;
-            return true;
-        }
+
+    if (str.size() == 0) {
+        return false;
     }
+
+    // Binary search
+    named_color_t search;
+    search.name = str.c_str();
+
+    // Optimized conversion to lowercase with early abort
+    maybe_t<wcstring> lowercase;
+    for (auto &c : str) {
+        if (c >= L'a' && c <= L'z') {
+            continue;
+        }
+        if (c >= L'A' && c <= L'Z') {
+            lowercase = str;
+            std::transform(lowercase.value().begin(), lowercase.value().end(),
+                           lowercase.value().begin(), std::towlower);
+            search.name = lowercase.value().c_str();
+            break;
+        }
+        // Cannot be a named color
+        return false;
+    }
+
+    auto result = std::lower_bound(named_colors_begin, named_colors_end, search,
+                                   [&](const named_color_t &c1, const named_color_t &c2) {
+                                       return wcscmp(c1.name, c2.name) < 0;
+                                   });
+
+    if (result != named_colors_end && !(wcscmp(search.name, result->name) < 0)) {
+        data.name_idx = result->idx;
+        this->type = type_named;
+        return true;
+    }
+
     return false;
 }
 
-static const wchar_t *name_for_color_idx(unsigned char idx) {
-    size_t max = sizeof named_colors / sizeof *named_colors;
-    for (size_t i = 0; i < max; i++) {
-        if (named_colors[i].idx == idx) {
-            return named_colors[i].name;
+static const wchar_t *name_for_color_idx(uint8_t idx) {
+    constexpr size_t colors_count = sizeof(named_colors) / sizeof(named_colors[0]);
+    if (idx < colors_count) {
+        for (auto &color : named_colors) {
+            if (idx == color.idx) {
+                return color.name;
+            }
         }
     }
     return L"unknown";
 }
 
-rgb_color_t::rgb_color_t(unsigned char t, unsigned char i) : type(t), flags(), data() {
+rgb_color_t::rgb_color_t(uint8_t t, uint8_t i) : type(t), flags(), data() {
     data.name_idx = i;
 }
 
@@ -224,7 +273,7 @@ rgb_color_t rgb_color_t::white() { return rgb_color_t(type_named, 7); }
 
 rgb_color_t rgb_color_t::black() { return rgb_color_t(type_named, 0); }
 
-static unsigned char term16_color_for_rgb(const unsigned char rgb[3]) {
+static uint8_t term16_color_for_rgb(const uint8_t rgb[3]) {
     const uint32_t kColors[] = {
         0x000000,  // Black
         0x800000,  // Red
@@ -246,7 +295,7 @@ static unsigned char term16_color_for_rgb(const unsigned char rgb[3]) {
     return convert_color(rgb, kColors, sizeof kColors / sizeof *kColors);
 }
 
-static unsigned char term256_color_for_rgb(const unsigned char rgb[3]) {
+static uint8_t term256_color_for_rgb(const uint8_t rgb[3]) {
     const uint32_t kColors[240] = {
         0x000000, 0x00005f, 0x000087, 0x0000af, 0x0000d7, 0x0000ff, 0x005f00, 0x005f5f, 0x005f87,
         0x005faf, 0x005fd7, 0x005fff, 0x008700, 0x00875f, 0x008787, 0x0087af, 0x0087d7, 0x0087ff,
@@ -278,7 +327,7 @@ static unsigned char term256_color_for_rgb(const unsigned char rgb[3]) {
     return 16 + convert_color(rgb, kColors, sizeof kColors / sizeof *kColors);
 }
 
-unsigned char rgb_color_t::to_term256_index() const {
+uint8_t rgb_color_t::to_term256_index() const {
     assert(type == type_rgb);
     return term256_color_for_rgb(data.color.rgb);
 }
@@ -288,12 +337,12 @@ color24_t rgb_color_t::to_color24() const {
     return data.color;
 }
 
-unsigned char rgb_color_t::to_name_index() const {
+uint8_t rgb_color_t::to_name_index() const {
     // TODO: This should look for the nearest color.
     assert(type == type_named || type == type_rgb);
     if (type == type_named) return data.name_idx;
     if (type == type_rgb) return term16_color_for_rgb(data.color.rgb);
-    return static_cast<unsigned char>(-1);  // this is an error
+    return static_cast<uint8_t>(-1);  // this is an error
 }
 
 void rgb_color_t::parse(const wcstring &str) {

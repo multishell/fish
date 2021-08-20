@@ -8,6 +8,7 @@
 #include <locale>
 
 #include "common.h"
+#include "flog.h"
 
 wcstring_range wcstring_tok(wcstring &str, const wcstring &needle, wcstring_range last) {
     using size_type = wcstring::size_type;
@@ -73,6 +74,15 @@ wcstring wcstolower(wcstring input) {
     return result;
 }
 
+size_t count_preceding_backslashes(const wcstring &text, size_t idx) {
+    assert(idx <= text.size() && "Out of bounds");
+    size_t backslashes = 0;
+    while (backslashes < idx && text.at(idx - backslashes - 1) == L'\\') {
+        backslashes++;
+    }
+    return backslashes;
+}
+
 bool string_prefixes_string(const wchar_t *proposed_prefix, const wcstring &value) {
     return string_prefixes_string(proposed_prefix, value.c_str());
 }
@@ -127,6 +137,105 @@ bool string_suffixes_string_case_insensitive(const wcstring &proposed_suffix,
     size_t suffix_size = proposed_suffix.size();
     return suffix_size <= value.size() && wcsncasecmp(value.c_str() + (value.size() - suffix_size),
                                                       proposed_suffix.c_str(), suffix_size) == 0;
+}
+
+/// Returns true if needle, represented as a subsequence, is contained within haystack.
+/// Note subsequence is not substring: "foo" is a subsequence of "follow" for example.
+static bool subsequence_in_string(const wcstring &needle, const wcstring &haystack) {
+    // Impossible if haystack is larger than string.
+    if (haystack.size() > haystack.size()) {
+        return false;
+    }
+
+    // Empty strings are considered to be subsequences of everything.
+    if (needle.empty()) {
+        return true;
+    }
+
+    auto ni = needle.begin();
+    for (auto hi = haystack.begin(); ni != needle.end() && hi != haystack.end(); ++hi) {
+        if (*ni == *hi) {
+            ++ni;
+        }
+    }
+    // We succeeded if we exhausted our sequence.
+    assert(ni <= needle.end());
+    return ni == needle.end();
+}
+
+// static
+maybe_t<string_fuzzy_match_t> string_fuzzy_match_t::try_create(const wcstring &string,
+                                                               const wcstring &match_against,
+                                                               bool anchor_start) {
+    // Helper to lazily compute if case insensitive matches should use icase or smartcase.
+    // Use icase if the input contains any uppercase characters, smartcase otherwise.
+    auto get_case_fold = [&] {
+        for (wchar_t c : string) {
+            if (towlower(c) != static_cast<wint_t>(c)) return case_fold_t::icase;
+        }
+        return case_fold_t::smartcase;
+    };
+
+    // A string cannot fuzzy match against a shorter string.
+    if (string.size() > match_against.size()) {
+        return none();
+    }
+
+    // exact samecase
+    if (string == match_against) {
+        return string_fuzzy_match_t{contain_type_t::exact, case_fold_t::samecase};
+    }
+
+    // prefix samecase
+    if (string_prefixes_string(string, match_against)) {
+        return string_fuzzy_match_t{contain_type_t::prefix, case_fold_t::samecase};
+    }
+
+    // exact icase
+    if (wcscasecmp(string.c_str(), match_against.c_str()) == 0) {
+        return string_fuzzy_match_t{contain_type_t::exact, get_case_fold()};
+    }
+
+    // prefix icase
+    if (string_prefixes_string_case_insensitive(string, match_against)) {
+        return string_fuzzy_match_t{contain_type_t::prefix, get_case_fold()};
+    }
+
+    // If anchor_start is set, this is as far as we go.
+    if (anchor_start) {
+        return none();
+    }
+
+    // substr samecase
+    size_t location;
+    if ((location = match_against.find(string)) != wcstring::npos) {
+        return string_fuzzy_match_t{contain_type_t::substr, case_fold_t::samecase};
+    }
+
+    // substr icase
+    if ((location = ifind(match_against, string, true /* fuzzy */)) != wcstring::npos) {
+        return string_fuzzy_match_t{contain_type_t::substr, get_case_fold()};
+    }
+
+    // subseq samecase
+    if (subsequence_in_string(string, match_against)) {
+        return string_fuzzy_match_t{contain_type_t::subseq, case_fold_t::samecase};
+    }
+
+    // We do not currently test subseq icase.
+    return none();
+}
+
+uint32_t string_fuzzy_match_t::rank() const {
+    // Combine our type and our case fold into a single number, such that better matches are
+    // smaller. Treat 'exact' types the same as 'prefix' types; this is because we do not
+    // prefer exact matches to prefix matches when presenting completions to the user.
+    // Treat smartcase the same as samecase; see #3978.
+    auto effective_type = (type == contain_type_t::exact ? contain_type_t::prefix : type);
+    auto effective_case = (case_fold == case_fold_t::smartcase ? case_fold_t::samecase : case_fold);
+
+    // Type dominates fold.
+    return static_cast<uint32_t>(effective_type) * 8 + static_cast<uint32_t>(effective_case);
 }
 
 template <bool Fuzzy, typename T>
@@ -195,4 +304,8 @@ wcstring join_strings(const wcstring_list_t &vals, wchar_t sep) {
         first = false;
     }
     return result;
+}
+
+void wcs2string_bad_char(wchar_t wc) {
+    FLOGF(char_encoding, L"Wide character U+%4X has no narrow representation", wc);
 }

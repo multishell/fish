@@ -99,10 +99,19 @@ not math 'ncr(1)'
 # CHECKERR: math: Error: Too few arguments
 # CHECKERR: 'ncr(1)'
 # CHECKERR:       ^
+
+# There is no "max" function.
 not math 'max()'
-# CHECKERR: math: Error: Unexpected token
+# CHECKERR: math: Error: Unknown function
 # CHECKERR: 'max()'
 # CHECKERR:    ^
+
+math n + 4
+# CHECKERR: math: Error: Unknown function
+# CHECKERR: 'n + 4'
+# CHECKERR:  ^
+
+
 not math 'sin()'
 # CHECKERR: math: Error: Too few arguments
 # CHECKERR: 'sin()'
@@ -127,7 +136,7 @@ math 0x2 # Hex
 math 5 x 4
 math 2x 4
 math 2 x4 # ERROR
-# CHECKERR: math: Error: Unknown variable
+# CHECKERR: math: Error: Unknown function
 # CHECKERR: '2 x4'
 # CHECKERR:     ^
 math 0x 3
@@ -140,3 +149,40 @@ math "42 >= 1337"
 # CHECKERR: math: Error: Logical operations are not supported, use `test` instead
 # CHECKERR: '42 >= 1337'
 # CHECKERR:     ^
+
+math "bitand(0xFE, 1)"
+# CHECK: 0
+math "bitor(0xFE, 1)"
+# CHECK: 255
+math "bitxor(5, 1)"
+# CHECK: 4
+math "bitand(5.5, 2)"
+# CHECK: 0
+math "bitand(5.5, 1)"
+# CHECK: 1
+
+math "bitor(37 ^ 5, 255)"
+# CHECK: 69343999
+
+math 'log 16'
+# CHECKERR: math: Error: Missing opening parenthesis
+# CHECKERR: 'log 16'
+# CHECKERR:       ^
+
+math 'log(16'
+# CHECKERR: math: Error: Missing closing parenthesis
+# CHECKERR: 'log(16'
+# CHECKERR:       ^
+
+math --base=16 255 / 15
+# CHECK: 0x11
+math -bhex 16 x 2
+# CHECK: 0x20
+math --base hex 12 + 0x50
+# CHECK: 0x5c
+math --base octal --scale=0 55
+# CHECK: 067
+math --base notabase
+# CHECKERR: math: 'notabase' is not a valid base value
+echo $status
+# CHECK: 2

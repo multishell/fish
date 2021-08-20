@@ -1,7 +1,6 @@
 __fish_make_completion_signals
 for i in $__kill_signals
-    set number (echo $i | cut -d " " -f 1)
-    set name (echo $i | cut -d " " -f 2)
+    string split -f 1,2 " " -- $i | read --line number name
     complete -c fuser -o $number -d $name
     complete -c fuser -o $name -d $name
 end
@@ -20,4 +19,3 @@ complete -c fuser -s v -l verbose -d 'Verbose mode'
 complete -c fuser -s V -d 'Print version and exit'
 complete -c fuser -s 4 -l ipv4 -d 'Search only for IPv4 sockets'
 complete -c fuser -s 6 -l ip64 -d 'Search only for IPv6 sockets'
-

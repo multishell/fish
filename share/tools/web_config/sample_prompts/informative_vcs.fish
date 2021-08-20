@@ -3,6 +3,7 @@
 
 function fish_prompt --description 'Write out the prompt'
     set -l last_pipestatus $pipestatus
+    set -lx __fish_last_status $status # Export for __fish_print_pipestatus.
 
     if not set -q __fish_git_prompt_show_informative_status
         set -g __fish_git_prompt_show_informative_status 1
@@ -14,7 +15,7 @@ function fish_prompt --description 'Write out the prompt'
         set -g __fish_git_prompt_color_branch magenta --bold
     end
     if not set -q __fish_git_prompt_showupstream
-        set -g __fish_git_prompt_showupstream "informative"
+        set -g __fish_git_prompt_showupstream informative
     end
     if not set -q __fish_git_prompt_char_upstream_ahead
         set -g __fish_git_prompt_char_upstream_ahead "↑"
@@ -57,19 +58,17 @@ function fish_prompt --description 'Write out the prompt'
     end
 
     set -l color_cwd
-    set -l prefix
     set -l suffix
-    switch "$USER"
-        case root toor
-            if set -q fish_color_cwd_root
-                set color_cwd $fish_color_cwd_root
-            else
-                set color_cwd $fish_color_cwd
-            end
-            set suffix '#'
-        case '*'
+    if functions -q fish_is_root_user; and fish_is_root_user
+        if set -q fish_color_cwd_root
+            set color_cwd $fish_color_cwd_root
+        else
             set color_cwd $fish_color_cwd
-            set suffix '$'
+        end
+        set suffix '#'
+    else
+        set color_cwd $fish_color_cwd
+        set suffix '$'
     end
 
     # PWD

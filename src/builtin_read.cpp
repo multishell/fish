@@ -30,6 +30,7 @@
 #include "parser.h"
 #include "proc.h"
 #include "reader.h"
+#include "termios.h"
 #include "wcstringutil.h"
 #include "wgetopt.h"
 #include "wutil.h"  // IWYU pragma: keep
@@ -56,7 +57,7 @@ struct read_cmd_opts_t {
     bool one_line = false;
 };
 
-static const wchar_t *const short_options = L":ac:d:ghiLlm:n:p:sStuxzP:UR:LB";
+static const wchar_t *const short_options = L":ac:d:ghiLln:p:sStuxzP:UR:L";
 static const struct woption long_options[] = {{L"array", no_argument, nullptr, 'a'},
                                               {L"command", required_argument, nullptr, 'c'},
                                               {L"delimiter", required_argument, nullptr, 'd'},
@@ -186,7 +187,6 @@ static int parse_cmd_opts(read_cmd_opts_t &opts, int *optind,  //!OCLINT(high nc
             }
             default: {
                 DIE("unexpected retval from wgetopt_long");
-                break;
             }
         }
     }
@@ -199,29 +199,35 @@ static int parse_cmd_opts(read_cmd_opts_t &opts, int *optind,  //!OCLINT(high nc
 /// we weren't asked to split on null characters.
 static int read_interactive(parser_t &parser, wcstring &buff, int nchars, bool shell, bool silent,
                             const wchar_t *prompt, const wchar_t *right_prompt,
-                            const wchar_t *commandline) {
+                            const wchar_t *commandline, int in) {
     int exit_res = STATUS_CMD_OK;
 
-    // Don't keep history
-    reader_push(parser, L"");
+    // Construct a configuration.
+    reader_config_t conf;
+    conf.complete_ok = shell;
+    conf.highlight_ok = shell;
+    conf.syntax_check_ok = shell;
 
-    reader_set_left_prompt(prompt);
-    reader_set_right_prompt(right_prompt);
-    if (shell) {
-        reader_set_complete_ok(true);
-        reader_set_highlight_function(&highlight_shell);
-        reader_set_test_function(&reader_shell_test);
-    }
     // No autosuggestions or abbreviations in builtin_read.
-    reader_set_allow_autosuggesting(false);
-    reader_set_expand_abbreviations(false);
-    reader_set_exit_on_interrupt(true);
-    reader_set_silent_status(silent);
+    conf.autosuggest_ok = false;
+    conf.expand_abbrev_ok = false;
+
+    conf.exit_on_interrupt = true;
+    conf.in_silent_mode = silent;
+
+    conf.left_prompt_cmd = prompt;
+    conf.right_prompt_cmd = right_prompt;
+
+    conf.in = in;
+
+    // Don't keep history.
+    reader_push(parser, wcstring{}, std::move(conf));
+    reader_get_history()->resolve_pending();
 
     reader_set_buffer(commandline, std::wcslen(commandline));
     scoped_push<bool> interactive{&parser.libdata().is_interactive, true};
 
-    event_fire_generic(parser, L"fish_prompt");
+    event_fire_generic(parser, L"fish_read");
     auto mline = reader_readline(nchars);
     interactive.restore();
     if (mline) {
@@ -428,7 +434,7 @@ static int validate_read_args(const wchar_t *cmd, read_cmd_opts_t &opts, int arg
 }
 
 /// The read builtin. Reads from stdin and stores the values in environment variables.
-int builtin_read(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_read(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
     wcstring buff;
@@ -454,6 +460,12 @@ int builtin_read(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
 
     retval = validate_read_args(cmd, opts, argc, argv, parser, streams);
     if (retval != STATUS_CMD_OK) return retval;
+
+    // stdin may have been explicitly closed
+    if (streams.stdin_fd < 0) {
+        streams.err.append_format(_(L"%ls: stdin is closed\n"), cmd);
+        return STATUS_CMD_ERROR;
+    }
 
     if (opts.one_line) {
         // --line is the same as read -d \n repeated N times
@@ -483,8 +495,9 @@ int builtin_read(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         int stream_stdin_is_a_tty = isatty(streams.stdin_fd);
         if (stream_stdin_is_a_tty && !opts.split_null) {
             // Read interactively using reader_readline(). This does not support splitting on null.
-            exit_res = read_interactive(parser, buff, opts.nchars, opts.shell, opts.silent,
-                                        opts.prompt, opts.right_prompt, opts.commandline);
+            exit_res =
+                read_interactive(parser, buff, opts.nchars, opts.shell, opts.silent, opts.prompt,
+                                 opts.right_prompt, opts.commandline, streams.stdin_fd);
         } else if (!opts.nchars && !stream_stdin_is_a_tty &&
                    lseek(streams.stdin_fd, 0, SEEK_CUR) != -1) {
             exit_res = read_in_chunks(streams.stdin_fd, buff, opts.split_null);
@@ -617,7 +630,7 @@ int builtin_read(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
                 // is set to the remaining string.
                 split_about(buff.begin(), buff.end(), opts.delimiter.begin(), opts.delimiter.end(),
                             &splits, argc - 1);
-                assert(splits.size() <= (size_t)vars_left());
+                assert(splits.size() <= static_cast<size_t>(vars_left()));
                 for (const auto &split : splits) {
                     parser.set_var_and_fire(*var_ptr++, opts.place, split);
                 }

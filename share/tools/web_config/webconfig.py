@@ -1,29 +1,30 @@
 from __future__ import unicode_literals
 from __future__ import print_function
 import binascii
-import cgi
 
 try:
     from html import escape as escape_html
 except ImportError:
     from cgi import escape as escape_html
-from distutils.version import LooseVersion
-from distutils.spawn import find_executable
 import glob
 import multiprocessing.pool
 import operator
 import os
 import platform
-import random
 import re
 import select
 import socket
-import string
 import subprocess
 import sys
 import tempfile
+import threading
 from itertools import chain
 
+COMMON_WSL_CMD_PATHS = (
+    "/mnt/c/Windows/System32",
+    "/windir/c/Windows/System32",
+    "/c/Windows/System32"
+)
 FISH_BIN_PATH = False  # will be set later
 IS_PY2 = sys.version_info[0] == 2
 
@@ -37,17 +38,30 @@ else:
     from urllib.parse import parse_qs
 
 
+def find_executable(exe, paths=()):
+    final_path = os.environ["PATH"].split(os.pathsep)
+    if paths:
+        final_path.extend(paths)
+    for p in final_path:
+        proposed_path = os.path.join(p, exe)
+        if os.access(proposed_path, os.X_OK):
+            return proposed_path
+
+
 def isMacOS10_12_5_OrLater():
     """ Return whether this system is macOS 10.12.5 or a later version. """
-    version = platform.mac_ver()[0]
-    return version and LooseVersion(version) >= LooseVersion("10.12.5")
+    try:
+        return [int(x) for x in platform.mac_ver()[0].split(".")] >= [10, 12, 5]
+    except:
+        return False
 
 
 def is_wsl():
     """ Return whether we are running under the Windows Subsystem for Linux """
     if "linux" in platform.system().lower() and os.access("/proc/version", os.R_OK):
         with open("/proc/version", "r") as f:
-            if "Microsoft" in f.read():
+            # Find 'Microsoft' for wsl1 and 'microsoft' for wsl2
+            if "microsoft" in f.read().lower():
                 return True
     return False
 
@@ -165,8 +179,7 @@ def better_color(c1, c2):
 
 
 def parse_color(color_str):
-    """ A basic function to parse a color string, for example, 'red' '--bold'.
-    """
+    """A basic function to parse a color string, for example, 'red' '--bold'."""
     comps = color_str.split(" ")
     color = "normal"
     background_color = ""
@@ -521,8 +534,21 @@ def append_html_for_ansi_escape(full_val, result, span_open):
         if span_open:
             result.append("</span>")
 
+    # term24bit foreground color
+    match = re.match(r"38;2;(\d+);(\d+);(\d+)", val)
+    if match is not None:
+        close_span()
+        # Just use the rgb values directly
+        html_color = "#%02x%02x%02x" % (
+            int(match.group(1)),
+            int(match.group(2)),
+            int(match.group(3)),
+        )
+        result.append('<span style="color: ' + html_color + '">')
+        return True  # span now open
+
     # term256 foreground color
-    match = re.match("38;5;(\d+)", val)
+    match = re.match(r"38;5;(\d+)", val)
     if match is not None:
         close_span()
         html_color = html_color_for_ansi_color_index(int(match.group(1)))
@@ -955,6 +981,9 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
             if name in vars:
                 vars[name].exported = True
 
+        # Do not return history as a variable, it may be so large the browser hangs.
+        vars.pop('history', None)
+
         return [
             vars[key].get_json_obj()
             for key in sorted(vars.keys(), key=lambda x: x.lower())
@@ -1159,19 +1188,26 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
             return None
 
     def do_get_sample_prompts_list(self):
-        pool = multiprocessing.pool.ThreadPool(processes=8)
-
-        # Kick off the "Current" meta-sample
-        current_metasample_async = pool.apply_async(self.do_get_current_prompt)
-
-        # Read all of the prompts in sample_prompts
         paths = glob.iglob("sample_prompts/*.fish")
-        sample_results = pool.map(self.read_one_sample_prompt, paths, 1)
-
-        # Finish up
         result = []
-        result.append(current_metasample_async.get())
-        result.extend([r for r in sample_results if r])
+        try:
+            pool = multiprocessing.pool.ThreadPool(processes=8)
+
+            # Kick off the "Current" meta-sample
+            current_metasample_async = pool.apply_async(self.do_get_current_prompt)
+
+            # Read all of the prompts in sample_prompts
+            sample_results = pool.map(self.read_one_sample_prompt, paths, 1)
+            result.append(current_metasample_async.get())
+            result.extend([r for r in sample_results if r])
+        except ImportError:
+            # If the platform doesn't support multiprocessing, we just do it one at a time.
+            # This happens e.g. on Termux.
+            print(
+                "Platform doesn't support multiprocessing, running one at a time. This may take a while."
+            )
+            result.append(self.do_get_current_prompt())
+            result.extend([self.read_one_sample_prompt(path) for path in paths])
         return result
 
     def do_get_abbreviations(self):
@@ -1289,18 +1325,30 @@ class FishConfigHTTPRequestHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
             return self.send_error(403)
         self.path = p
 
-        ctype, pdict = cgi.parse_header(self.headers["content-type"])
+        # This is cheesy, we want just the actual content-type.
+        # In some cases it'll give us the encoding as well,
+        # ("application/json;charset=utf-8")
+        # but we don't currently care.
+        ctype = self.headers["content-type"].split(";")[0]
 
-        if ctype == "multipart/form-data":
-            postvars = cgi.parse_multipart(self.rfile, pdict)
-        elif ctype == "application/x-www-form-urlencoded":
+        if ctype == "application/x-www-form-urlencoded":
             length = int(self.headers["content-length"])
             url_str = self.rfile.read(length).decode("utf-8")
             postvars = parse_qs(url_str, keep_blank_values=1)
         elif ctype == "application/json":
             length = int(self.headers["content-length"])
-            url_str = self.rfile.read(length).decode(pdict["charset"])
+            # This used to use the provided encoding, but we use utf-8
+            # all around the place and nobody has ever complained.
+            #
+            # If any other encoding is received this will raise a UnicodeError,
+            # which will throw us out of the function and should at most exit webconfig.
+            # If that happens to anyone we expect bug reports.
+            url_str = self.rfile.read(length).decode("utf-8")
             postvars = json.loads(url_str)
+        elif ctype == "multipart/form-data":
+            # This used to be a thing, as far as I could find there's
+            # no use anymore, but let's keep an error around just in case.
+            return self.send_error(500)
         else:
             postvars = {}
 
@@ -1398,13 +1446,7 @@ fish_bin_dir = os.environ.get("__fish_bin_dir")
 fish_bin_path = None
 if not fish_bin_dir:
     print("The $__fish_bin_dir environment variable is not set. " "Looking in $PATH...")
-    # distutils.spawn is terribly broken, because it looks in wd before PATH,
-    # and doesn't actually validate that the file is even executable
-    for p in os.environ["PATH"].split(os.pathsep):
-        proposed_path = os.path.join(p, "fish")
-        if os.access(proposed_path, os.X_OK):
-            fish_bin_path = proposed_path
-            break
+    fish_bin_path = find_executable("fish")
     if not fish_bin_path:
         print("fish could not be found. Is fish installed correctly?")
         sys.exit(-1)
@@ -1478,7 +1520,7 @@ url = "http://localhost:%d/%s/%s" % (PORT, authkey, initial_tab)
 # Create temporary file to hold redirect to real server. This prevents exposing
 # the URL containing the authentication key on the command line (see
 # CVE-2014-2914 or https://github.com/fish-shell/fish-shell/issues/1438).
-f = tempfile.NamedTemporaryFile(prefix='web_config', suffix='.html', mode='w')
+f = tempfile.NamedTemporaryFile(prefix="web_config", suffix=".html", mode="w")
 
 f.write(redirect_template_html % (url, url))
 f.flush()
@@ -1494,14 +1536,27 @@ print(
 )
 print("%sHit ENTER to stop.%s" % (esc["bold"], esc["exit_attribute_mode"]))
 
-if isMacOS10_12_5_OrLater():
-    subprocess.check_call(["open", fileurl])
-elif is_wsl():
-    subprocess.call(["cmd.exe", "/c", "start %s" % url])
-elif is_termux():
-    subprocess.call(["termux-open-url", url])
-else:
-    webbrowser.open(fileurl)
+
+def runThing():
+    if isMacOS10_12_5_OrLater():
+        subprocess.check_call(["open", fileurl])
+    elif is_wsl():
+        cmd_path = find_executable("cmd.exe", COMMON_WSL_CMD_PATHS)
+        if cmd_path:
+            subprocess.call([cmd_path, "/c", "start %s" % url])
+        else:
+            print("Please add the directory containing cmd.exe to your $PATH")
+            sys.exit(-1)
+    elif is_termux():
+        subprocess.call(["termux-open-url", url])
+    else:
+        webbrowser.open(fileurl)
+
+
+# Some browsers still block webbrowser.open if they haven't been opened before,
+# so we just spawn it in a thread.
+thread = threading.Thread(target=runThing)
+thread.start()
 
 # Select on stdin and httpd
 stdin_no = sys.stdin.fileno()
@@ -1520,3 +1575,4 @@ except KeyboardInterrupt:
 
 # Clean up temporary file
 f.close()
+thread.join()

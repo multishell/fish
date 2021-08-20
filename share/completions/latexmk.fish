@@ -1,4 +1,4 @@
-complete -c latexmk -x -a "(__fish_complete_suffix (commandline -ct) .tex '(La)TeX file')"
+complete -c latexmk -k -x -a "(__fish_complete_suffix (commandline -ct) .tex '(La)TeX file')"
 complete -c latexmk -o bibtex -d 'use bibtex when needed (default)'
 complete -c latexmk -o bibtex- -d 'never use bibtex'
 complete -c latexmk -o bibtex-cond -d 'use bibtex when needed, but only if the bib files exist'
@@ -69,4 +69,3 @@ complete -c latexmk -o view=dvi -d 'viewer is for dvi'
 complete -c latexmk -o view=none -d 'no viewer is used'
 complete -c latexmk -o view=ps -d 'viewer is for ps'
 complete -c latexmk -o view=pdf -d 'viewer is for pdf'
-

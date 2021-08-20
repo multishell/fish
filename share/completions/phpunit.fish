@@ -9,9 +9,9 @@ function __fish_phpunit_list_groups
 end
 
 # Lists PHPUnit objects corresponding to the given option
-function __fish_phpunit_list --argument option
+function __fish_phpunit_list --argument-names option
     # Use the same PHPUnit binary as in the command being completed
-    set -l phpunit (commandline -o)[1]
+    set -l phpunit (commandline -opc)[1]
     test -x $phpunit
     or return
 
@@ -64,7 +64,7 @@ complete -f -c phpunit -l globals-backup -d 'Backup and restore $GLOBALS for eac
 complete -f -c phpunit -l static-backup -d 'Backup and restore static attributes for each test'
 
 complete -f -c phpunit -l colors -a 'never auto always' -d 'Use colors in output'
-complete -x -c phpunit -l columns -a 'max' -d 'Number of columns to use for progress output'
+complete -x -c phpunit -l columns -a max -d 'Number of columns to use for progress output'
 complete -f -c phpunit -l stderr -d 'Write to STDERR instead of STDOUT'
 complete -f -c phpunit -l stop-on-defect -d 'Stop execution upon first not-passed test'
 complete -f -c phpunit -l stop-on-error -d 'Stop execution upon first error'
@@ -95,7 +95,7 @@ complete -f -c phpunit -l do-not-cache-result -d 'Do not write test results to c
 # Configuration Options:
 complete -x -c phpunit -l prepend -d 'A PHP script that is included as early as possible'
 complete -x -c phpunit -l bootstrap -d 'A PHP script that is included before the tests run'
-complete -x -c phpunit -s c -l configuration -a '(__fish_complete_suffix .xml; __fish_complete_suffix .xml.dist)' -d 'Read configuration from XML file'
+complete -x -c phpunit -s c -l configuration -k -a '(__fish_complete_suffix .xml; __fish_complete_suffix .xml.dist)' -d 'Read configuration from XML file'
 complete -f -c phpunit -l no-configuration -d 'Ignore default configuration file (phpunit.xml)'
 complete -f -c phpunit -l no-logging -d 'Ignore logging configuration'
 complete -f -c phpunit -l no-extensions -d 'Do not load PHPUnit extensions'

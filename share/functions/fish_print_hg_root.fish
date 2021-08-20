@@ -10,7 +10,7 @@ function fish_print_hg_root
     set -l dir (pwd -P 2>/dev/null)
     or return 1
 
-    while test $dir != "/"
+    while test $dir != /
         if test -f $dir'/.hg/dirstate'
             echo $dir/.hg
             return 0
@@ -21,4 +21,3 @@ function fish_print_hg_root
 
     return 1
 end
-

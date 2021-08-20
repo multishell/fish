@@ -61,7 +61,6 @@ static int parse_cmd_opts(block_cmd_opts_t &opts, int *optind,  //!OCLINT(high n
             }
             default: {
                 DIE("unexpected retval from wgetopt_long");
-                break;
             }
         }
     }
@@ -71,7 +70,7 @@ static int parse_cmd_opts(block_cmd_opts_t &opts, int *optind,  //!OCLINT(high n
 }
 
 /// The block builtin, used for temporarily blocking events.
-int builtin_block(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_block(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     const wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
     block_cmd_opts_t opts;
@@ -125,7 +124,6 @@ int builtin_block(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         }
         default: {
             DIE("unexpected scope");
-            break;
         }
     }
     if (block) {

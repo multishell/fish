@@ -35,20 +35,6 @@ struct bind_cmd_opts_t {
     const wchar_t *sets_bind_mode = L"";
 };
 
-// Here follows the definition of all builtin commands. The function names are all of the form
-// builtin_NAME where NAME is the name of the builtin. so the function name for the builtin 'fg' is
-// 'builtin_fg'.
-//
-// A few builtins, including 'while', 'command' and 'builtin' are not defined here as they are
-// handled directly by the parser. (They are not parsed as commands, instead they only alter the
-// parser state)
-//
-// The builtins 'break' and 'continue' are so closely related that they share the same
-// implementation, namely 'builtin_break_continue.
-//
-// Several other builtins, including jobs, ulimit and set are so big that they have been given their
-// own module. These files are all named 'builtin_NAME.cpp', where NAME is the name of the builtin.
-
 /// List a single key binding.
 /// Returns false if no binding with that sequence and mode exists.
 bool builtin_bind_t::list_one(const wcstring &seq, const wcstring &bind_mode, bool user,
@@ -150,7 +136,7 @@ void builtin_bind_t::function_names(io_streams_t &streams) {
 
 /// Wraps input_terminfo_get_sequence(), appending the correct error messages as needed.
 bool builtin_bind_t::get_terminfo_sequence(const wcstring &seq, wcstring *out_seq,
-                                           io_streams_t &streams) {
+                                           io_streams_t &streams) const {
     if (input_terminfo_get_sequence(seq, out_seq)) {
         return true;
     }
@@ -313,8 +299,8 @@ void builtin_bind_t::list_modes(io_streams_t &streams) {
     }
 }
 
-int parse_cmd_opts(bind_cmd_opts_t &opts, int *optind,  //!OCLINT(high ncss method)
-                   int argc, wchar_t **argv, parser_t &parser, io_streams_t &streams) {
+static int parse_cmd_opts(bind_cmd_opts_t &opts, int *optind,  //!OCLINT(high ncss method)
+                          int argc, wchar_t **argv, parser_t &parser, io_streams_t &streams) {
     wchar_t *cmd = argv[0];
     static const wchar_t *const short_options = L":aehkKfM:Lm:s";
     static const struct woption long_options[] = {{L"all", no_argument, nullptr, 'a'},
@@ -404,7 +390,6 @@ int parse_cmd_opts(bind_cmd_opts_t &opts, int *optind,  //!OCLINT(high ncss meth
             }
             default: {
                 DIE("unexpected retval from wgetopt_long");
-                break;
             }
         }
     }
@@ -414,7 +399,7 @@ int parse_cmd_opts(bind_cmd_opts_t &opts, int *optind,  //!OCLINT(high ncss meth
 }
 
 /// The bind builtin, used for setting character sequences.
-int builtin_bind_t::builtin_bind(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_bind_t::builtin_bind(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
     bind_cmd_opts_t opts;

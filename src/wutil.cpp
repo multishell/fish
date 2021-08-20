@@ -12,9 +12,6 @@
 #include <sys/stat.h>
 
 #include <cstring>
-#if defined(__linux__)
-#include <sys/statfs.h>
-#endif
 #include <sys/mount.h>
 #include <sys/statvfs.h>
 #include <sys/types.h>
@@ -29,6 +26,7 @@
 #include "common.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "flog.h"
+#include "wcstringutil.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 using cstring = std::string;
@@ -83,7 +81,7 @@ bool wreaddir_resolving(DIR *dir, const wcstring &dir_path, wcstring &out_name, 
         if (stat(fullpath.c_str(), &buf) != 0) {
             is_dir = false;
         } else {
-            is_dir = static_cast<bool>(S_ISDIR(buf.st_mode));
+            is_dir = S_ISDIR(buf.st_mode);
         }
     }
     *out_is_dir = is_dir;
@@ -141,92 +139,6 @@ wcstring wgetcwd() {
     return wcstring();
 }
 
-FILE *wfopen(const wcstring &path, const char *mode) {
-    int permissions = 0, options = 0;
-    size_t idx = 0;
-    switch (mode[idx++]) {
-        case 'r': {
-            permissions = O_RDONLY;
-            break;
-        }
-        case 'w': {
-            permissions = O_WRONLY;
-            options = O_CREAT | O_TRUNC;
-            break;
-        }
-        case 'a': {
-            permissions = O_WRONLY;
-            options = O_CREAT | O_APPEND;
-            break;
-        }
-        default: {
-            errno = EINVAL;
-            return nullptr;
-        }
-    }
-    // Skip binary.
-    if (mode[idx] == 'b') idx++;
-
-    // Consider append option.
-    if (mode[idx] == '+') permissions = O_RDWR;
-
-    int fd = wopen_cloexec(path, permissions | options, 0666);
-    if (fd < 0) return nullptr;
-    FILE *result = fdopen(fd, mode);
-    if (result == nullptr) close(fd);
-    return result;
-}
-
-int set_cloexec(int fd, bool should_set) {
-    // Note we don't want to overwrite existing flags like O_NONBLOCK which may be set. So fetch the
-    // existing flags and modify them.
-    int flags = fcntl(fd, F_GETFD, 0);
-    if (flags < 0) {
-        return -1;
-    }
-    int new_flags = flags;
-    if (should_set) {
-        new_flags |= FD_CLOEXEC;
-    } else {
-        new_flags &= ~FD_CLOEXEC;
-    }
-    if (flags == new_flags) {
-        return 0;
-    } else {
-        return fcntl(fd, F_SETFD, new_flags);
-    }
-}
-
-int open_cloexec(const std::string &cstring, int flags, mode_t mode, bool cloexec) {
-    ASSERT_IS_NOT_FORKED_CHILD();
-    int fd;
-
-#ifdef O_CLOEXEC
-    // Prefer to use O_CLOEXEC. It has to both be defined and nonzero.
-    if (cloexec) {
-        fd = open(cstring.c_str(), flags | O_CLOEXEC, mode);
-    } else {
-        fd = open(cstring.c_str(), flags, mode);
-    }
-#else
-    fd = open(cstring.c_str(), flags, mode);
-    if (fd >= 0 && !set_cloexec(fd)) {
-        close(fd);
-        fd = -1;
-    }
-#endif
-    return fd;
-}
-
-int wopen(const wcstring &pathname, int flags, mode_t mode) {
-    cstring tmp = wcs2string(pathname);
-    return open(tmp.c_str(), flags, mode);
-}
-
-int wopen_cloexec(const wcstring &pathname, int flags, mode_t mode) {
-    cstring tmp = wcs2string(pathname);
-    return open_cloexec(tmp, flags, mode, true);
-}
 
 DIR *wopendir(const wcstring &name) {
     const cstring tmp = wcs2string(name);
@@ -247,7 +159,7 @@ dir_t::~dir_t() {
 
 bool dir_t::valid() const { return this->dir != nullptr; }
 
-bool dir_t::read(wcstring &name) { return wreaddir(this->dir, name); }
+bool dir_t::read(wcstring &name) const { return wreaddir(this->dir, name); }
 
 int wstat(const wcstring &file_name, struct stat *buf) {
     const cstring tmp = wcs2string(file_name);
@@ -295,39 +207,6 @@ int make_fd_blocking(int fd) {
         err = fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
     }
     return err == -1 ? errno : 0;
-}
-
-int fd_check_is_remote(int fd) {
-#if defined(__linux__)
-    struct statfs buf {};
-    if (fstatfs(fd, &buf) < 0) {
-        return -1;
-    }
-    // Linux has constants for these like NFS_SUPER_MAGIC, SMB_SUPER_MAGIC, CIFS_MAGIC_NUMBER but
-    // these are in varying headers. Simply hard code them.
-    // NOTE: The cast is necessary for 32-bit systems because of the 4-byte CIFS_MAGIC_NUMBER
-    switch ((unsigned int)buf.f_type) {
-        case 0x6969:      // NFS_SUPER_MAGIC
-        case 0x517B:      // SMB_SUPER_MAGIC
-        case 0xFF534D42u:  // CIFS_MAGIC_NUMBER
-            return 1;
-        default:
-            // Other FSes are assumed local.
-            return 0;
-    }
-#elif defined(ST_LOCAL)
-    // ST_LOCAL is a flag to statvfs, which is itself standardized.
-    // In practice the only system to use this path is NetBSD.
-    struct statvfs buf {};
-    if (fstatvfs(fd, &buf) < 0) return -1;
-    return (buf.f_flag & ST_LOCAL) ? 0 : 1;
-#elif defined(MNT_LOCAL)
-    struct statfs buf {};
-    if (fstatfs(fd, &buf) < 0) return -1;
-    return (buf.f_flags & MNT_LOCAL) ? 0 : 1;
-#else
-    return -1;
-#endif
 }
 
 static inline void safe_append(char *buffer, const char *s, size_t buffsize) {
@@ -443,7 +322,7 @@ maybe_t<wcstring> wrealpath(const wcstring &pathname) {
     return str2wcstring(real_path);
 }
 
-wcstring normalize_path(const wcstring &path) {
+wcstring normalize_path(const wcstring &path, bool allow_leading_double_slashes) {
     // Count the leading slashes.
     const wchar_t sep = L'/';
     size_t leading_slashes = 0;
@@ -470,7 +349,8 @@ wcstring normalize_path(const wcstring &path) {
     wcstring result = join_strings(new_comps, sep);
     // Prepend one or two leading slashes.
     // Two slashes are preserved. Three+ slashes are collapsed to one. (!)
-    result.insert(0, leading_slashes > 2 ? 1 : leading_slashes, sep);
+    result.insert(0, allow_leading_double_slashes && leading_slashes > 2 ? 1 : leading_slashes,
+                  sep);
     // Ensure ./ normalizes to . and not empty.
     if (result.empty()) result.push_back(L'.');
     return result;
@@ -521,19 +401,15 @@ wcstring path_normalize_for_cd(const wcstring &wd, const wcstring &path) {
 }
 
 wcstring wdirname(const wcstring &path) {
-    char *tmp = wcs2str(path);
-    char *narrow_res = dirname(tmp);
-    wcstring result = format_string(L"%s", narrow_res);
-    free(tmp);
-    return result;
+    std::string tmp = wcs2string(path);
+    const char *narrow_res = dirname(&tmp[0]);
+    return str2wcstring(narrow_res);
 }
 
 wcstring wbasename(const wcstring &path) {
-    char *tmp = wcs2str(path);
-    char *narrow_res = basename(tmp);
-    wcstring result = format_string(L"%s", narrow_res);
-    free(tmp);
-    return result;
+    std::string tmp = wcs2string(path);
+    char *narrow_res = basename(&tmp[0]);
+    return str2wcstring(narrow_res);
 }
 
 // Really init wgettext.
@@ -580,8 +456,58 @@ int wrename(const wcstring &old, const wcstring &newv) {
     return rename(old_narrow.c_str(), new_narrow.c_str());
 }
 
+ssize_t wwrite_to_fd(const wchar_t *input, size_t input_len, int fd) {
+    // Accumulate data in a local buffer.
+    char accum[512];
+    size_t accumlen{0};
+    constexpr size_t maxaccum = sizeof accum / sizeof *accum;
+
+    // Helper to perform a write to 'fd', looping as necessary.
+    // \return true on success, false on error.
+    ssize_t total_written = 0;
+    auto do_write = [fd, &total_written](const char *cursor, size_t remaining) {
+        while (remaining > 0) {
+            ssize_t samt = write(fd, cursor, remaining);
+            if (samt < 0) return false;
+            total_written += samt;
+            size_t amt = static_cast<size_t>(samt);
+            assert(amt <= remaining && "Wrote more than requested");
+            remaining -= amt;
+            cursor += amt;
+        }
+        return true;
+    };
+
+    // Helper to flush the accumulation buffer.
+    auto flush_accum = [&] {
+        if (!do_write(accum, accumlen)) return false;
+        accumlen = 0;
+        return true;
+    };
+
+    bool success = wcs2string_callback(input, input_len, [&](const char *buff, size_t len) {
+        if (len + accumlen > maxaccum) {
+            // We have to flush.
+            // Note this modifies 'accumlen'.
+            if (!flush_accum()) return false;
+        }
+        if (len + accumlen <= maxaccum) {
+            // Accumulate more.
+            memmove(accum + accumlen, buff, len);
+            accumlen += len;
+            return true;
+        } else {
+            // Too much data to even fit, just write it immediately.
+            return do_write(buff, len);
+        }
+    });
+    // Flush any remaining.
+    if (success) success = flush_accum();
+    return success ? total_written : -1;
+}
+
 /// Return one if the code point is in a Unicode private use area.
-int fish_is_pua(wint_t wc) {
+static int fish_is_pua(wint_t wc) {
     if (PUA1_START <= wc && wc < PUA1_END) return 1;
     if (PUA2_START <= wc && wc < PUA2_END) return 1;
     if (PUA3_START <= wc && wc < PUA3_END) return 1;
@@ -595,16 +521,6 @@ int fish_iswalnum(wint_t wc) {
     if (fish_is_pua(wc)) return 0;
     return iswalnum(wc);
 }
-
-#if 0
-/// We need this because there are too many implementations that don't return the proper answer for
-/// some code points. See issue #3050.
-int fish_iswalpha(wint_t wc) {
-    if (fish_reserved_codepoint(wc)) return 0;
-    if (fish_is_pua(wc)) return 0;
-    return iswalpha(wc);
-}
-#endif
 
 /// We need this because there are too many implementations that don't return the proper answer for
 /// some code points. See issue #3050.

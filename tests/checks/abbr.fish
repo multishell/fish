@@ -8,7 +8,6 @@ abbr | grep __abbr1
 abbr --erase NOT_AN_ABBR
 abbr | grep __abbr1
 # CHECK: abbr -a -U -- __abbr1 'alpha beta gamma'
-# CHECKERR: abbr --erase: No abbreviation named NOT_AN_ABBR
 
 # Adding existing __abbr1 should be idempotent
 abbr __abbr1 alpha beta gamma
@@ -37,10 +36,10 @@ abbr | grep __abbr2
 abbr -e '~__abbr2'
 
 # Ensure we handle leading dashes in abbreviation names properly
-abbr -- '--__abbr3' 'xyz'
+abbr -- --__abbr3 xyz
 abbr | grep __abbr3
 # CHECK: abbr -a -U -- --__abbr3 xyz
-abbr -e -- '--__abbr3'
+abbr -e -- --__abbr3
 
 # Test that an abbr word containing spaces is rejected
 abbr "a b c" "d e f"
@@ -89,3 +88,9 @@ abbr -r __abbr11 __abbr12
 abbr __abbr-with-dashes omega
 complete -C__abbr-with
 # CHECK: __abbr-with-dashes	Abbreviation: omega
+
+abbr --add --global __abbr13 aaaaaaaaaaaaa
+abbr --add --global __abbr14 bbbbbbbbbbbbb
+abbr --erase __abbr13 __abbr14
+abbr | grep __abbr13
+abbr | grep __abbr14

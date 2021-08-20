@@ -10,6 +10,9 @@
 /* Define to 1 if you have the `ctermid_r' function. */
 #cmakedefine HAVE_CTERMID_R 1
 
+/* Define to 1 if C++11 thread_local is supported. */
+#cmakedefine HAVE_CX11_THREAD_LOCAL 1
+
 /* Define to 1 if you have the `dirfd' function. */
 #cmakedefine HAVE_DIRFD 1
 
@@ -40,9 +43,6 @@
 /* Define to 1 if you have the `killpg' function. */
 #cmakedefine HAVE_KILLPG 1
 
-/* Define to 1 if you have the `lrand48_r' function. */
-#cmakedefine HAVE_LRAND48_R 1
-
 /* Define to 1 if you have the `mkostemp' function. */
 #cmakedefine HAVE_MKOSTEMP 1
 
@@ -57,6 +57,12 @@
 
 /* Define to 1 if you have the <ncurses/term.h> header file. */
 #cmakedefine HAVE_NCURSES_TERM_H 1
+
+/* Define to 1 if you have the 'eventfd' function. */
+#cmakedefine HAVE_EVENTFD 1
+
+/* Define to 1 if you have the 'pipe2' function. */
+#cmakedefine HAVE_PIPE2 1
 
 /* Define to 1 if you have the <siginfo.h> header file. */
 #cmakedefine HAVE_SIGINFO_H 1
@@ -145,6 +151,9 @@
 /* Define to the full name of this package. */
 #define PACKAGE_NAME "fish"
 
+/* Use a variadic tparm on NetBSD curses. */
+#cmakedefine TPARM_VARARGS 1
+
 /* Define to 1 if tparm accepts a fixed amount of parameters. */
 #cmakedefine TPARM_SOLARIS_KLUDGE 1
 
@@ -164,10 +173,37 @@
 # define _DARWIN_USE_64_BIT_INODE 1
 #endif
 
+/* Define to 1 if mbrtowc attempts to convert invalid UTF-8 sequences */
+#cmakedefine HAVE_BROKEN_MBRTOWC_UTF8 1
+
+/* Support __warn_unused on function return values. */
 #if __GNUC__ >= 3
 #ifndef __warn_unused
 #define __warn_unused __attribute__ ((warn_unused_result))
 #endif
 #else
 #define __warn_unused
+#endif
+
+/* Like __warn_unused, but applies to a type.
+   At the moment only clang supports this as a type attribute.
+
+   We need to check for __has_attribute being a thing before or old gcc fails - #7554.
+*/
+#ifndef __has_attribute
+  #define __has_attribute(x) 0  // Compatibility with non-clang and old gcc compilers.
+#endif
+
+#if defined(__clang__) && __has_attribute(warn_unused_result)
+#ifndef __warn_unused_type
+#define __warn_unused_type __attribute__ ((warn_unused_result))
+#endif
+#else
+#define __warn_unused_type
+#endif
+
+#if __has_attribute(fallthrough)
+#define __fallthrough__ __attribute__ ((fallthrough));
+#else
+#define __fallthrough__
 #endif

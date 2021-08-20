@@ -4,9 +4,9 @@
 
 set -l progname pacman
 
-set -l listinstalled "(pacman -Q | string replace ' ' \t)"
+set -l listinstalled "(__fish_print_pacman_packages --installed)"
 # This might be an issue if another package manager is also installed (e.g. for containers)
-set -l listall "(__fish_print_packages)"
+set -l listall "(__fish_print_pacman_packages)"
 set -l listrepos "(__fish_print_pacman_repos)"
 set -l listgroups "(pacman -Sg)\t'Package Group'"
 
@@ -21,8 +21,8 @@ set -l files '__fish_contains_opt -s F files'
 complete -c $progname -e
 complete -c $progname -f
 # HACK: We only need these two to coerce fish to stop file completion and complete options
-complete -c $progname -n "$noopt" -a "-D" -d "Modify the package database"
-complete -c $progname -n "$noopt" -a "-Q" -d "Query the package database"
+complete -c $progname -n "$noopt" -a -D -d "Modify the package database"
+complete -c $progname -n "$noopt" -a -Q -d "Query the package database"
 
 # Primary operations
 complete -c $progname -s D -f -l database -n "$noopt" -d 'Modify the package database'
@@ -30,7 +30,7 @@ complete -c $progname -s Q -f -l query -n "$noopt" -d 'Query the package databas
 complete -c $progname -s R -f -l remove -n "$noopt" -d 'Remove packages from the system'
 complete -c $progname -s S -f -l sync -n "$noopt" -d 'Synchronize packages'
 complete -c $progname -s T -f -l deptest -n "$noopt" -d 'Check dependencies'
-complete -c $progname -s U -f -l upgrade -n "$noopt" -d 'Upgrade or add a local package'
+complete -c $progname -s U -l upgrade -n "$noopt" -d 'Upgrade or add a local package'
 complete -c $progname -s F -f -l files -n "$noopt" -d 'Query the files database'
 complete -c $progname -s V -f -l version -d 'Display version and exit'
 complete -c $progname -s h -f -l help -d 'Display help'
@@ -105,7 +105,7 @@ complete -c $progname -n "$has_db_opt; and $database" -xa "$listinstalled"
 # File options - since pacman 5
 complete -c $progname -n "$files" -s x -l regex -d 'Interpret each query as a regular expression' -f
 complete -c $progname -n "$files" -l machinereadable -d 'Print each match in a machine readable output format' -f
-complete -c $progname -n "$files" -d 'Package' -xa "$listall"
+complete -c $progname -n "$files" -d Package -xa "$listall"
 
 # Query options
 complete -c $progname -n "$query" -s c -l changelog -d 'View the change log of PACKAGE' -f
@@ -140,5 +140,5 @@ complete -c $progname -n "$sync" -xa "$listall $listgroups"
 
 # Upgrade options
 # Theoretically, pacman reads packages in all formats that libarchive supports
-# In practice, it's going to be tar.xz, tar.gz or tar.zst
-complete -c $progname -n "$upgrade" -xa '(__fish_complete_suffix pkg.tar.zst; __fish_complete_suffix pkg.tar.xz; __fish_complete_suffix pkg.tar.gz)' -d 'Package file'
+# In practice, it's going to be tar.xz, tar.gz, tar.zst, or just pkg.tar (uncompressed pkg)
+complete -c $progname -n "$upgrade" -k -xa '(__fish_complete_suffix pkg.tar.zst; __fish_complete_suffix pkg.tar.xz; __fish_complete_suffix pkg.tar.gz; __fish_complete_suffix pkg.tar;)' -d 'Package file'

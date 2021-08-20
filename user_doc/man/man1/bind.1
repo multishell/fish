@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "BIND" "1" "Apr 29, 2020" "3.1" "fish-shell"
+.TH "BIND" "1" "Mar 01, 2021" "3.2" "fish-shell"
 .SH NAME
 bind \- handle fish key bindings
 .
@@ -48,29 +48,34 @@ bind (\-e | \-\-erase) [(\-M | \-\-mode) MODE] [\-\-preset] [\-\-user] (\-a | \-
 .UNINDENT
 .SH DESCRIPTION
 .sp
-\fBbind\fP adds a binding for the specified key sequence to the specified command.
+\fBbind\fP manages bindings.
 .sp
-SEQUENCE is the character sequence to bind to. These should be written as fish escape sequences\&. For example, because pressing the Alt key and another character sends that character prefixed with an escape character, Alt\-based key bindings can be written using the \fB\ee\fP escape. For example, \fBAlt+w\fP can be written as \fB\eew\fP\&. The control character can be written in much the same way using the \fB\ec\fP escape, for example \fBControl+X\fP (^X) can be written as \fB\ecx\fP\&. Note that Alt\-based key bindings are case sensitive and Control\-based key bindings are not. This is a constraint of text\-based terminals, not \fBfish\fP\&.
+It can add bindings if given a SEQUENCE of characters to bind to. These should be written as fish escape sequences\&. The most important of these are \fB\ec\fP for the control key, and \fB\ee\fP for escape, and because of historical reasons also the Alt key (sometimes also called "Meta").
 .sp
-The default key binding can be set by specifying a \fBSEQUENCE\fP of the empty string (that is, \fB\(aq\(aq\fP ). It will be used whenever no other binding matches. For most key bindings, it makes sense to use the \fBself\-insert\fP function (i.e. \fBbind \(aq\(aq self\-insert\fP) as the default keybinding. This will insert any keystrokes not specifically bound to into the editor. Non\- printable characters are ignored by the editor, so this will not result in control sequences being printable.
+For example, \fBAlt\fP+\fBW\fP can be written as \fB\eew\fP, and \fBControl\fP+\fBX\fP (^X) can be written as \fB\ecx\fP\&. Note that Alt\-based key bindings are case sensitive and Control\-based key bindings are not. This is a constraint of text\-based terminals, not \fBfish\fP\&.
 .sp
-If the \fB\-k\fP switch is used, the name of the key (such as \(aqdown\(aq, \(aqup\(aq or \(aqbackspace\(aq) is used instead of a sequence. The names used are the same as the corresponding curses variables, but without the \(aqkey_\(aq prefix. (See \fBterminfo(5)\fP for more information, or use \fBbind \-\-key\-names\fP for a list of all available named keys.) If used in conjunction with the \fB\-s\fP switch, \fBbind\fP will silently ignore bindings to named keys that are not found in termcap for the current \fB$TERMINAL\fP, otherwise a warning is emitted.
+The generic key binding that matches if no other binding does can be set by specifying a \fBSEQUENCE\fP of the empty string (that is, \fB\(aq\(aq\fP ). For most key bindings, it makes sense to bind this to the \fBself\-insert\fP function (i.e. \fBbind \(aq\(aq self\-insert\fP). This will insert any keystrokes not specifically bound to into the editor. Non\-printable characters are ignored by the editor, so this will not result in control sequences being inserted.
+.sp
+If the \fB\-k\fP switch is used, the name of a key (such as \(aqdown\(aq, \(aqup\(aq or \(aqbackspace\(aq) is used instead of a sequence. The names used are the same as the corresponding curses variables, but without the \(aqkey_\(aq prefix. (See \fBterminfo(5)\fP for more information, or use \fBbind \-\-key\-names\fP for a list of all available named keys). Normally this will print an error if the current \fB$TERM\fP entry doesn\(aqt have a given key, unless the \fB\-s\fP switch is given.
+.sp
+To find out what sequence a key combination sends, you can use fish_key_reader\&.
 .sp
 \fBCOMMAND\fP can be any fish command, but it can also be one of a set of special input functions. These include functions for moving the cursor, operating on the kill\-ring, performing tab completion, etc. Use \fBbind \-\-function\-names\fP for a complete list of these input functions.
 .sp
-When \fBCOMMAND\fP is a shellscript command, it is a good practice to put the actual code into a \fI\%function\fP and simply bind to the function name. This way it becomes significantly easier to test the function while editing, and the result is usually more readable as well.
+When \fBCOMMAND\fP is a shellscript command, it is a good practice to put the actual code into a function and simply bind to the function name. This way it becomes significantly easier to test the function while editing, and the result is usually more readable as well.
 .sp
 If a script produces output, it should finish by calling \fBcommandline \-f repaint\fP to tell fish that a repaint is in order.
 .sp
-When multiple \fBCOMMAND\fPs are provided, they are all run in the specified order when the key is pressed. Note that special input functions cannot be combined with ordinary shell script commands. The commands must be entirely a sequence of special input functions (from \fBbind \-f\fP) or all shell script commands (i.e., valid fish script).
+Note that special input functions cannot be combined with ordinary shell script commands. The commands must be entirely a sequence of special input functions (from \fBbind \-f\fP) or all shell script commands (i.e., valid fish script).
 .sp
-If no \fBSEQUENCE\fP is provided, all bindings (or just the bindings in the specified \fBMODE\fP) are printed. If \fBSEQUENCE\fP is provided without \fBCOMMAND\fP, just the binding matching that sequence is printed.
+If no \fBSEQUENCE\fP is provided, all bindings (or just the bindings in the given \fBMODE\fP) are printed. If \fBSEQUENCE\fP is provided but no \fBCOMMAND\fP, just the binding matching that sequence is printed.
 .sp
 To save custom keybindings, put the \fBbind\fP statements into config.fish\&. Alternatively, fish also automatically executes a function called \fBfish_user_key_bindings\fP if it exists.
 .sp
 Key bindings may use "modes", which mimics Vi\(aqs modal input behavior. The default mode is "default", and every bind applies to a single mode. The mode can be viewed/changed with the \fB$fish_bind_mode\fP variable.
+.SH OPTIONS
 .sp
-The following parameters are available:
+The following options are available:
 .INDENT 0.0
 .IP \(bu 2
 \fB\-k\fP or \fB\-\-key\fP Specify a key name, such as \(aqleft\(aq or \(aqbackspace\(aq instead of a character sequence
@@ -89,7 +94,7 @@ The following parameters are available:
 .IP \(bu 2
 \fB\-a\fP or \fB\-\-all\fP See \fB\-\-erase\fP and \fB\-\-key\-names\fP
 .IP \(bu 2
-\fB\-\-preset\fP and \fB\-\-user\fP specify if bind should operate on user or preset bindings. User bindings take precedence over preset bindings when fish looks up mappings. By default, all \fBbind\fP invocations work on the "user" level except for listing, which will show both levels. All invocations except for inserting new bindings can operate on both levels at the same time. \fB\-\-preset\fP should only be used in full binding sets (like when working on \fBfish_vi_key_bindings\fP).
+\fB\-\-preset\fP and \fB\-\-user\fP specify if bind should operate on user or preset bindings. User bindings take precedence over preset bindings when fish looks up mappings. By default, all \fBbind\fP invocations work on the "user" level except for listing, which will show both levels. All invocations except for inserting new bindings can operate on both levels at the same time (if both \fB\-\-preset\fP and \fB\-\-user\fP are given). \fB\-\-preset\fP should only be used in full binding sets (like when working on \fBfish_vi_key_bindings\fP).
 .UNINDENT
 .SH SPECIAL INPUT FUNCTIONS
 .sp
@@ -126,6 +131,8 @@ The following special input functions are available:
 .IP \(bu 2
 \fBcancel\fP, cancel the current commandline and replace it with a new empty one
 .IP \(bu 2
+\fBcancel\-commandline\fP, cancel the current commandline and replace it with a new empty one, leaving the old one in place with a marker to show that it was cancelled
+.IP \(bu 2
 \fBcapitalize\-word\fP, make the current word begin with a capital letter
 .IP \(bu 2
 \fBcomplete\fP, guess the remainder of the current token
@@ -148,15 +155,17 @@ The following special input functions are available:
 .IP \(bu 2
 \fBend\-selection\fP, end selecting text
 .IP \(bu 2
-\fBexpand\-abbr\fP expands any abbreviation currently under the cursor
+\fBexpand\-abbr\fP, expands any abbreviation currently under the cursor
 .IP \(bu 2
-\fBexecute\fP run the current commandline
+\fBexecute\fP, run the current commandline
 .IP \(bu 2
-\fBforce\-repaint\fP reexecute the prompt functions without coalescing
+\fBexit\fP, exit the shell
 .IP \(bu 2
 \fBforward\-bigword\fP, move one whitespace\-delimited word to the right
 .IP \(bu 2
 \fBforward\-char\fP, move one character to the right
+.IP \(bu 2
+\fBforward\-single\-char\fP, move one character to the right; if an autosuggestion is available, only take a single char from it
 .IP \(bu 2
 \fBforward\-word\fP, move one word to the right
 .IP \(bu 2
@@ -188,25 +197,33 @@ The following special input functions are available:
 .IP \(bu 2
 \fBkill\-word\fP, move the next word to the killring
 .IP \(bu 2
+\fBor\fP, only execute the next function if the previous succeeded (note: only some functions report success)
+.IP \(bu 2
 \fBpager\-toggle\-search\fP, toggles the search field if the completions pager is visible.
 .IP \(bu 2
-\fBrepaint\fP reexecutes the prompt functions and redraws the prompt. Multiple successive repaints are coalesced.
+\fBrepaint\fP, reexecutes the prompt functions and redraws the prompt (also \fBforce\-repaint\fP for backwards\-compatibility)
 .IP \(bu 2
-\fBrepaint\-mode\fP reexecutes the fish_mode_prompt function and redraws the prompt. This is useful for vi\-mode. If no fish_mode_prompt exists, it acts like a normal repaint.
+\fBrepaint\-mode\fP, reexecutes the fish_mode_prompt and redraws the prompt. This is useful for vi\-mode. If no \fBfish_mode_prompt\fP exists or it prints nothing, it acts like a normal repaint.
 .IP \(bu 2
 \fBself\-insert\fP, inserts the matching sequence into the command line
 .IP \(bu 2
 \fBself\-insert\-notfirst\fP, inserts the matching sequence into the command line, unless the cursor is at the beginning
 .IP \(bu 2
-\fBsuppress\-autosuggestion\fP, remove the current autosuggestion
+\fBsuppress\-autosuggestion\fP, remove the current autosuggestion. Returns true if there was a suggestion to remove.
 .IP \(bu 2
 \fBswap\-selection\-start\-stop\fP, go to the other end of the highlighted text without changing the selection
 .IP \(bu 2
-\fBtranspose\-chars\fP,  transpose two characters to the left of the cursor
+\fBtranspose\-chars\fP, transpose two characters to the left of the cursor
 .IP \(bu 2
 \fBtranspose\-words\fP, transpose two words to the left of the cursor
 .IP \(bu 2
+\fBinsert\-line\-under\fP, add a new line under the current line
+.IP \(bu 2
+\fBinsert\-line\-over\fP, add a new line over the current line
+.IP \(bu 2
 \fBup\-line\fP, move up one line
+.IP \(bu 2
+\fBundo\fP and \fBredo\fP, revert or redo the most recent edits on the command line
 .IP \(bu 2
 \fBupcase\-word\fP, make the current word uppercase
 .IP \(bu 2
@@ -215,6 +232,8 @@ The following special input functions are available:
 \fByank\-pop\fP, rotate to the previous entry of the killring
 .UNINDENT
 .SH EXAMPLES
+.sp
+Exit the shell when \fBControl\fP+\fBD\fP is pressed:
 .INDENT 0.0
 .INDENT 3.5
 .sp
@@ -226,7 +245,7 @@ bind \ecd \(aqexit\(aq
 .UNINDENT
 .UNINDENT
 .sp
-Causes \fBfish\fP to exit when \fBControl+D\fP is pressed.
+Perform a history search when \fBPage Up\fP is pressed:
 .INDENT 0.0
 .INDENT 3.5
 .sp
@@ -238,20 +257,43 @@ bind \-k ppage history\-search\-backward
 .UNINDENT
 .UNINDENT
 .sp
-Performs a history search when the \fBPage Up\fP key is pressed.
+Turn on Vi key bindings and rebind \fBControl\fP+\fBC\fP to clear the input line:
 .INDENT 0.0
 .INDENT 3.5
 .sp
 .nf
 .ft C
 set \-g fish_key_bindings fish_vi_key_bindings
-bind \-M insert \ecc kill\-whole\-line force\-repaint
+bind \-M insert \ecc kill\-whole\-line repaint
 .ft P
 .fi
 .UNINDENT
 .UNINDENT
 .sp
-Turns on Vi key bindings and rebinds \fBControl+C\fP to clear the input line.
+Launch \fBgit diff\fP and repaint the commandline afterwards when \fBControl\fP+\fBG\fP is pressed:
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+bind \ecg \(aqgit diff; commandline \-f repaint\(aq
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.SH TERMINAL LIMITATIONS
+.sp
+Unix terminals, like the ones fish operates in, are at heart 70s technology. They have some limitations that applications running inside them can\(aqt workaround.
+.sp
+For instance, the control key modifies a character by setting the top three bits to 0. This means:
+.INDENT 0.0
+.IP \(bu 2
+Many characters + control are indistinguishable from other keys. \fBControl\fP+\fBI\fP \fIis\fP tab, \fBControl\fP+\fBJ\fP \fIis\fP newline (\fIn\fP).
+.IP \(bu 2
+Control and shift don\(aqt work simultaneously
+.UNINDENT
+.sp
+Other keys don\(aqt have a direct encoding, and are sent as escape sequences. For example \fB→\fP (Right) often sends \fB\ee\e[C\fP\&. These can differ from terminal to terminal, and the mapping is typically available in \fIterminfo(5)\fP\&. Sometimes however a terminal identifies as e.g. \fBxterm\-256color\fP for compatibility, but then implements xterm\(aqs sequences incorrectly.
 .SH SPECIAL CASE: THE ESCAPE CHARACTER
 .sp
 The escape key can be used standalone, for example, to switch from insertion mode to normal mode when using Vi keybindings. Escape can also be used as a "meta" key, to indicate the start of an escape sequence, like for function or arrow keys. Custom bindings can also be defined that begin with an escape character.
@@ -260,6 +302,6 @@ Holding alt and something else also typically sends escape, for example holding 
 .sp
 fish waits for a period after receiving the escape character, to determine whether it is standalone or part of an escape sequence. While waiting, additional key presses make the escape key behave as a meta key. If no other key presses come in, it is handled as a standalone escape. The waiting period is set to 30 milliseconds (0.03 seconds). It can be configured by setting the \fBfish_escape_delay_ms\fP variable to a value between 10 and 5000 ms. This can be a universal variable that you set once from an interactive session.
 .SH COPYRIGHT
-2019, fish-shell developers
+2020, fish-shell developers
 .\" Generated by docutils manpage writer.
 .

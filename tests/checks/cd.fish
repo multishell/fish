@@ -23,10 +23,9 @@ cd $oldpwd
 rm -rf $tmp
 
 # Create a test directory to store our stuff.
-set -l base /tmp/cdcomp_test
-rm -Rf $base
-mkdir -p $base
-set real (mktemp -d)
+# macOS likes to return symlinks from (mktemp -d), make sure it does not.
+set -l base (realpath (mktemp -d))
+set real (realpath (mktemp -d))
 set link $base/link
 ln -s $real $link
 cd $link
@@ -83,7 +82,7 @@ ln -s $base/realhome $base/linkhome
 cd $base/linkhome
 set -l real_getcwd (pwd -P)
 env HOME=$base/linkhome $fish -c 'echo PWD is $PWD'
-#CHECK: PWD is /tmp/cdcomp_test/linkhome
+#CHECK: PWD is {{.*}}/linkhome
 
 
 # Do not inherit a virtual PWD that fails to resolve to getcwd (#5647)
@@ -127,10 +126,73 @@ test $PWD = $base/-testdir
 echo $status
 #CHECK: 0
 
+# test a few error cases - nonexistent directory
+set -l old_cdpath $CDPATH
+set -l old_path $PWD
+cd nonexistent
+#CHECKERR: cd: The directory 'nonexistent' does not exist
+#CHECKERR: {{.*}}/cd.fish (line {{\d+}}):
+#CHECKERR: builtin cd $argv
+#CHECKERR: ^
+#CHECKERR: in function 'cd' with arguments 'nonexistent'
+#CHECKERR: called on line {{\d+}} of file {{.*}}/cd.fish
+
+touch file
+cd file
+#CHECKERR: cd: 'file' is not a directory
+#CHECKERR: {{.*}}/cd.fish (line {{\d+}}):
+#CHECKERR: builtin cd $argv
+#CHECKERR: ^
+#CHECKERR: in function 'cd' with arguments 'file'
+#CHECKERR: called on line {{\d+}} of file {{.*}}/cd.fish
+
+# a directory that isn't executable
+mkdir bad-perms
+chmod -x bad-perms
+cd bad-perms
+#CHECKERR: cd: Permission denied: 'bad-perms'
+#CHECKERR: {{.*}}/cd.fish (line {{\d+}}):
+#CHECKERR: builtin cd $argv
+#CHECKERR: ^
+#CHECKERR: in function 'cd' with arguments 'bad-perms'
+#CHECKERR: called on line {{\d+}} of file {{.*}}/cd.fish
+
+cd $old_path
+mkdir -p cdpath-dir/bad-perms
+mkdir -p cdpath-dir/nonexistent
+mkdir -p cdpath-dir/file
+set CDPATH $PWD/cdpath-dir $old_cdpath
+
+# A different directory with the same name that is first in $CDPATH works.
+cd bad-perms
+cd $old_path
+cd nonexistent
+cd $old_path
+cd file
+cd $old_path
+
+# Even if the good dirs are later in $CDPATH most errors still aren't a problem
+# - they just cause us to keep looking.
+cd $old_path
+set CDPATH $old_cdpath $PWD/cdpath-dir
+cd nonexistent
+cd $old_path
+cd bad-perms
+# Permission errors are still a problem!
+#CHECKERR: cd: Permission denied: 'bad-perms'
+#CHECKERR: {{.*}}/cd.fish (line {{\d+}}):
+#CHECKERR: builtin cd $argv
+#CHECKERR: ^
+#CHECKERR: in function 'cd' with arguments 'bad-perms'
+#CHECKERR: called on line {{\d+}} of file {{.*}}/cd.fish
+cd $old_path
+cd file
+cd $old_path
 
 # cd back before removing the test directory again.
 cd $oldpwd
 rm -Rf $base
+set -g CDPATH ./
 
 # Verify that PWD on-variable events are sent
 function __fish_test_changed_pwd --on-variable PWD

@@ -19,7 +19,7 @@
 /// doesn't work properly, so use this function in wait command.
 static job_id_t get_job_id_from_pid(pid_t pid, const parser_t &parser) {
     for (const auto &j : parser.jobs()) {
-        if (j->pgid == pid) {
+        if (j->get_pgid() == maybe_t<pid_t>{pid}) {
             return j->job_id();
         }
         // Check if the specified pid is a child process of the job.
@@ -64,7 +64,7 @@ static bool any_jobs_finished(size_t jobs_len, const parser_t &parser) {
 }
 
 static int wait_for_backgrounds(parser_t &parser, bool any_flag) {
-    sigint_checker_t sigint;
+    sigchecker_t sigint(topic_t::sighupint);
     size_t jobs_len = parser.jobs().size();
     while ((!any_flag && !all_jobs_finished(parser)) ||
            (any_flag && !any_jobs_finished(jobs_len, parser))) {
@@ -76,9 +76,9 @@ static int wait_for_backgrounds(parser_t &parser, bool any_flag) {
     return 0;
 }
 
-static bool all_specified_jobs_finished(const std::vector<job_id_t> &ids) {
+static bool all_specified_jobs_finished(const parser_t &parser, const std::vector<job_id_t> &ids) {
     for (auto id : ids) {
-        if (job_t *j = job_t::from_job_id(id)) {
+        if (const job_t *j = parser.job_get(id)) {
             // If any specified job is not completed, return false.
             // If there are stopped jobs, they are ignored.
             if (j->is_constructed() && !j->is_completed() && !j->is_stopped()) {
@@ -89,9 +89,9 @@ static bool all_specified_jobs_finished(const std::vector<job_id_t> &ids) {
     return true;
 }
 
-static bool any_specified_jobs_finished(const std::vector<job_id_t> &ids) {
+static bool any_specified_jobs_finished(const parser_t &parser, const std::vector<job_id_t> &ids) {
     for (auto id : ids) {
-        if (job_t *j = job_t::from_job_id(id)) {
+        if (const job_t *j = parser.job_get(id)) {
             // If any specified job is completed, return true.
             if (j->is_constructed() && (j->is_completed() || j->is_stopped())) {
                 return true;
@@ -106,9 +106,9 @@ static bool any_specified_jobs_finished(const std::vector<job_id_t> &ids) {
 
 static int wait_for_backgrounds_specified(parser_t &parser, const std::vector<job_id_t> &ids,
                                           bool any_flag) {
-    sigint_checker_t sigint;
-    while ((!any_flag && !all_specified_jobs_finished(ids)) ||
-           (any_flag && !any_specified_jobs_finished(ids))) {
+    sigchecker_t sigint(topic_t::sighupint);
+    while ((!any_flag && !all_specified_jobs_finished(parser, ids)) ||
+           (any_flag && !any_specified_jobs_finished(parser, ids))) {
         if (sigint.check()) {
             return 128 + SIGINT;
         }
@@ -170,17 +170,16 @@ static bool find_job_by_name(const wchar_t *proc, std::vector<job_id_t> &ids,
     return found;
 }
 
-/// The following function is invoked on the main thread, because the job operation is not thread
-/// safe. It waits for child jobs, not for child processes individually.
-int builtin_wait(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
-    ASSERT_IS_MAIN_THREAD();
+maybe_t<int> builtin_wait(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     int retval = STATUS_CMD_OK;
     const wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
     bool any_flag = false;  // flag for -n option
+    bool print_help = false;
 
-    static const wchar_t *const short_options = L":n";
+    static const wchar_t *const short_options = L":nh";
     static const struct woption long_options[] = {{L"any", no_argument, nullptr, 'n'},
+                                                  {L"help", no_argument, nullptr, 'h'},
                                                   {nullptr, 0, nullptr, 0}};
 
     int opt;
@@ -189,6 +188,9 @@ int builtin_wait(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         switch (opt) {
             case 'n':
                 any_flag = true;
+                break;
+            case 'h':
+                print_help = true;
                 break;
             case ':': {
                 builtin_missing_argument(parser, streams, cmd, argv[w.woptind - 1]);
@@ -200,9 +202,13 @@ int builtin_wait(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
             }
             default: {
                 DIE("unexpected retval from wgetopt_long");
-                break;
             }
         }
+    }
+
+    if (print_help) {
+        builtin_print_help(parser, streams, cmd);
+        return STATUS_CMD_OK;
     }
 
     if (w.woptind == argc) {

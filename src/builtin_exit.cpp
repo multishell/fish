@@ -49,7 +49,6 @@ static int parse_cmd_opts(exit_cmd_opts_t &opts, int *optind,  //!OCLINT(high nc
             }
             default: {
                 DIE("unexpected retval from wgetopt_long");
-                break;
             }
         }
     }
@@ -59,7 +58,7 @@ static int parse_cmd_opts(exit_cmd_opts_t &opts, int *optind,  //!OCLINT(high nc
 }
 
 /// The exit builtin. Calls reader_exit to exit and returns the value specified.
-int builtin_exit(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_exit(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     const wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
     exit_cmd_opts_t opts;
@@ -89,6 +88,10 @@ int builtin_exit(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
             return STATUS_INVALID_ARGS;
         }
     }
-    reader_set_end_loop(true);
+    // Mark that we are exiting in the parser.
+    // TODO: in concurrent mode this won't successfully exit a pipeline, as there are other parsers
+    // involved. That is, `exit | sleep 1000` may not exit as hoped. Need to rationalize what
+    // behavior we want here.
+    parser.libdata().exit_current_script = true;
     return retval;
 }

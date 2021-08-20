@@ -1,12 +1,9 @@
-# Completions for yaourt
-
 set -l progname yaourt
-complete -e -c $progname
 complete -c $progname -f
 
-set -l listinstalled "(pacman -Q | string replace ' ' \t)"
+set -l listinstalled "(__fish_print_pacman_packages --installed)"
 # This might be an issue if another package manager is also installed (e.g. for containers)
-set -l listall "(__fish_print_packages)"
+set -l listall "(__fish_print_pacman_packages)"
 set -l listrepos "(__fish_print_pacman_repos)"
 set -l listgroups "(pacman -Sg)\t'Package Group'"
 
@@ -25,9 +22,9 @@ set -l upgrade '__fish_contains_opt -s U upgrade'
 set -l files '__fish_contains_opt -s F files'
 
 # HACK: We only need these three to coerce fish to stop file completion and complete options
-complete -c $progname -n $noopt -a "-D" -d "Modify the package database"
-complete -c $progname -n $noopt -a "-Q" -d "Query the package database"
-complete -c $progname -n $noopt -a "-C" -d "Manage .pac* files"
+complete -c $progname -n $noopt -a -D -d "Modify the package database"
+complete -c $progname -n $noopt -a -Q -d "Query the package database"
+complete -c $progname -n $noopt -a -C -d "Manage .pac* files"
 # Primary operations
 complete -c $progname -s D -f -l database -n $noopt -d 'Modify the package database'
 complete -c $progname -s Q -f -l query -n $noopt -d 'Query the package database'
@@ -121,7 +118,7 @@ complete -c $progname -n $query -s u -l upgrades -d 'List only out-of-date packa
 complete -c $progname -n "$query" -d 'Installed package' -xa $listinstalled -f
 # Yaourt only query options
 # Backup file is always saved as pacman-$date.tar.bz2
-complete -c $progname -n $query -r -l backupfile -a '(__fish_complete_suffix tar.bz2)' -d 'Query FILE instead of alpm/aur'
+complete -c $progname -n $query -r -l backupfile -k -a '(__fish_complete_suffix tar.bz2)' -d 'Query FILE instead of alpm/aur'
 complete -c $progname -n $query -l date -d 'List queries result sorted by installation date'
 
 # Remove options
@@ -173,7 +170,7 @@ complete -c $progname -n "$files" -l machinereadable -d 'Show in machine readabl
 # Upgrade options
 # Theoretically, pacman reads packages in all formats that libarchive supports
 # In practice, it's going to be tar.xz, tar.gz or tar.zst
-complete -c $progname -n "$upgrade" -xa '(__fish_complete_suffix pkg.tar.zst; __fish_complete_suffix pkg.tar.xz; __fish_complete_suffix pkg.tar.gz)' -d 'Package file'
+complete -c $progname -n "$upgrade" -k -xa '(__fish_complete_suffix pkg.tar.zst; __fish_complete_suffix pkg.tar.xz; __fish_complete_suffix pkg.tar.gz)' -d 'Package file'
 
 ## Yaourt only stuff
 # Clean options

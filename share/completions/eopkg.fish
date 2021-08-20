@@ -1,22 +1,18 @@
 #
-# Completions for the eopkg command
+# Completions for eopkg, Solus' package manager
 #
 
-# Frequently used eopkg commands
-
-# Eopkg subcommand
 function __fish_eopkg_subcommand -a subcommand
     set -e argv[1]
-    complete -f -c eopkg -n '__fish_use_subcommand' -a $subcommand $argv
+    complete -f -c eopkg -n __fish_use_subcommand -a $subcommand $argv
 end
 
 function __fish_eopkg_subcommand_with_shortcut -a subcommand shortcut
     set -e argv[1..2]
-    complete -f -c eopkg -n '__fish_use_subcommand' -a $subcommand $argv
-    complete -f -c eopkg -n '__fish_use_subcommand' -a $shortcut $argv
+    complete -f -c eopkg -n __fish_use_subcommand -a $subcommand $argv
+    complete -f -c eopkg -n __fish_use_subcommand -a $shortcut $argv
 end
 
-# Eopkg subcommand's option
 function __fish_eopkg_option -a subcommand
     set -e argv[1]
     complete -f -c eopkg -n "__fish_seen_subcommand_from $subcommand" $argv
@@ -28,7 +24,6 @@ function __fish_eopkg_option_with_shortcut -a subcommand shortcut
     complete -f -c eopkg -n "__fish_seen_subcommand_from $shortcut" $argv
 end
 
-# Print additional completion
 function __fish_eopkg_print_components -d "Print list of components"
     eopkg list-components -N | string replace -r ' .*' ''
 end
@@ -37,13 +32,11 @@ function __fish_eopkg_print_repos -d "Print list of repositories"
     eopkg list-repo -N | string match -e active | string replace -r ' .*' ''
 end
 
-# Setup additional completion
-complete -f -c eopkg -n '__fish_seen_subcommand_from remove-repo rr enable-repo er disable-repo dr list-available la' -a "(__fish_eopkg_print_repos)" -d "Repository"
-complete -f -c eopkg -n '__fish_seen_subcommand_from upgrade up install it info' -a "(__fish_print_packages)" -d "Available Package"
-complete -f -c eopkg -n '__fish_seen_subcommand_from remove rm autoremove rmf check' -a "(__fish_print_packages --installed)" -d "Installed Package"
-complete -f -c eopkg -n '__fish_seen_subcommand_from upgrade up remove rm install it info check list-available la list-installed li list-upgrades lu' -s c -l component -a "(__fish_eopkg_print_components)" -d "Component"
+complete -f -c eopkg -n '__fish_seen_subcommand_from remove-repo rr enable-repo er disable-repo dr list-available la' -a "(__fish_eopkg_print_repos)" -d Repository
+complete -f -c eopkg -n '__fish_seen_subcommand_from upgrade up install it info' -a "(__fish_print_eopkg_packages)" -d "Available Package"
+complete -f -c eopkg -n '__fish_seen_subcommand_from remove rm autoremove rmf check' -a "(__fish_print_eopkg_packages --installed)" -d "Installed package"
+complete -f -c eopkg -n '__fish_seen_subcommand_from upgrade up remove rm install it info check list-available la list-installed li list-upgrades lu' -s c -l component -a "(__fish_eopkg_print_components)" -d Component
 
-# Setup eopkg subcommand with shortcut
 ## Upgrade
 __fish_eopkg_subcommand_with_shortcut upgrade up -d "Upgrades packages"
 __fish_eopkg_option_with_shortcut upgrade up -l security-only -d "Security related upgrades only"
@@ -84,7 +77,7 @@ __fish_eopkg_option_with_shortcut search sr -l name -d "Search in package name"
 __fish_eopkg_option_with_shortcut search sr -l summary -d "Search in package name"
 __fish_eopkg_option_with_shortcut search sr -s i -l installdb -d "Search only installed package"
 __fish_eopkg_option_with_shortcut search sr -s r -l repository -x -d "Name of the source or package repository"
-complete -f -c eopkg -n '__fish_seen_subcommand_from search sr' -s r -l repository -a "(__fish_eopkg_print_repos)" -d "Repository"
+complete -f -c eopkg -n '__fish_seen_subcommand_from search sr' -s r -l repository -a "(__fish_eopkg_print_repos)" -d Repository
 
 ## Search File
 __fish_eopkg_subcommand_with_shortcut search-file sf -d "Search for a file in installed packages"
@@ -124,7 +117,6 @@ __fish_eopkg_option_with_shortcut list-upgrades lu -s l -l long -d "Show in long
 __fish_eopkg_subcommand_with_shortcut list-repo lr -d "List repositories"
 __fish_eopkg_subcommand_with_shortcut rebuild-db rdb -d "Rebuild the eopkg database"
 
-# Setup eopkg subcommand
 ## Check
 __fish_eopkg_subcommand check -d "Verify packages installation"
 __fish_eopkg_option check -l config -d "Checks only changed config files of the packages"
@@ -141,7 +133,7 @@ __fish_eopkg_option info -s s -l short -d "Do not show details"
 ## Help
 __fish_eopkg_subcommand help -d "Prints help for given command"
 
-# Setup eopkg general option
+# General options
 complete -c eopkg -l version -d "Show program's version number and exit"
 complete -c eopkg -s d -l debug -d "Show debugging information"
 complete -c eopkg -s D -l destdir -r -d "Change the system root for eopkg commands"
@@ -151,4 +143,3 @@ complete -c eopkg -s p -l password -x
 complete -c eopkg -s u -l username -x
 complete -c eopkg -s v -l verbose -d "Detailed output"
 complete -c eopkg -s y -l yes-all -d "Assume yes for all yes/no queries"
-

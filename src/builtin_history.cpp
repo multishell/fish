@@ -191,7 +191,6 @@ static int parse_cmd_opts(history_cmd_opts_t &opts, int *optind,  //!OCLINT(high
             }
             default: {
                 DIE("unexpected retval from wgetopt_long");
-                break;
             }
         }
     }
@@ -201,7 +200,7 @@ static int parse_cmd_opts(history_cmd_opts_t &opts, int *optind,  //!OCLINT(high
 }
 
 /// Manipulate history of interactive commands executed by the user.
-int builtin_history(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_history(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
     history_cmd_opts_t opts;
@@ -217,8 +216,8 @@ int builtin_history(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
 
     // Use the default history if we have none (which happens if invoked non-interactively, e.g.
     // from webconfig.py.
-    history_t *history = reader_get_history();
-    if (!history) history = &history_t::history_with_name(history_session_id(parser.vars()));
+    std::shared_ptr<history_t> history = reader_get_history();
+    if (!history) history = history_t::with_name(history_session_id(parser.vars()));
 
     // If a history command hasn't already been specified via a flag check the first word.
     // Note that this can be simplified after we eliminate allowing subcommands as flags.
@@ -306,7 +305,6 @@ int builtin_history(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         }
         case HIST_UNDEF: {
             DIE("Unexpected HIST_UNDEF seen");
-            break;
         }
     }
 

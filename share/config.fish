@@ -25,26 +25,10 @@ function __fish_default_command_not_found_handler
     printf "fish: Unknown command: %s\n" (string escape -- $argv[1]) >&2
 end
 
-if status --is-interactive
-    # Enable truecolor/24-bit support for select terminals
-    # Ignore Screen and emacs' ansi-term as they swallow the sequences, rendering the text white.
-    if not set -q STY
-        and not string match -q -- 'eterm*' $TERM
-        and begin
-            set -q KONSOLE_PROFILE_NAME # KDE's konsole
-            or string match -q -- "*:*" $ITERM_SESSION_ID # Supporting versions of iTerm2 will include a colon here
-            or string match -q -- "st-*" $TERM # suckless' st
-            or test -n "$VTE_VERSION" -a "$VTE_VERSION" -ge 3600 # Should be all gtk3-vte-based terms after version 3.6.0.0
-            or test "$COLORTERM" = truecolor -o "$COLORTERM" = 24bit # slang expects this
-        end
-        # Only set it if it isn't to allow override by setting to 0
-        set -q fish_term24bit
-        or set -g fish_term24bit 1
-    end
-else
-    # Hook up the default as the principal command_not_found handler
-    # in case we are not interactive
-    function __fish_command_not_found_handler --on-event fish_command_not_found
+if not status --is-interactive
+    # Hook up the default as the command_not_found handler
+    # if we are not interactive to avoid custom handlers.
+    function fish_command_not_found --on-event fish_command_not_found
         __fish_default_command_not_found_handler $argv
     end
 end
@@ -76,19 +60,25 @@ else
     set xdg_data_dirs $__fish_data_dir
 end
 
-set -l vendor_completionsdirs $xdg_data_dirs/vendor_completions.d
-set -l vendor_functionsdirs $xdg_data_dirs/vendor_functions.d
-set -l vendor_confdirs $xdg_data_dirs/vendor_conf.d
+set -l vendor_completionsdirs
+set -l vendor_functionsdirs
+set -l vendor_confdirs
+# Don't load vendor directories when running unit tests
+if not set -q FISH_UNIT_TESTS_RUNNING
+    set vendor_completionsdirs $xdg_data_dirs/vendor_completions.d
+    set vendor_functionsdirs $xdg_data_dirs/vendor_functions.d
+    set vendor_confdirs $xdg_data_dirs/vendor_conf.d
 
-# Ensure that extra directories are always included.
-if not contains -- $__extra_completionsdir $vendor_completionsdirs
-    set -a vendor_completionsdirs $__extra_completionsdir
-end
-if not contains -- $__extra_functionsdir $vendor_functionsdirs
-    set -a vendor_functionsdirs $__extra_functionsdir
-end
-if not contains -- $__extra_confdir $vendor_confdirs
-    set -a vendor_confdirs $__extra_confdir
+    # Ensure that extra directories are always included.
+    if not contains -- $__extra_completionsdir $vendor_completionsdirs
+        set -a vendor_completionsdirs $__extra_completionsdir
+    end
+    if not contains -- $__extra_functionsdir $vendor_functionsdirs
+        set -a vendor_functionsdirs $__extra_functionsdir
+    end
+    if not contains -- $__extra_confdir $vendor_confdirs
+        set -a vendor_confdirs $__extra_confdir
+    end
 end
 
 # Set up function and completion paths. Make sure that the fish
@@ -104,28 +94,6 @@ if not set -q fish_complete_path
     set fish_complete_path $__fish_config_dir/completions $__fish_sysconf_dir/completions $vendor_completionsdirs $__fish_data_dir/completions $__fish_user_data_dir/generated_completions
 else if not contains -- $__fish_data_dir/completions $fish_complete_path
     set -a fish_complete_path $__fish_data_dir/completions
-end
-
-# This cannot be in an autoload-file because `:.fish` is an invalid filename on windows.
-function : -d "no-op function"
-    # for compatibility with sh, bash, and others.
-    # Often used to insert a comment into a chain of commands without having
-    # it eat up the remainder of the line, handy in Makefiles.
-    # This command always succeeds
-    true
-end
-
-#
-# This is a Solaris-specific test to modify the PATH so that
-# Posix-conformant tools are used by default. It is separate from the
-# other PATH code because this directory needs to be prepended, not
-# appended, since it contains POSIX-compliant replacements for various
-# system utilities.
-#
-
-if begin; not set -q FISH_UNIT_TESTS_RUNNING; and test -d /usr/xpg4/bin; end
-    not contains -- /usr/xpg4/bin $PATH
-    and set PATH /usr/xpg4/bin $PATH
 end
 
 # Add a handler for when fish_user_path changes, so we can apply the same changes to PATH
@@ -162,7 +130,7 @@ function fish_sigtrap_handler --on-signal TRAP --no-scope-shadowing --descriptio
 end
 
 #
-# Whenever a prompt is displayed, make sure that interactive
+# When a prompt is first displayed, make sure that interactive
 # mode-specific initializations have been performed.
 # This handler removes itself after it is first called.
 #
@@ -175,16 +143,6 @@ end
 # C/POSIX locale causes too many problems. Do this before reading the snippets because they might be
 # in UTF-8 (with non-ASCII characters).
 __fish_set_locale
-
-# "." alias for source; deprecated
-function . -d 'Evaluate a file (deprecated, use "source")' --no-scope-shadowing --wraps source
-    if [ (count $argv) -eq 0 ] && isatty 0
-        echo "source: using source via '.' is deprecated, and stdin doesn't work."\n"Did you mean 'source' or './'?" >&2
-        return 1
-    else
-        source $argv
-    end
-end
 
 # Upgrade pre-existing abbreviations from the old "key=value" to the new "key value" syntax.
 # This needs to be in share/config.fish because __fish_config_interactive is called after sourcing
@@ -233,9 +191,9 @@ if status --is-login
             set -xg $argv[1] $result
         end
 
-        __fish_macos_set_env 'PATH' '/etc/paths' '/etc/paths.d'
+        __fish_macos_set_env PATH /etc/paths '/etc/paths.d'
         if [ -n "$MANPATH" ]
-            __fish_macos_set_env 'MANPATH' '/etc/manpaths' '/etc/manpaths.d'
+            __fish_macos_set_env MANPATH /etc/manpaths '/etc/manpaths.d'
         end
         functions -e __fish_macos_set_env
     end
@@ -259,9 +217,7 @@ __fish_reconstruct_path
 function __fish_expand_pid_args
     for arg in $argv
         if string match -qr '^%\d+$' -- $arg
-            # set newargv $newargv (jobs -p $arg)
-            jobs -p $arg
-            if not test $status -eq 0
+            if not jobs -p $arg
                 return 1
             end
         else
@@ -270,10 +226,13 @@ function __fish_expand_pid_args
     end
 end
 
-for jobbltn in bg fg wait disown
+for jobbltn in bg wait disown
     function $jobbltn -V jobbltn
         builtin $jobbltn (__fish_expand_pid_args $argv)
     end
+end
+function fg
+    builtin fg (__fish_expand_pid_args $argv)[-1]
 end
 
 function kill

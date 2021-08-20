@@ -138,7 +138,7 @@ static int event_is_blocked(parser_t &parser, const event_t &e) {
     return event_block_list_blocks_type(parser.global_event_blocks);
 }
 
-wcstring event_get_desc(const event_t &evt) {
+wcstring event_get_desc(const parser_t &parser, const event_t &evt) {
     const event_description_t &ed = evt.desc;
     switch (ed.type) {
         case event_type_t::signal: {
@@ -155,7 +155,7 @@ wcstring event_get_desc(const event_t &evt) {
                 return format_string(_(L"exit handler for process %d"), ed.param1.pid);
             } else {
                 // In events, PGIDs are stored as negative PIDs
-                job_t *j = job_t::from_pid(-ed.param1.pid);
+                job_t *j = parser.job_get_from_pid(-ed.param1.pid);
                 if (j) {
                     return format_string(_(L"exit handler for job %d, '%ls'"), j->job_id(),
                                          j->command_wcstr());
@@ -168,14 +168,7 @@ wcstring event_get_desc(const event_t &evt) {
         }
 
         case event_type_t::caller_exit: {
-            job_t *j = job_t::from_job_id(ed.param1.caller_id);
-            if (j) {
-                return format_string(_(L"exit handler for job %d, '%ls'"), j->job_id(),
-                                     j->command_wcstr());
-            } else {
-                return format_string(_(L"exit handler for job with job id %d"), ed.param1.caller_id);
-            }
-            break;
+            return _(L"exit handler for command substitution caller");
         }
 
         case event_type_t::generic: {
@@ -188,17 +181,6 @@ wcstring event_get_desc(const event_t &evt) {
             DIE("Unknown event type");
     }
 }
-
-#if 0
-static void show_all_handlers(void) {
-    std::fwprintf(stdout, L"event handlers:\n");
-    for (const auto& event : events) {
-        auto foo = event;
-        wcstring tmp = event_get_desc(foo);
-        std::fwprintf(stdout, L"    handler now %ls\n", tmp.c_str());
-    }
-}
-#endif
 
 void event_add_handler(std::shared_ptr<event_handler_t> eh) {
     if (eh->desc.type == event_type_t::signal) {
@@ -278,13 +260,12 @@ static void event_fire_internal(parser_t &parser, const event_t &event) {
             buffer.append(escape_string(arg, ESCAPE_ALL));
         }
 
-        // debug( 1, L"Event handler fires command '%ls'", buffer.c_str() );
-
         // Event handlers are not part of the main flow of code, so they are marked as
         // non-interactive.
         scoped_push<bool> interactive{&ld.is_interactive, false};
         auto prev_statuses = parser.get_last_statuses();
 
+        FLOGF(event, L"Firing event '%ls'", event.desc.str_param1.c_str());
         block_t *b = parser.push_block(block_t::event_block(event));
         parser.eval(buffer, io_chain_t());
         parser.pop_block(b);
@@ -298,9 +279,9 @@ void event_fire_delayed(parser_t &parser) {
     // Do not invoke new event handlers from within event handlers.
     if (ld.is_event) return;
     // Do not invoke new event handlers if we are unwinding (#6649).
-    if (parser.get_cancel_signal()) return;
+    if (signal_check_cancel()) return;
 
-    std::vector<shared_ptr<event_t>> to_send;
+    std::vector<shared_ptr<const event_t>> to_send;
     to_send.swap(ld.blocked_events);
     assert(ld.blocked_events.empty());
 
@@ -353,7 +334,7 @@ struct event_type_name_t {
 static const event_type_name_t events_mapping[] = {{event_type_t::signal, L"signal"},
                                                    {event_type_t::variable, L"variable"},
                                                    {event_type_t::exit, L"exit"},
-                                                   {event_type_t::caller_exit, L"job-id"},
+                                                   {event_type_t::caller_exit, L"caller-exit"},
                                                    {event_type_t::generic, L"generic"}};
 
 maybe_t<event_type_t> event_type_for_name(const wcstring &name) {
@@ -407,7 +388,7 @@ void event_print(io_streams_t &streams, maybe_t<event_type_t> type_filter) {
 
         if (!last_type || *last_type != evt->desc.type) {
             if (last_type) streams.out.append(L"\n");
-            last_type = static_cast<event_type_t>(evt->desc.type);
+            last_type = evt->desc.type;
             streams.out.append_format(L"Event %ls\n", event_name_for_type(*last_type));
         }
         switch (evt->desc.type) {
@@ -416,9 +397,9 @@ void event_print(io_streams_t &streams, maybe_t<event_type_t> type_filter) {
                                           evt->function_name.c_str());
                 break;
             case event_type_t::exit:
+                break;
             case event_type_t::caller_exit:
-                streams.out.append_format(L"%d %ls\n", evt->desc.param1,
-                                          evt->function_name.c_str());
+                streams.out.append_format(L"caller-exit %ls\n", evt->function_name.c_str());
                 break;
             case event_type_t::variable:
             case event_type_t::generic:

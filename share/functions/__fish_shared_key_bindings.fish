@@ -22,6 +22,10 @@ function __fish_shared_key_bindings -d "Bindings shared between emacs and vi mod
     bind --preset $argv \eOC forward-char
     bind --preset $argv \eOD backward-char
 
+    # Ctrl-left/right - these also work in vim.
+    bind --preset $argv \e\[1\;5C forward-word
+    bind --preset $argv \e\[1\;5D backward-word
+
     bind --preset $argv -k ppage beginning-of-history
     bind --preset $argv -k npage end-of-history
 
@@ -35,8 +39,8 @@ function __fish_shared_key_bindings -d "Bindings shared between emacs and vi mod
     # shift-tab does a tab complete followed by a search.
     bind --preset $argv --key btab complete-and-search
 
-    bind --preset $argv \e\n "commandline -i \n"
-    bind --preset $argv \e\r "commandline -i \n"
+    bind --preset $argv \e\n "commandline -f expand-abbr; commandline -i \n"
+    bind --preset $argv \e\r "commandline -f expand-abbr; commandline -i \n"
 
     bind --preset $argv -k down down-or-search
     bind --preset $argv -k up up-or-search
@@ -80,11 +84,12 @@ function __fish_shared_key_bindings -d "Bindings shared between emacs and vi mod
     bind --preset $argv \e. history-token-search-backward
 
     bind --preset $argv \el __fish_list_current_token
+    bind --preset $argv \eo __fish_preview_current_file
     bind --preset $argv \ew __fish_whatis_current_token
     # ncurses > 6.0 sends a "delete scrollback" sequence along with clear.
     # This string replace removes it.
     bind --preset $argv \cl 'echo -n (clear | string replace \e\[3J ""); commandline -f repaint'
-    bind --preset $argv \cc __fish_cancel_commandline
+    bind --preset $argv \cc cancel-commandline
     bind --preset $argv \cu backward-kill-line
     bind --preset $argv \cw backward-kill-path-component
     bind --preset $argv \e\[F end-of-line
@@ -103,7 +108,7 @@ function __fish_shared_key_bindings -d "Bindings shared between emacs and vi mod
     # This will make sure the output of the current command is paged using the default pager when
     # you press Meta-p.
     # If none is set, less will be used.
-    bind --preset $argv \ep '__fish_paginate'
+    bind --preset $argv \ep __fish_paginate
 
     # Make it easy to turn an unexecuted command into a comment in the shell history. Also,
     # remove the commenting chars so the command can be further edited then executed.
@@ -144,10 +149,10 @@ function __fish_shared_key_bindings -d "Bindings shared between emacs and vi mod
     # Bind the starting sequence in every bind mode, even user-defined ones.
     # Exclude paste mode or there'll be an additional binding after switching between emacs and vi
     for mode in (bind --list-modes | string match -v paste)
-        bind --preset -M $mode -m paste \e\[200~ '__fish_start_bracketed_paste'
+        bind --preset -M $mode -m paste \e\[200~ __fish_start_bracketed_paste
     end
     # This sequence ends paste-mode and returns to the previous mode we have saved before.
-    bind --preset -M paste \e\[201~ '__fish_stop_bracketed_paste'
+    bind --preset -M paste \e\[201~ __fish_stop_bracketed_paste
     # In paste-mode, everything self-inserts except for the sequence to get out of it
     bind --preset -M paste "" self-insert
     # Without this, a \r will overwrite the other text, rendering it invisible - which makes the exercise kinda pointless.
@@ -185,5 +190,4 @@ function __fish_stop_bracketed_paste
     # Restore the last bind mode.
     set fish_bind_mode $__fish_last_bind_mode
     set -e __fish_paste_quoted
-    commandline -f force-repaint
 end

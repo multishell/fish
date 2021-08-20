@@ -1,4 +1,6 @@
-# RUN: env fth=%fish_test_helper %fish %s
+# RUN: env fth=%fish_test_helper fish=%fish %fish %s
+
+status job-control full
 
 # Ensure that lots of nested jobs all end up in the same pgroup.
 
@@ -39,6 +41,30 @@ or echo "Pgroups disagreed. Found $a0 $a1 $a2, and $b0 $b1 $b2"
 # CHECK: All pgroups agreed
 
 # Ensure that eval retains pgroups - #6806.
-# Our regex will capture the first pgroup and use a positive lookahead on the second.
-$fth print_pgrp | tr \n ' ' 1>&2 | eval '$fth print_pgrp' 1>&2
-# CHECKERR: {{(\d+) (?=\1)\d+}}
+set -l tmpfile1 (mktemp)
+set -l tmpfile2 (mktemp)
+$fth print_pgrp > $tmpfile1 | eval '$fth print_pgrp > $tmpfile2'
+read -l pgrp1 < $tmpfile1
+read -l pgrp2 < $tmpfile2
+[ "$pgrp1" -eq "$pgrp2" ]
+and echo "eval pgroups agreed"
+or echo "eval pgroups disagreed, meaning eval does not retain pgroups: $pgrp1 $pgrp2"
+# CHECK: eval pgroups agreed
+echo -n > $tmpfile1
+echo -n > $tmpfile2
+
+# Ensure that if a background job launches another background job, that they have different pgroups.
+# Our regex will capture the first pgroup and use a negative lookahead on the second.
+status job-control full
+$fth print_pgrp > $tmpfile1 | begin
+    $fth print_pgrp > $tmpfile2 &
+    wait
+end &
+wait
+read -l pgrp1 < $tmpfile1
+read -l pgrp2 < $tmpfile2
+[ "$pgrp1" -ne "$pgrp2" ]
+and echo "background job correctly got new pgroup"
+or echo "background job did not get new pgroup: $pgrp1 $pgrp2"
+# CHECK: background job correctly got new pgroup
+rm $tmpfile1 $tmpfile2

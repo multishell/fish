@@ -16,6 +16,7 @@
 #include <unordered_set>
 #include <utility>
 
+#include "ast.h"
 #include "builtin.h"
 #include "color.h"
 #include "common.h"
@@ -31,15 +32,12 @@
 #include "parse_util.h"
 #include "parser.h"
 #include "path.h"
-#include "tnode.h"
 #include "tokenizer.h"
 #include "wcstringutil.h"
 #include "wildcard.h"
 #include "wutil.h"  // IWYU pragma: keep
 
-namespace g = grammar;
-
-#define CURSOR_POSITION_INVALID ((size_t)(-1))
+#define CURSOR_POSITION_INVALID static_cast<size_t>(-1)
 
 static const wchar_t *get_highlight_var_name(highlight_role_t role) {
     switch (role) {
@@ -49,14 +47,14 @@ static const wchar_t *get_highlight_var_name(highlight_role_t role) {
             return L"fish_color_error";
         case highlight_role_t::command:
             return L"fish_color_command";
+        case highlight_role_t::keyword:
+            return L"fish_color_keyword";
         case highlight_role_t::statement_terminator:
             return L"fish_color_end";
         case highlight_role_t::param:
             return L"fish_color_param";
         case highlight_role_t::comment:
             return L"fish_color_comment";
-        case highlight_role_t::match:
-            return L"fish_color_match";
         case highlight_role_t::search_match:
             return L"fish_color_search_match";
         case highlight_role_t::operat:
@@ -111,13 +109,13 @@ static highlight_role_t get_fallback(highlight_role_t role) {
             return highlight_role_t::normal;
         case highlight_role_t::command:
             return highlight_role_t::normal;
+        case highlight_role_t::keyword:
+            return highlight_role_t::command;
         case highlight_role_t::statement_terminator:
             return highlight_role_t::normal;
         case highlight_role_t::param:
             return highlight_role_t::normal;
         case highlight_role_t::comment:
-            return highlight_role_t::normal;
-        case highlight_role_t::match:
             return highlight_role_t::normal;
         case highlight_role_t::search_match:
             return highlight_role_t::normal;
@@ -169,9 +167,9 @@ static highlight_role_t get_fallback(highlight_role_t role) {
 /// Returns:
 ///     false: the filesystem is not case insensitive
 ///     true: the file system is case insensitive
-typedef std::unordered_map<wcstring, bool> case_sensitivity_cache_t;
-bool fs_is_case_insensitive(const wcstring &path, int fd,
-                            case_sensitivity_cache_t &case_sensitivity_cache) {
+using case_sensitivity_cache_t = std::unordered_map<wcstring, bool>;
+static bool fs_is_case_insensitive(const wcstring &path, int fd,
+                                   case_sensitivity_cache_t &case_sensitivity_cache) {
     bool result = false;
 #ifdef _PC_CASE_SENSITIVE
     // Try the cache first.
@@ -204,18 +202,17 @@ bool fs_is_case_insensitive(const wcstring &path, int fd,
 ///
 /// We expect the path to already be unescaped.
 bool is_potential_path(const wcstring &potential_path_fragment, const wcstring_list_t &directories,
-                       const environment_t &vars, path_flags_t flags) {
+                       const operation_context_t &ctx, path_flags_t flags) {
     ASSERT_IS_BACKGROUND_THREAD();
+
+    if (ctx.check_cancel()) return false;
 
     const bool require_dir = static_cast<bool>(flags & PATH_REQUIRE_DIR);
     wcstring clean_potential_path_fragment;
-    int has_magic = 0;
-    bool result = false;
+    bool has_magic = false;
 
     wcstring path_with_magic(potential_path_fragment);
-    if (flags & PATH_EXPAND_TILDE) expand_tilde(path_with_magic, vars);
-
-    // debug( 1, L"%ls -> %ls ->%ls", path, tilde, unescaped );
+    if (flags & PATH_EXPAND_TILDE) expand_tilde(path_with_magic, ctx.vars);
 
     for (auto c : path_with_magic) {
         switch (c) {
@@ -228,7 +225,7 @@ bool is_potential_path(const wcstring &potential_path_fragment, const wcstring_l
             case ANY_CHAR:
             case ANY_STRING:
             case ANY_STRING_RECURSIVE: {
-                has_magic = 1;
+                has_magic = true;
                 break;
             }
             case INTERNAL_SEPARATOR: {
@@ -242,7 +239,7 @@ bool is_potential_path(const wcstring &potential_path_fragment, const wcstring_l
     }
 
     if (has_magic || clean_potential_path_fragment.empty()) {
-        return result;
+        return false;
     }
 
     // Don't test the same path multiple times, which can happen if the path is absolute and the
@@ -252,10 +249,12 @@ bool is_potential_path(const wcstring &potential_path_fragment, const wcstring_l
     // Keep a cache of which paths / filesystems are case sensitive.
     case_sensitivity_cache_t case_sensitivity_cache;
 
-    for (size_t wd_idx = 0; wd_idx < directories.size() && !result; wd_idx++) {
-        const wcstring &wd = directories.at(wd_idx);
-
-        const wcstring abs_path = path_apply_working_directory(clean_potential_path_fragment, wd);
+    for (const wcstring &wd : directories) {
+        if (ctx.check_cancel()) return false;
+        wcstring abs_path = path_apply_working_directory(clean_potential_path_fragment, wd);
+        if (flags & PATH_FOR_CD) {
+            abs_path = normalize_path(abs_path);
+        }
 
         // Skip this if it's empty or we've already checked it.
         if (abs_path.empty() || checked_paths.count(abs_path)) continue;
@@ -266,7 +265,7 @@ bool is_potential_path(const wcstring &potential_path_fragment, const wcstring_l
         if (must_be_full_dir) {
             struct stat buf;
             if (0 == wstat(abs_path, &buf) && S_ISDIR(buf.st_mode)) {
-                result = true;
+                return true;
             }
         } else {
             // We do not end with a slash; it does not have to be a directory.
@@ -275,13 +274,13 @@ bool is_potential_path(const wcstring &potential_path_fragment, const wcstring_l
             const wcstring filename_fragment = wbasename(abs_path);
             if (dir_name == L"/" && filename_fragment == L"/") {
                 // cd ///.... No autosuggestion.
-                result = true;
+                return true;
             } else if ((dir = wopendir(dir_name))) {
+                cleanup_t cleanup_dir([&] { closedir(dir); });
+
                 // Check if we're case insensitive.
                 const bool do_case_insensitive =
                     fs_is_case_insensitive(dir_name, dirfd(dir), case_sensitivity_cache);
-
-                wcstring matched_file;
 
                 // We opened the dir_name; look for a string where the base name prefixes it Don't
                 // ask for the is_dir value unless we care, because it can cause extra filesystem
@@ -289,6 +288,8 @@ bool is_potential_path(const wcstring &potential_path_fragment, const wcstring_l
                 wcstring ent;
                 bool is_dir = false;
                 while (wreaddir_resolving(dir, dir_name, ent, require_dir ? &is_dir : nullptr)) {
+                    if (ctx.check_cancel()) return false;
+
                     // Maybe skip directories.
                     if (require_dir && !is_dir) {
                         continue;
@@ -297,24 +298,20 @@ bool is_potential_path(const wcstring &potential_path_fragment, const wcstring_l
                     if (string_prefixes_string(filename_fragment, ent) ||
                         (do_case_insensitive &&
                          string_prefixes_string_case_insensitive(filename_fragment, ent))) {
-                        matched_file = ent;  // we matched
-                        break;
+                        return true;
                     }
                 }
-                closedir(dir);
-
-                result = !matched_file.empty();  // we succeeded if we found a match
             }
         }
     }
 
-    return result;
+    return false;
 }
 
 // Given a string, return whether it prefixes a path that we could cd into. Return that path in
 // out_path. Expects path to be unescaped.
 static bool is_potential_cd_path(const wcstring &path, const wcstring &working_directory,
-                                 const environment_t &vars, path_flags_t flags) {
+                                 const operation_context_t &ctx, path_flags_t flags) {
     wcstring_list_t directories;
 
     if (string_prefixes_string(L"./", path)) {
@@ -322,7 +319,7 @@ static bool is_potential_cd_path(const wcstring &path, const wcstring &working_d
         directories.push_back(working_directory);
     } else {
         // Get the CDPATH.
-        auto cdpath = vars.get(L"CDPATH");
+        auto cdpath = ctx.vars.get(L"CDPATH");
         wcstring_list_t pathsv =
             cdpath.missing_or_empty() ? wcstring_list_t{L"."} : cdpath->as_list();
 
@@ -334,25 +331,24 @@ static bool is_potential_cd_path(const wcstring &path, const wcstring &working_d
     }
 
     // Call is_potential_path with all of these directories.
-    return is_potential_path(path, directories, vars, flags | PATH_REQUIRE_DIR);
+    return is_potential_path(path, directories, ctx, flags | PATH_REQUIRE_DIR | PATH_FOR_CD);
 }
 
 // Given a plain statement node in a parse tree, get the command and return it, expanded
 // appropriately for commands. If we succeed, return true.
-static bool plain_statement_get_expanded_command(const wcstring &src,
-                                                 tnode_t<g::plain_statement> stmt,
-                                                 const operation_context_t &ctx,
-                                                 wcstring *out_cmd) {
+static bool statement_get_expanded_command(const wcstring &src,
+                                           const ast::decorated_statement_t &stmt,
+                                           const operation_context_t &ctx, wcstring *out_cmd) {
     // Get the command. Try expanding it. If we cannot, it's an error.
-    maybe_t<wcstring> cmd = command_for_plain_statement(stmt, src);
+    maybe_t<wcstring> cmd = stmt.command.source(src);
     if (!cmd) return false;
     expand_result_t err = expand_to_command_and_args(*cmd, ctx, out_cmd, nullptr);
     return err == expand_result_t::ok;
 }
 
-rgb_color_t highlight_get_color(const highlight_spec_t &highlight, bool is_background) {
-    // TODO: rationalize this principal_vars.
-    const auto &vars = env_stack_t::principal();
+rgb_color_t highlight_color_resolver_t::resolve_spec_uncached(const highlight_spec_t &highlight,
+                                                              bool is_background,
+                                                              const environment_t &vars) const {
     rgb_color_t result = rgb_color_t::normal();
     highlight_role_t role = is_background ? highlight.background : highlight.foreground;
 
@@ -385,6 +381,23 @@ rgb_color_t highlight_get_color(const highlight_spec_t &highlight, bool is_backg
     return result;
 }
 
+rgb_color_t highlight_color_resolver_t::resolve_spec(const highlight_spec_t &highlight,
+                                                     bool is_background,
+                                                     const environment_t &vars) {
+    auto &cache = is_background ? bg_cache_ : fg_cache_;
+    auto p = cache.insert(std::make_pair(highlight, rgb_color_t{}));
+    auto iter = p.first;
+    bool did_insert = p.second;
+    if (did_insert) {
+        // Insertion happened, meaning the cache needs to be populated.
+        iter->second = resolve_spec_uncached(highlight, is_background, vars);
+    }
+    return iter->second;
+}
+
+static bool command_is_valid(const wcstring &cmd, enum statement_decoration_t decoration,
+                             const wcstring &working_directory, const environment_t &vars);
+
 static bool has_expand_reserved(const wcstring &str) {
     bool result = false;
     for (auto wc : str) {
@@ -398,33 +411,26 @@ static bool has_expand_reserved(const wcstring &str) {
 
 // Parse a command line. Return by reference the first command, and the first argument to that
 // command (as a string), if any. This is used to validate autosuggestions.
-static bool autosuggest_parse_command(const wcstring &buff, const operation_context_t &ctx,
+static void autosuggest_parse_command(const wcstring &buff, const operation_context_t &ctx,
                                       wcstring *out_expanded_command, wcstring *out_arg) {
-    // Parse the buffer.
-    parse_node_tree_t parse_tree;
-    parse_tree_from_string(buff,
-                           parse_flag_continue_after_error | parse_flag_accept_incomplete_tokens,
-                           &parse_tree, nullptr);
+    auto ast = ast::ast_t::parse(
+        buff, parse_flag_continue_after_error | parse_flag_accept_incomplete_tokens);
 
     // Find the first statement.
-    tnode_t<g::plain_statement> first_statement{};
-    for (const auto &node : parse_tree) {
-        if (node.type == symbol_plain_statement) {
-            first_statement = tnode_t<g::plain_statement>(&parse_tree, &node);
-            break;
-        }
+    const ast::decorated_statement_t *first_statement = nullptr;
+    if (const ast::job_conjunction_t *jc = ast.top()->as<ast::job_list_t>()->at(0)) {
+        first_statement = jc->job.statement.contents->try_as<ast::decorated_statement_t>();
     }
 
     if (first_statement &&
-        plain_statement_get_expanded_command(buff, first_statement, ctx, out_expanded_command)) {
-        // Find the first argument.
-        auto args_and_redirs = first_statement.child<1>();
-        if (auto arg = args_and_redirs.next_in_list<grammar::argument>()) {
-            *out_arg = arg.get_source(buff);
+        statement_get_expanded_command(buff, *first_statement, ctx, out_expanded_command)) {
+        // Check if the first argument or redirection is, in fact, an argument.
+        if (const auto *arg_or_redir = first_statement->args_or_redirs.at(0)) {
+            if (arg_or_redir && arg_or_redir->is_argument()) {
+                *out_arg = arg_or_redir->argument().source(buff);
+            }
         }
-        return true;
     }
-    return false;
 }
 
 bool autosuggest_validate_from_history(const history_item_t &item,
@@ -432,46 +438,45 @@ bool autosuggest_validate_from_history(const history_item_t &item,
                                        const operation_context_t &ctx) {
     ASSERT_IS_BACKGROUND_THREAD();
 
-    bool handled = false, suggestionOK = false;
-
     // Parse the string.
     wcstring parsed_command;
     wcstring cd_dir;
-    if (!autosuggest_parse_command(item.str(), ctx, &parsed_command, &cd_dir)) return false;
+    autosuggest_parse_command(item.str(), ctx, &parsed_command, &cd_dir);
 
+    // This is for autosuggestions which are not decorated commands, e.g. function declarations.
+    if (parsed_command.empty()) {
+        return true;
+    }
+
+    // We handle cd specially.
     if (parsed_command == L"cd" && !cd_dir.empty()) {
-        // We can possibly handle this specially.
         if (expand_one(cd_dir, expand_flag::skip_cmdsubst, ctx)) {
-            handled = true;
-            bool is_help =
-                string_prefixes_string(cd_dir, L"--help") || string_prefixes_string(cd_dir, L"-h");
-            if (!is_help) {
+            if (string_prefixes_string(cd_dir, L"--help") ||
+                string_prefixes_string(cd_dir, L"-h")) {
+                // cd --help is always valid.
+                return true;
+            } else {
+                // Check the directory target, respecting CDPATH.
+                // Permit the autosuggestion if the path is valid and not our directory.
                 auto path = path_get_cdpath(cd_dir, working_directory, ctx.vars);
-                if (path && !paths_are_same_file(working_directory, *path)) {
-                    suggestionOK = true;
-                }
+                return path && !paths_are_same_file(working_directory, *path);
             }
         }
     }
 
-    if (handled) {
-        return suggestionOK;
+    // Not handled specially. Is the command valid?
+    bool cmd_ok = builtin_exists(parsed_command) || function_exists_no_autoload(parsed_command) ||
+                  path_get_path(parsed_command, nullptr, ctx.vars);
+    if (!cmd_ok) {
+        return false;
     }
 
-    // Not handled specially so handle it here.
-    bool cmd_ok = false;
-    if (path_get_path(parsed_command, nullptr, ctx.vars)) {
-        cmd_ok = true;
-    } else if (builtin_exists(parsed_command) || function_exists_no_autoload(parsed_command)) {
-        cmd_ok = true;
+    // Did the historical command have arguments that look like paths, which aren't paths now?
+    if (!all_paths_are_valid(item.get_required_paths(), ctx)) {
+        return false;
     }
 
-    if (cmd_ok) {
-        const path_list_t &paths = item.get_required_paths();
-        suggestionOK = all_paths_are_valid(paths, working_directory);
-    }
-
-    return suggestionOK;
+    return true;
 }
 
 // Highlights the variable starting with 'in', setting colors within the 'colors' array. Returns the
@@ -768,93 +773,106 @@ class highlighter_t {
     // The string we're highlighting. Note this is a reference memmber variable (to avoid copying)!
     // We must not outlive this!
     const wcstring &buff;
-    // Cursor position.
-    const size_t cursor_pos;
     // The operation context. Again, a reference member variable!
     const operation_context_t &ctx;
     // Whether it's OK to do I/O.
     const bool io_ok;
     // Working directory.
     const wcstring working_directory;
+    // The ast we produced.
+    ast::ast_t ast;
     // The resulting colors.
     using color_array_t = std::vector<highlight_spec_t>;
     color_array_t color_array;
-    // The parse tree of the buff.
-    parse_node_tree_t parse_tree;
+    // A stack of variables that the current commandline probably defines.  We mark redirections
+    // as valid if they use one of these variables, to avoid marking valid targets as error.
+    std::vector<wcstring> pending_variables;
+
+    // Flags we use for AST parsing.
+    static constexpr parse_tree_flags_t ast_flags =
+        parse_flag_continue_after_error | parse_flag_include_comments |
+        parse_flag_accept_incomplete_tokens | parse_flag_leave_unterminated |
+        parse_flag_show_extra_semis;
+
     // Color a command.
-    void color_command(tnode_t<g::tok_string> node);
-    // Color an argument.
-    void color_argument(tnode_t<g::tok_string> node);
-    // Color a redirection.
-    void color_redirection(tnode_t<g::redirection> node);
-    // Color a list of arguments. If cmd_is_cd is true, then the arguments are for 'cd'; detect
-    // invalid directories.
-    void color_arguments(const std::vector<tnode_t<g::argument>> &args, bool cmd_is_cd = false);
-    // Color the redirections of the given node.
-    void color_redirections(tnode_t<g::arguments_or_redirections_list> list);
-    // Color all the children of the command with the given type.
-    void color_children(const parse_node_t &parent, parse_token_type_t type,
-                        highlight_spec_t color);
+    void color_command(const ast::string_t &node);
+    // Color a node as if it were an argument.
+    void color_as_argument(const ast::node_t &node);
     // Colors the source range of a node with a given color.
-    void color_node(const parse_node_t &node, highlight_spec_t color);
+    void color_node(const ast::node_t &node, highlight_spec_t color);
+    // Colors a range with a given color.
+    void color_range(source_range_t range, highlight_spec_t color);
     // return whether a plain statement is 'cd'.
-    bool is_cd(tnode_t<g::plain_statement> stmt) const;
+    bool is_cd(const ast::decorated_statement_t &stmt) const;
+
+    /// \return a substring of our buffer.
+    wcstring get_source(source_range_t r) const;
 
    public:
+    // Visit the children of a node.
+    void visit_children(const ast::node_t &node) {
+        ast::node_visitor(*this).accept_children_of(&node);
+    }
+
+    // AST visitor implementations.
+    void visit(const ast::keyword_base_t &kw);
+    void visit(const ast::token_base_t &tok);
+    void visit(const ast::redirection_t &redir);
+    void visit(const ast::variable_assignment_t &varas);
+    void visit(const ast::semi_nl_t &semi_nl);
+    void visit(const ast::decorated_statement_t &stmt);
+    void visit(const ast::block_statement_t &header);
+
+    // Visit an argument, perhaps knowing that our command is cd.
+    void visit(const ast::argument_t &arg, bool cmd_is_cd = false);
+
+    // Default implementation is to just visit children.
+    void visit(const ast::node_t &node) { visit_children(node); }
+
     // Constructor
-    highlighter_t(const wcstring &str, size_t pos, const operation_context_t &ctx, wcstring wd,
-                  bool can_do_io)
+    highlighter_t(const wcstring &str, const operation_context_t &ctx, wcstring wd, bool can_do_io)
         : buff(str),
-          cursor_pos(pos),
           ctx(ctx),
           io_ok(can_do_io),
           working_directory(std::move(wd)),
-          color_array(str.size()) {
-        // Parse the tree.
-        parse_tree_from_string(buff,
-                               parse_flag_continue_after_error | parse_flag_include_comments |
-                                   parse_flag_accept_incomplete_tokens,
-                               &this->parse_tree, nullptr);
-    }
+          ast(ast::ast_t::parse(buff, ast_flags)) {}
 
     // Perform highlighting, returning an array of colors.
     color_array_t highlight();
 };
 
-void highlighter_t::color_node(const parse_node_t &node, highlight_spec_t color) {
-    // Can only color nodes with valid source ranges.
-    if (!node.has_source() || node.source_length == 0) return;
-
-    // Fill the color array with our color in the corresponding range.
-    size_t source_end = node.source_start + node.source_length;
-    assert(source_end >= node.source_start);
-    assert(source_end <= color_array.size());
-
-    std::fill(this->color_array.begin() + node.source_start, this->color_array.begin() + source_end,
-              color);
+wcstring highlighter_t::get_source(source_range_t r) const {
+    assert(r.start + r.length >= r.start && "Overflow");
+    assert(r.start + r.length <= this->buff.size() && "Out of range");
+    return this->buff.substr(r.start, r.length);
 }
 
-void highlighter_t::color_command(tnode_t<g::tok_string> node) {
-    auto source_range = node.source_range();
-    if (!source_range) return;
+void highlighter_t::color_node(const ast::node_t &node, highlight_spec_t color) {
+    color_range(node.source_range(), color);
+}
 
-    const wcstring cmd_str = node.get_source(this->buff);
+void highlighter_t::color_range(source_range_t range, highlight_spec_t color) {
+    assert(range.start + range.length <= this->color_array.size() && "Range out of bounds");
+    std::fill_n(this->color_array.begin() + range.start, range.length, color);
+}
+
+void highlighter_t::color_command(const ast::string_t &node) {
+    source_range_t source_range = node.source_range();
+    const wcstring cmd_str = get_source(source_range);
 
     // Get an iterator to the colors associated with the argument.
-    const size_t arg_start = source_range->start;
+    const size_t arg_start = source_range.start;
     const color_array_t::iterator colors = color_array.begin() + arg_start;
     color_string_internal(cmd_str, highlight_role_t::command, colors);
 }
 
 // node does not necessarily have type symbol_argument here.
-void highlighter_t::color_argument(tnode_t<g::tok_string> node) {
+void highlighter_t::color_as_argument(const ast::node_t &node) {
     auto source_range = node.source_range();
-    if (!source_range) return;
-
-    const wcstring arg_str = node.get_source(this->buff);
+    const wcstring arg_str = get_source(source_range);
 
     // Get an iterator to the colors associated with the argument.
-    const size_t arg_start = source_range->start;
+    const size_t arg_start = source_range.start;
     const color_array_t::iterator arg_colors = color_array.begin() + arg_start;
 
     // Color this argument without concern for command substitutions.
@@ -883,18 +901,9 @@ void highlighter_t::color_argument(tnode_t<g::tok_string> node) {
         if (arg_subcmd_end < this->buff.size())
             this->color_array.at(arg_subcmd_end) = highlight_role_t::operat;
 
-        // Compute the cursor's position within the cmdsub. We must be past the open paren (hence >)
-        // but can be at the end of the string or closed paren (hence <=).
-        size_t cursor_subpos = CURSOR_POSITION_INVALID;
-        if (cursor_pos != CURSOR_POSITION_INVALID && cursor_pos > arg_subcmd_start &&
-            cursor_pos <= arg_subcmd_end) {
-            // The -1 because the cmdsub_contents does not include the open paren.
-            cursor_subpos = cursor_pos - arg_subcmd_start - 1;
-        }
-
         // Highlight it recursively.
-        highlighter_t cmdsub_highlighter(cmdsub_contents, cursor_subpos, this->ctx,
-                                         this->working_directory, this->io_ok);
+        highlighter_t cmdsub_highlighter(cmdsub_contents, this->ctx, this->working_directory,
+                                         this->io_ok);
         const color_array_t &subcolors = cmdsub_highlighter.highlight();
 
         // Copy out the subcolors back into our array.
@@ -906,208 +915,340 @@ void highlighter_t::color_argument(tnode_t<g::tok_string> node) {
 
 /// Indicates whether the source range of the given node forms a valid path in the given
 /// working_directory.
-static bool node_is_potential_path(const wcstring &src, const parse_node_t &node,
-                                   const environment_t &vars, const wcstring &working_directory) {
-    if (!node.has_source()) return false;
-
+static bool range_is_potential_path(const wcstring &src, const source_range_t &range,
+                                    const operation_context_t &ctx,
+                                    const wcstring &working_directory) {
     // Get the node source, unescape it, and then pass it to is_potential_path along with the
     // working directory (as a one element list).
     bool result = false;
-    wcstring token(src, node.source_start, node.source_length);
+    wcstring token = src.substr(range.start, range.length);
     if (unescape_string_in_place(&token, UNESCAPE_SPECIAL)) {
         // Big hack: is_potential_path expects a tilde, but unescape_string gives us HOME_DIRECTORY.
         // Put it back.
         if (!token.empty() && token.at(0) == HOME_DIRECTORY) token.at(0) = L'~';
 
         const wcstring_list_t working_directory_list(1, working_directory);
-        result = is_potential_path(token, working_directory_list, vars, PATH_EXPAND_TILDE);
+        result = is_potential_path(token, working_directory_list, ctx, PATH_EXPAND_TILDE);
     }
     return result;
 }
 
-bool highlighter_t::is_cd(tnode_t<g::plain_statement> stmt) const {
-    bool cmd_is_cd = false;
-    if (this->io_ok && stmt.has_source()) {
-        wcstring cmd_str;
-        if (plain_statement_get_expanded_command(this->buff, stmt, ctx, &cmd_str)) {
-            cmd_is_cd = (cmd_str == L"cd");
-        }
+bool highlighter_t::is_cd(const ast::decorated_statement_t &stmt) const {
+    wcstring cmd_str;
+    if (this->io_ok && statement_get_expanded_command(this->buff, stmt, ctx, &cmd_str)) {
+        return cmd_str == L"cd";
     }
-    return cmd_is_cd;
+    return false;
 }
 
-// Color all of the arguments of the given node list, which should be argument_list or
-// argument_or_redirection_list.
-void highlighter_t::color_arguments(const std::vector<tnode_t<g::argument>> &args, bool cmd_is_cd) {
-    // Find all the arguments of this list.
-    for (tnode_t<g::argument> arg : args) {
-        this->color_argument(arg.child<0>());
+void highlighter_t::visit(const ast::keyword_base_t &kw) {
+    highlight_role_t role = highlight_role_t::normal;
+    switch (kw.kw) {
+        case parse_keyword_t::kw_begin:
+        case parse_keyword_t::kw_builtin:
+        case parse_keyword_t::kw_case:
+        case parse_keyword_t::kw_command:
+        case parse_keyword_t::kw_else:
+        case parse_keyword_t::kw_end:
+        case parse_keyword_t::kw_exec:
+        case parse_keyword_t::kw_for:
+        case parse_keyword_t::kw_function:
+        case parse_keyword_t::kw_if:
+        case parse_keyword_t::kw_in:
+        case parse_keyword_t::kw_switch:
+        case parse_keyword_t::kw_while:
+            role = highlight_role_t::keyword;
+            break;
 
-        if (cmd_is_cd) {
-            // Mark this as an error if it's not 'help' and not a valid cd path.
-            wcstring param = arg.get_source(this->buff);
-            if (expand_one(param, expand_flag::skip_cmdsubst, ctx)) {
-                bool is_help = string_prefixes_string(param, L"--help") ||
-                               string_prefixes_string(param, L"-h");
-                if (!is_help && this->io_ok &&
-                    !is_potential_cd_path(param, working_directory, ctx.vars, PATH_EXPAND_TILDE)) {
-                    this->color_node(arg, highlight_role_t::error);
-                }
+        case parse_keyword_t::kw_and:
+        case parse_keyword_t::kw_or:
+        case parse_keyword_t::kw_not:
+        case parse_keyword_t::kw_exclam:
+        case parse_keyword_t::kw_time:
+            role = highlight_role_t::operat;
+            break;
+
+        case parse_keyword_t::none:
+            break;
+    }
+    color_node(kw, role);
+}
+
+void highlighter_t::visit(const ast::token_base_t &tok) {
+    maybe_t<highlight_role_t> role = highlight_role_t::normal;
+    switch (tok.type) {
+        case parse_token_type_t::end:
+        case parse_token_type_t::pipe:
+        case parse_token_type_t::background:
+            role = highlight_role_t::statement_terminator;
+            break;
+
+        case parse_token_type_t::andand:
+        case parse_token_type_t::oror:
+            role = highlight_role_t::operat;
+            break;
+
+        case parse_token_type_t::string:
+            // Assume all strings are params. This handles e.g. the variables a for header or
+            // function header. Other strings (like arguments to commands) need more complex
+            // handling, which occurs in their respective overrides of visit().
+            role = highlight_role_t::param;
+
+        default:
+            break;
+    }
+    if (role) color_node(tok, *role);
+}
+
+void highlighter_t::visit(const ast::semi_nl_t &semi_nl) {
+    color_node(semi_nl, highlight_role_t::statement_terminator);
+}
+
+void highlighter_t::visit(const ast::argument_t &arg, bool cmd_is_cd) {
+    color_as_argument(arg);
+    if (cmd_is_cd && io_ok) {
+        // Mark this as an error if it's not 'help' and not a valid cd path.
+        wcstring param = arg.source(this->buff);
+        if (expand_one(param, expand_flag::skip_cmdsubst, ctx)) {
+            bool is_help =
+                string_prefixes_string(param, L"--help") || string_prefixes_string(param, L"-h");
+            if (!is_help && this->io_ok &&
+                !is_potential_cd_path(param, working_directory, ctx, PATH_EXPAND_TILDE)) {
+                this->color_node(arg, highlight_role_t::error);
             }
         }
     }
 }
 
-void highlighter_t::color_redirection(tnode_t<g::redirection> redirection_node) {
-    if (!redirection_node.has_source()) return;
+void highlighter_t::visit(const ast::variable_assignment_t &varas) {
+    color_as_argument(varas);
+    // Highlight the '=' in variable assignments as an operator.
+    if (auto where = variable_assignment_equals_pos(varas.source(this->buff))) {
+        size_t equals_loc = varas.source_range().start + *where;
+        this->color_array.at(equals_loc) = highlight_role_t::operat;
+        auto var_name = varas.source(this->buff).substr(0, *where);
+        this->pending_variables.push_back(std::move(var_name));
+    }
+}
 
-    tnode_t<g::tok_redirection> redir_prim = redirection_node.child<0>();  // like 2>
-    tnode_t<g::tok_string> redir_target = redirection_node.child<1>();     // like &1 or file path
+void highlighter_t::visit(const ast::decorated_statement_t &stmt) {
+    // Color any decoration.
+    if (stmt.opt_decoration) this->visit(*stmt.opt_decoration);
 
-    if (redir_prim) {
-        wcstring target;
-        const maybe_t<pipe_or_redir_t> redirect =
-            redirection_for_node(redirection_node, this->buff, &target);
+    // Color the command's source code.
+    // If we get no source back, there's nothing to color.
+    maybe_t<wcstring> cmd = stmt.command.try_source(this->buff);
+    if (!cmd.has_value()) return;
 
-        // We may get a missing redirection type if the redirection is invalid.
-        auto hl = (redirect && redirect->is_valid()) ? highlight_role_t::redirection
-                                                     : highlight_role_t::error;
-        this->color_node(redir_prim, hl);
+    wcstring expanded_cmd;
+    bool is_valid_cmd = false;
+    if (!this->io_ok) {
+        // We cannot check if the command is invalid, so just assume it's valid.
+        is_valid_cmd = true;
+    } else if (variable_assignment_equals_pos(*cmd)) {
+        is_valid_cmd = true;
+    } else {
+        // Check to see if the command is valid.
+        // Try expanding it. If we cannot, it's an error.
+        bool expanded = statement_get_expanded_command(buff, stmt, ctx, &expanded_cmd);
+        if (expanded && !has_expand_reserved(expanded_cmd)) {
+            is_valid_cmd =
+                command_is_valid(expanded_cmd, stmt.decoration(), working_directory, ctx.vars);
+        }
+    }
 
-        // Check if the argument contains a command substitution. If so, highlight it as a param
-        // even though it's a command redirection, and don't try to do any other validation.
-        if (parse_util_locate_cmdsubst(target.c_str(), nullptr, nullptr, true) != 0) {
-            this->color_argument(redir_target);
+    // Color our statement.
+    if (is_valid_cmd) {
+        this->color_command(stmt.command);
+    } else {
+        this->color_node(stmt.command, highlight_role_t::error);
+    }
+
+    // Color arguments and redirections.
+    // Except if our command is 'cd' we have special logic for how arguments are colored.
+    bool is_cd = (expanded_cmd == L"cd");
+    bool is_set = (expanded_cmd == L"set");
+    for (const ast::argument_or_redirection_t &v : stmt.args_or_redirs) {
+        if (v.is_argument()) {
+            if (is_set) {
+                auto arg = v.argument().source(this->buff);
+                if (valid_var_name(arg)) {
+                    this->pending_variables.push_back(std::move(arg));
+                    is_set = false;
+                }
+            }
+            this->visit(v.argument(), is_cd);
         } else {
-            // No command substitution, so we can highlight the target file or fd. For example,
-            // disallow redirections into a non-existent directory.
-            bool target_is_valid = true;
+            this->visit(v.redirection());
+        }
+    }
+}
 
-            if (!redirect || !redirect->is_valid()) {
-                // not a valid redirection
-                target_is_valid = false;
-            } else if (!this->io_ok) {
-                // I/O is disallowed, so we don't have much hope of catching anything but gross
-                // errors. Assume it's valid.
-                target_is_valid = true;
-            } else if (!expand_one(target, expand_flag::skip_cmdsubst, ctx)) {
-                // Could not be expanded.
-                target_is_valid = false;
-            } else {
-                // Ok, we successfully expanded our target. Now verify that it works with this
-                // redirection. We will probably need it as a path (but not in the case of fd
-                // redirections). Note that the target is now unescaped.
-                const wcstring target_path =
-                    path_apply_working_directory(target, this->working_directory);
-                switch (redirect->mode) {
-                    case redirection_mode_t::fd: {
-                        if (target == L"-") {
-                            target_is_valid = true;
-                        } else {
-                            int fd = fish_wcstoi(target.c_str());
-                            target_is_valid = !errno && fd >= 0;
-                        }
-                        break;
+void highlighter_t::visit(const ast::block_statement_t &block) {
+    this->visit(*block.header.contents.get());
+    this->visit(block.args_or_redirs);
+    const ast::node_t &bh = *block.header.contents;
+    size_t pending_variables_count = this->pending_variables.size();
+    if (const auto *fh = bh.try_as<ast::for_header_t>()) {
+        auto var_name = fh->var_name.source(this->buff);
+        pending_variables.push_back(std::move(var_name));
+    }
+    this->visit(block.jobs);
+    this->visit(block.end);
+    pending_variables.resize(pending_variables_count);
+}
+
+/// \return whether a string contains a command substitution.
+static bool has_cmdsub(const wcstring &src) {
+    size_t cursor = 0;
+    size_t start = 0;
+    size_t end = 0;
+    return parse_util_locate_cmdsubst_range(src, &cursor, nullptr, &start, &end, true) != 0;
+}
+
+static bool contains_pending_variable(const std::vector<wcstring> &pending_variables,
+                                      const wcstring &haystack) {
+    for (const auto &var_name : pending_variables) {
+        size_t pos = -1;
+        while ((pos = haystack.find(var_name, pos + 1)) != wcstring::npos) {
+            if (pos == 0 || haystack.at(pos - 1) != L'$') continue;
+            size_t end = pos + var_name.size();
+            if (end < haystack.size() && valid_var_name_char(haystack.at(end))) continue;
+            return true;
+        }
+    }
+    return false;
+}
+
+void highlighter_t::visit(const ast::redirection_t &redir) {
+    maybe_t<pipe_or_redir_t> oper =
+        pipe_or_redir_t::from_string(redir.oper.source(this->buff));  // like 2>
+    wcstring target = redir.target.source(this->buff);                // like &1 or file path
+
+    assert(oper.has_value() &&
+           "Should have successfully parsed a pipe_or_redir_t since it was in our ast");
+
+    // Color the > part.
+    // It may have parsed successfully yet still be invalid (e.g. 9999999999999>&1)
+    // If so, color the whole thing invalid and stop.
+    if (!oper->is_valid()) {
+        this->color_node(redir, highlight_role_t::error);
+        return;
+    }
+
+    // Color the operator part like 2>.
+    this->color_node(redir.oper, highlight_role_t::redirection);
+
+    // Color the target part.
+    // Check if the argument contains a command substitution. If so, highlight it as a param
+    // even though it's a command redirection, and don't try to do any other validation.
+    if (has_cmdsub(target)) {
+        this->color_as_argument(redir.target);
+    } else {
+        // No command substitution, so we can highlight the target file or fd. For example,
+        // disallow redirections into a non-existent directory.
+        bool target_is_valid = true;
+        if (!this->io_ok) {
+            // I/O is disallowed, so we don't have much hope of catching anything but gross
+            // errors. Assume it's valid.
+            target_is_valid = true;
+        } else if (contains_pending_variable(this->pending_variables, target)) {
+            target_is_valid = true;
+        } else if (!expand_one(target, expand_flag::skip_cmdsubst, ctx)) {
+            // Could not be expanded.
+            target_is_valid = false;
+        } else {
+            // Ok, we successfully expanded our target. Now verify that it works with this
+            // redirection. We will probably need it as a path (but not in the case of fd
+            // redirections). Note that the target is now unescaped.
+            const wcstring target_path =
+                path_apply_working_directory(target, this->working_directory);
+            switch (oper->mode) {
+                case redirection_mode_t::fd: {
+                    if (target == L"-") {
+                        target_is_valid = true;
+                    } else {
+                        int fd = fish_wcstoi(target.c_str());
+                        target_is_valid = !errno && fd >= 0;
                     }
-                    case redirection_mode_t::input: {
-                        // Input redirections must have a readable non-directory.
-                        struct stat buf = {};
-                        target_is_valid = !waccess(target_path, R_OK) &&
-                                          !wstat(target_path, &buf) && !S_ISDIR(buf.st_mode);
-                        break;
+                    break;
+                }
+                case redirection_mode_t::input: {
+                    // Input redirections must have a readable non-directory.
+                    struct stat buf = {};
+                    target_is_valid = !waccess(target_path, R_OK) && !wstat(target_path, &buf) &&
+                                      !S_ISDIR(buf.st_mode);
+                    break;
+                }
+                case redirection_mode_t::overwrite:
+                case redirection_mode_t::append:
+                case redirection_mode_t::noclob: {
+                    // Test whether the file exists, and whether it's writable (possibly after
+                    // creating it). access() returns failure if the file does not exist.
+                    bool file_exists = false, file_is_writable = false;
+                    int err = 0;
+
+                    struct stat buf = {};
+                    if (wstat(target_path, &buf) < 0) {
+                        err = errno;
                     }
-                    case redirection_mode_t::overwrite:
-                    case redirection_mode_t::append:
-                    case redirection_mode_t::noclob: {
-                        // Test whether the file exists, and whether it's writable (possibly after
-                        // creating it). access() returns failure if the file does not exist.
-                        bool file_exists = false, file_is_writable = false;
-                        int err = 0;
 
-                        struct stat buf = {};
-                        if (wstat(target_path, &buf) < 0) {
-                            err = errno;
-                        }
+                    if (string_suffixes_string(L"/", target)) {
+                        // Redirections to things that are directories is definitely not
+                        // allowed.
+                        file_exists = false;
+                        file_is_writable = false;
+                    } else if (err == 0) {
+                        // No err. We can write to it if it's not a directory and we have
+                        // permission.
+                        file_exists = true;
+                        file_is_writable = !S_ISDIR(buf.st_mode) && !waccess(target_path, W_OK);
+                    } else if (err == ENOENT) {
+                        // File does not exist. Check if its parent directory is writable.
+                        wcstring parent = wdirname(target_path);
 
-                        if (string_suffixes_string(L"/", target)) {
-                            // Redirections to things that are directories is definitely not
-                            // allowed.
-                            file_exists = false;
-                            file_is_writable = false;
-                        } else if (err == 0) {
-                            // No err. We can write to it if it's not a directory and we have
-                            // permission.
-                            file_exists = true;
-                            file_is_writable = !S_ISDIR(buf.st_mode) && !waccess(target_path, W_OK);
-                        } else if (err == ENOENT) {
-                            // File does not exist. Check if its parent directory is writable.
-                            wcstring parent = wdirname(target_path);
+                        // Ensure that the parent ends with the path separator. This will ensure
+                        // that we get an error if the parent directory is not really a
+                        // directory.
+                        if (!string_suffixes_string(L"/", parent)) parent.push_back(L'/');
 
-                            // Ensure that the parent ends with the path separator. This will ensure
-                            // that we get an error if the parent directory is not really a
-                            // directory.
-                            if (!string_suffixes_string(L"/", parent)) parent.push_back(L'/');
-
-                            // Now the file is considered writable if the parent directory is
-                            // writable.
-                            file_exists = false;
-                            file_is_writable = (0 == waccess(parent, W_OK));
-                        } else {
-                            // Other errors we treat as not writable. This includes things like
-                            // ENOTDIR.
-                            file_exists = false;
-                            file_is_writable = false;
-                        }
-
-                        // NOCLOB means that we must not overwrite files that exist.
-                        target_is_valid =
-                            file_is_writable &&
-                            !(file_exists && redirect->mode == redirection_mode_t::noclob);
-                        break;
+                        // Now the file is considered writable if the parent directory is
+                        // writable.
+                        file_exists = false;
+                        file_is_writable = (0 == waccess(parent, W_OK));
+                    } else {
+                        // Other errors we treat as not writable. This includes things like
+                        // ENOTDIR.
+                        file_exists = false;
+                        file_is_writable = false;
                     }
+
+                    // NOCLOB means that we must not overwrite files that exist.
+                    target_is_valid = file_is_writable &&
+                                      !(file_exists && oper->mode == redirection_mode_t::noclob);
+                    break;
                 }
             }
-
-            if (redir_target) {
-                auto hl = target_is_valid ? highlight_role_t::redirection : highlight_role_t::error;
-                this->color_node(redir_target, hl);
-            }
         }
-    }
-}
-
-/// Color all of the redirections of the given command.
-void highlighter_t::color_redirections(tnode_t<g::arguments_or_redirections_list> list) {
-    for (const auto &node : list.descendants<g::redirection>()) {
-        this->color_redirection(node);
-    }
-}
-
-/// Color all the children of the command with the given type.
-void highlighter_t::color_children(const parse_node_t &parent, parse_token_type_t type,
-                                   highlight_spec_t color) {
-    for (node_offset_t idx = 0; idx < parent.child_count; idx++) {
-        const parse_node_t *child = this->parse_tree.get_child(parent, idx);
-        if (child != nullptr && child->type == type) {
-            this->color_node(*child, color);
-        }
+        this->color_node(redir.target,
+                         target_is_valid ? highlight_role_t::redirection : highlight_role_t::error);
     }
 }
 
 /// Determine if a command is valid.
-static bool command_is_valid(const wcstring &cmd, enum parse_statement_decoration_t decoration,
+static bool command_is_valid(const wcstring &cmd, enum statement_decoration_t decoration,
                              const wcstring &working_directory, const environment_t &vars) {
     // Determine which types we check, based on the decoration.
     bool builtin_ok = true, function_ok = true, abbreviation_ok = true, command_ok = true,
          implicit_cd_ok = true;
-    if (decoration == parse_statement_decoration_command ||
-        decoration == parse_statement_decoration_exec) {
+    if (decoration == statement_decoration_t::command ||
+        decoration == statement_decoration_t::exec) {
         builtin_ok = false;
         function_ok = false;
         abbreviation_ok = false;
         command_ok = true;
         implicit_cd_ok = false;
-    } else if (decoration == parse_statement_decoration_builtin) {
+    } else if (decoration == statement_decoration_t::builtin) {
         builtin_ok = true;
         function_ok = false;
         abbreviation_ok = false;
@@ -1145,168 +1286,42 @@ highlighter_t::color_array_t highlighter_t::highlight() {
         ASSERT_IS_BACKGROUND_THREAD();
     }
 
-    const size_t length = buff.size();
-    assert(this->buff.size() == this->color_array.size());
-    if (length == 0) return color_array;
-
-    // Start out at zero.
+    this->color_array.resize(this->buff.size());
     std::fill(this->color_array.begin(), this->color_array.end(), highlight_spec_t{});
 
-    // Walk the node tree.
-    for (const parse_node_t &node : parse_tree) {
-        switch (node.type) {
-            // Color direct string descendants, e.g. 'for' and 'in'.
-            case symbol_while_header:
-            case symbol_begin_header:
-            case symbol_function_header:
-            case symbol_if_clause:
-            case symbol_else_clause:
-            case symbol_case_item:
-            case symbol_decorated_statement:
-            case symbol_if_statement: {
-                this->color_children(node, parse_token_type_string, highlight_role_t::command);
-                break;
-            }
-            case symbol_switch_statement: {
-                tnode_t<g::switch_statement> switchn(&parse_tree, &node);
-                auto literal_switch = switchn.child<0>();
-                auto switch_arg = switchn.child<1>();
-                this->color_node(literal_switch, highlight_role_t::command);
-                this->color_node(switch_arg, highlight_role_t::param);
-                break;
-            }
-            case symbol_for_header: {
-                tnode_t<g::for_header> fhead(&parse_tree, &node);
-                // Color the 'for' and 'in' as commands.
-                auto literal_for = fhead.child<0>();
-                auto literal_in = fhead.child<2>();
-                this->color_node(literal_for, highlight_role_t::command);
-                this->color_node(literal_in, highlight_role_t::command);
+    this->visit_children(*ast.top());
+    if (ctx.check_cancel()) return std::move(color_array);
 
-                // Color the variable name as a parameter.
-                this->color_argument(fhead.child<1>());
-                break;
-            }
-
-            case parse_token_type_andand:
-            case parse_token_type_oror:
-                this->color_node(node, highlight_role_t::operat);
-                break;
-
-            case symbol_not_statement:
-                this->color_children(node, parse_token_type_string, highlight_role_t::operat);
-                break;
-
-            case symbol_job_decorator:
-                this->color_node(node, highlight_role_t::operat);
-                break;
-
-            case symbol_variable_assignment: {
-                tnode_t<g::variable_assignment> variable_assignment = {&parse_tree, &node};
-                this->color_argument(variable_assignment.child<0>());
-                break;
-            }
-
-            case parse_token_type_pipe:
-            case parse_token_type_background:
-            case parse_token_type_end:
-            case symbol_optional_background: {
-                this->color_node(node, highlight_role_t::statement_terminator);
-                break;
-            }
-            case symbol_optional_time: {
-                this->color_node(node, highlight_role_t::operat);
-                break;
-            }
-            case symbol_plain_statement: {
-                tnode_t<g::plain_statement> stmt(&parse_tree, &node);
-                // Get the decoration from the parent.
-                enum parse_statement_decoration_t decoration = get_decoration(stmt);
-
-                // Color the command.
-                tnode_t<g::tok_string> cmd_node = stmt.child<0>();
-                maybe_t<wcstring> cmd = cmd_node.get_source(buff);
-                if (!cmd) {
-                    break;  // not much as we can do without a node that has source text
-                }
-
-                bool is_valid_cmd = false;
-                if (!this->io_ok) {
-                    // We cannot check if the command is invalid, so just assume it's valid.
-                    is_valid_cmd = true;
-                } else if (variable_assignment_equals_pos(*cmd)) {
-                    is_valid_cmd = true;
-                } else {
-                    wcstring expanded_cmd;
-                    // Check to see if the command is valid.
-                    // Try expanding it. If we cannot, it's an error.
-                    bool expanded =
-                        plain_statement_get_expanded_command(buff, stmt, ctx, &expanded_cmd);
-                    if (expanded && !has_expand_reserved(expanded_cmd)) {
-                        is_valid_cmd =
-                            command_is_valid(expanded_cmd, decoration, working_directory, ctx.vars);
-                    }
-                }
-                if (!is_valid_cmd) {
-                    this->color_node(*cmd_node, highlight_role_t::error);
-                } else {
-                    this->color_command(cmd_node);
-                }
-                break;
-            }
-            // Only work on root lists, so that we don't re-color child lists.
-            case symbol_arguments_or_redirections_list: {
-                tnode_t<g::arguments_or_redirections_list> list(&parse_tree, &node);
-                if (argument_list_is_root(list)) {
-                    bool cmd_is_cd = is_cd(list.try_get_parent<g::plain_statement>());
-                    this->color_arguments(list.descendants<g::argument>(), cmd_is_cd);
-                    this->color_redirections(list);
-                }
-                break;
-            }
-            case symbol_argument_list: {
-                tnode_t<g::argument_list> list(&parse_tree, &node);
-                if (argument_list_is_root(list)) {
-                    this->color_arguments(list.descendants<g::argument>());
-                }
-                break;
-            }
-            case symbol_end_command: {
-                this->color_node(node, highlight_role_t::command);
-                break;
-            }
-            case parse_special_type_parse_error:
-            case parse_special_type_tokenizer_error: {
-                this->color_node(node, highlight_role_t::error);
-                break;
-            }
-            case parse_special_type_comment: {
-                this->color_node(node, highlight_role_t::comment);
-                break;
-            }
-            default: {
-                break;
-            }
-        }
+    // Color every comment.
+    const auto &extras = ast.extras();
+    for (const source_range_t &r : extras.comments) {
+        this->color_range(r, highlight_role_t::comment);
     }
 
-    if (!this->io_ok || this->cursor_pos > this->buff.size()) {
-        return std::move(color_array);
+    // Color every extra semi.
+    for (const source_range_t &r : extras.semis) {
+        this->color_range(r, highlight_role_t::statement_terminator);
     }
 
-    // If the cursor is over an argument, and that argument is a valid path, underline it.
-    for (const auto &node : parse_tree) {
-        // Must be an argument with source.
-        if (node.type != symbol_argument || !node.has_source()) continue;
+    // Color every error range.
+    for (const source_range_t &r : extras.errors) {
+        this->color_range(r, highlight_role_t::error);
+    }
 
-        // Underline every valid path.
-        if (node_is_potential_path(buff, node, ctx.vars, working_directory)) {
-            // It is, underline it.
-            for (size_t i = node.source_start; i < node.source_start + node.source_length; i++) {
+    // Underline every valid path.
+    if (io_ok) {
+        for (const ast::node_t &node : ast) {
+            const ast::argument_t *arg = node.try_as<ast::argument_t>();
+            if (!arg || arg->unsourced) continue;
+            if (ctx.check_cancel()) break;
+            if (range_is_potential_path(buff, arg->range, ctx, working_directory)) {
                 // Don't color highlight_role_t::error because it looks dorky. For example,
                 // trying to cd into a non-directory would show an underline and also red.
-                if (this->color_array.at(i).foreground != highlight_role_t::error) {
-                    this->color_array.at(i).valid_path = true;
+                for (size_t i = arg->range.start, end = arg->range.start + arg->range.length;
+                     i < end; i++) {
+                    if (this->color_array.at(i).foreground != highlight_role_t::error) {
+                        this->color_array.at(i).valid_path = true;
+                    }
                 }
             }
         }
@@ -1315,17 +1330,17 @@ highlighter_t::color_array_t highlighter_t::highlight() {
     return std::move(color_array);
 }
 
-/// Given a string and list of colors of the same size, return the string with ANSI escape sequences
-/// representing the colors.
-std::string colorize(const wcstring &text, const std::vector<highlight_spec_t> &colors) {
+std::string colorize(const wcstring &text, const std::vector<highlight_spec_t> &colors,
+                     const environment_t &vars) {
     assert(colors.size() == text.size());
+    highlight_color_resolver_t rv;
     outputter_t outp;
 
     highlight_spec_t last_color = highlight_role_t::normal;
     for (size_t i = 0; i < text.size(); i++) {
         highlight_spec_t color = colors.at(i);
         if (color != last_color) {
-            outp.set_color(highlight_get_color(color, false), rgb_color_t::normal());
+            outp.set_color(rv.resolve_spec(color, false, vars), rgb_color_t::normal());
             last_color = color;
         }
         outp.writech(text.at(i));
@@ -1334,109 +1349,9 @@ std::string colorize(const wcstring &text, const std::vector<highlight_spec_t> &
     return outp.contents();
 }
 
-void highlight_shell(const wcstring &buff, std::vector<highlight_spec_t> &color, size_t pos,
-                     const operation_context_t &ctx) {
+void highlight_shell(const wcstring &buff, std::vector<highlight_spec_t> &color,
+                     const operation_context_t &ctx, bool io_ok) {
     const wcstring working_directory = ctx.vars.get_pwd_slash();
-    highlighter_t highlighter(buff, pos, ctx, working_directory, true /* can do IO */);
+    highlighter_t highlighter(buff, ctx, working_directory, io_ok);
     color = highlighter.highlight();
-}
-
-void highlight_shell_no_io(const wcstring &buff, std::vector<highlight_spec_t> &color, size_t pos,
-                           const operation_context_t &ctx) {
-    const wcstring working_directory = ctx.vars.get_pwd_slash();
-    highlighter_t highlighter(buff, pos, ctx, working_directory, false /* no IO allowed */);
-    color = highlighter.highlight();
-}
-
-/// Perform quote and parenthesis highlighting on the specified string.
-static void highlight_universal_internal(const wcstring &buffstr,
-                                         std::vector<highlight_spec_t> &color, size_t pos) {
-    assert(buffstr.size() == color.size());
-    if (pos < buffstr.size()) {
-        // Highlight matching quotes.
-        if ((buffstr.at(pos) == L'\'') || (buffstr.at(pos) == L'\"')) {
-            std::vector<size_t> lst;
-            int level = 0;
-            wchar_t prev_q = 0;
-            const wchar_t *const buff = buffstr.c_str();
-            const wchar_t *str = buff;
-            bool match_found = false;
-
-            while (*str) {
-                switch (*str) {
-                    case L'\\': {
-                        str++;
-                        break;
-                    }
-                    case L'\"':
-                    case L'\'': {
-                        if (level == 0) {
-                            level++;
-                            lst.push_back(str - buff);
-                            prev_q = *str;
-                        } else {
-                            if (prev_q == *str) {
-                                size_t pos1, pos2;
-
-                                level--;
-                                pos1 = lst.back();
-                                pos2 = str - buff;
-                                if (pos1 == pos || pos2 == pos) {
-                                    color.at(pos1).background = highlight_role_t::match;
-                                    color.at(pos2).background = highlight_role_t::match;
-                                    match_found = true;
-                                }
-                                prev_q = *str == L'\"' ? L'\'' : L'\"';
-                            } else {
-                                level++;
-                                lst.push_back(str - buff);
-                                prev_q = *str;
-                            }
-                        }
-                        break;
-                    }
-                    default: {
-                        break;  // we ignore all other characters
-                    }
-                }
-                if ((*str == L'\0')) break;
-                str++;
-            }
-
-            if (!match_found) color.at(pos).background = highlight_role_t::error;
-        }
-
-        // Highlight matching parenthesis.
-        const wchar_t c = buffstr.at(pos);
-        if (std::wcschr(L"()[]{}", c)) {
-            int step = std::wcschr(L"({[", c) ? 1 : -1;
-            wchar_t dec_char = *(std::wcschr(L"()[]{}", c) + step);
-            wchar_t inc_char = c;
-            int level = 0;
-            bool match_found = false;
-            for (long i = pos; i >= 0 && static_cast<size_t>(i) < buffstr.size(); i += step) {
-                const wchar_t test_char = buffstr.at(i);
-                if (test_char == inc_char) level++;
-                if (test_char == dec_char) level--;
-                if (level == 0) {
-                    long pos2 = i;
-                    color.at(pos).background = highlight_role_t::match;
-                    color.at(pos2).background = highlight_role_t::match;
-                    match_found = true;
-                    break;
-                }
-            }
-
-            if (!match_found)
-                color.at(pos) = highlight_spec_t::make_background(highlight_role_t::error);
-        }
-    }
-}
-
-void highlight_universal(const wcstring &buff, std::vector<highlight_spec_t> &color, size_t pos,
-                         const operation_context_t &ctx) {
-    UNUSED(ctx);
-    assert(buff.size() == color.size());
-    std::fill(color.begin(), color.end(), highlight_spec_t{});
-    highlight_universal_internal(buff, color, pos);
 }

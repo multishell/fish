@@ -33,22 +33,27 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA
 #include <tuple>
 #include <vector>
 
+#include "ast.h"
 #include "color.h"
 #include "common.h"
 #include "env.h"
+#include "expand.h"
+#include "fds.h"
 #include "fish_version.h"
+#include "flog.h"
 #include "highlight.h"
 #include "operation_context.h"
 #include "output.h"
 #include "parse_constants.h"
+#include "parse_util.h"
 #include "print_help.h"
-#include "tnode.h"
+#include "wcstringutil.h"
 #include "wutil.h"  // IWYU pragma: keep
 
+// The number of spaces per indent isn't supposed to be configurable.
+// See discussion at https://github.com/fish-shell/fish-shell/pull/6790
 #define SPACES_PER_INDENT 4
 
-// An indent_t represents an abstract indent depth. 2 means we are in a doubly-nested block, etc.
-using indent_t = unsigned int;
 static bool dump_parse_tree = false;
 static int ret = 0;
 
@@ -64,7 +69,7 @@ static wcstring read_file(FILE *f) {
                     // Illegal byte sequence. Try to skip past it.
                     clearerr(f);
                     int ch = fgetc(f);  // for printing the warning, and seeks forward 1 byte.
-                    debug(1, "%s (byte=%X)", std::strerror(errno), ch);
+                    FLOGF(warning, "%s (byte=%X)", std::strerror(errno), ch);
                     ret = 1;
                     continue;
                 } else {
@@ -79,193 +84,541 @@ static wcstring read_file(FILE *f) {
     return result;
 }
 
-struct prettifier_t {
+namespace {
+/// From C++14.
+template <bool B, typename T = void>
+using enable_if_t = typename std::enable_if<B, T>::type;
+
+/// \return whether a character at a given index is escaped.
+/// A character is escaped if it has an odd number of backslashes.
+bool char_is_escaped(const wcstring &text, size_t idx) {
+    return count_preceding_backslashes(text, idx) % 2 == 1;
+}
+
+using namespace ast;
+struct pretty_printer_t {
+    // Note: this got somewhat more complicated after introducing the new AST, because that AST no
+    // longer encodes detailed lexical information (e.g. every newline). This feels more complex
+    // than necessary and would probably benefit from a more layered approach where we identify
+    // certain runs, weight line breaks, have a cost model, etc.
+    pretty_printer_t(const wcstring &src, bool do_indent)
+        : source(src),
+          indents(do_indent ? parse_util_compute_indents(source) : std::vector<int>(src.size(), 0)),
+          ast(ast_t::parse(src, parse_flags())),
+          do_indent(do_indent),
+          gaps(compute_gaps()),
+          preferred_semi_locations(compute_preferred_semi_locations()) {
+        assert(indents.size() == source.size() && "indents and source should be same length");
+    }
+
     // Original source.
     const wcstring &source;
+
+    // The indents of our string.
+    // This has the same length as 'source' and describes the indentation level.
+    const std::vector<int> indents;
+
+    // The parsed ast.
+    const ast_t ast;
 
     // The prettifier output.
     wcstring output;
 
+    // The indent of the source range which we are currently emitting.
+    int current_indent{0};
+
     // Whether to indent, or just insert spaces.
     const bool do_indent;
 
-    // Whether we are at the beginning of a new line.
-    bool has_new_line = true;
+    // Whether the next gap text should hide the first newline.
+    bool gap_text_mask_newline{false};
 
-    // Whether the last token was a semicolon.
-    bool last_was_semicolon = false;
+    // The "gaps": a sorted set of ranges between tokens.
+    // These contain whitespace, comments, semicolons, and other lexical elements which are not
+    // present in the ast.
+    const std::vector<source_range_t> gaps;
 
-    // Whether we need to append a continuation new line before continuing.
-    bool needs_continuation_newline = false;
+    // The sorted set of source offsets of nl_semi_t which should be set as semis, not newlines.
+    // This is computed ahead of time for convenience.
+    const std::vector<uint32_t> preferred_semi_locations;
 
-    // Additional indentation due to line continuation (escaped newline)
-    uint32_t line_continuation_indent = 0;
+    // Flags we support.
+    using gap_flags_t = uint32_t;
+    enum {
+        default_flags = 0,
 
-    prettifier_t(const wcstring &source, bool do_indent) : source(source), do_indent(do_indent) {}
+        // Whether to allow line splitting via escaped newlines.
+        // For example, in argument lists:
+        //
+        //   echo a \
+        //   b
+        //
+        // If this is not set, then split-lines will be joined.
+        allow_escaped_newlines = 1 << 0,
 
-    void prettify_node(const parse_node_tree_t &tree, node_offset_t node_idx, indent_t node_indent,
-                       parse_token_type_t parent_type);
+        // Whether to require a space before this token.
+        // This is used when emitting semis:
+        //    echo a; echo b;
+        // No space required between 'a' and ';', or 'b' and ';'.
+        skip_space = 1 << 1,
+    };
 
-    void maybe_prepend_escaped_newline(const parse_node_t &node) {
-        if (node.has_preceding_escaped_newline()) {
-            output.append(L" \\");
-            append_newline(true);
+    // \return gap text flags for the gap text that comes *before* a given node type.
+    static gap_flags_t gap_text_flags_before_node(const node_t &node) {
+        gap_flags_t result = default_flags;
+        switch (node.type) {
+            // Allow escaped newlines in argument and redirection lists.
+            case type_t::argument:
+            case type_t::redirection:
+                result |= allow_escaped_newlines;
+                break;
+
+            case type_t::token_base:
+                // Allow escaped newlines before && and ||, and also pipes.
+                switch (node.as<token_base_t>()->type) {
+                    case parse_token_type_t::andand:
+                    case parse_token_type_t::oror:
+                    case parse_token_type_t::pipe:
+                        result |= allow_escaped_newlines;
+                        break;
+                    default:
+                        break;
+                }
+                break;
+
+            default:
+                break;
+        }
+        return result;
+    }
+
+    // \return whether we are at the start of a new line.
+    bool at_line_start() const { return output.empty() || output.back() == L'\n'; }
+
+    // \return whether we have a space before the output.
+    // This ignores escaped spaces and escaped newlines.
+    bool has_preceding_space() const {
+        long idx = static_cast<long>(output.size()) - 1;
+        // Skip escaped newlines.
+        // This is historical. Example:
+        //
+        // cmd1 \
+        // | cmd2
+        //
+        // we want the pipe to "see" the space after cmd1.
+        // TODO: this is too tricky, we should factor this better.
+        while (idx >= 0 && output.at(idx) == L'\n') {
+            size_t backslashes = count_preceding_backslashes(source, idx);
+            if (backslashes % 2 == 0) {
+                // Not escaped.
+                return false;
+            }
+            idx -= (1 + backslashes);
+        }
+        return idx >= 0 && output.at(idx) == L' ' && !char_is_escaped(output, idx);
+    }
+
+    // Entry point. Prettify our source code and return it.
+    wcstring prettify() {
+        output = wcstring{};
+        node_visitor(*this).accept(ast.top());
+
+        // Trailing gap text.
+        emit_gap_text_before(source_range_t{(uint32_t)source.size(), 0}, default_flags);
+
+        // Replace all trailing newlines with just a single one.
+        while (!output.empty() && at_line_start()) {
+            output.pop_back();
+        }
+        emit_newline();
+
+        wcstring result = std::move(output);
+        return result;
+    }
+
+    // \return a substring of source.
+    wcstring substr(source_range_t r) const { return source.substr(r.start, r.length); }
+
+    // Return the gap ranges from our ast.
+    std::vector<source_range_t> compute_gaps() const {
+        auto range_compare = [](source_range_t r1, source_range_t r2) {
+            if (r1.start != r2.start) return r1.start < r2.start;
+            return r1.length < r2.length;
+        };
+        // Collect the token ranges into a list.
+        std::vector<source_range_t> tok_ranges;
+        for (const node_t &node : ast) {
+            if (node.category == category_t::leaf) {
+                auto r = node.source_range();
+                if (r.length > 0) tok_ranges.push_back(r);
+            }
+        }
+        // Place a zero length range at end to aid in our inverting.
+        tok_ranges.push_back(source_range_t{(uint32_t)source.size(), 0});
+
+        // Our tokens should be sorted.
+        assert(std::is_sorted(tok_ranges.begin(), tok_ranges.end(), range_compare));
+
+        // For each range, add a gap range between the previous range and this range.
+        std::vector<source_range_t> gaps;
+        uint32_t prev_end = 0;
+        for (source_range_t tok_range : tok_ranges) {
+            assert(tok_range.start >= prev_end &&
+                   "Token range should not overlap or be out of order");
+            if (tok_range.start >= prev_end) {
+                gaps.push_back(source_range_t{prev_end, tok_range.start - prev_end});
+            }
+            prev_end = tok_range.start + tok_range.length;
+        }
+        return gaps;
+    }
+
+    // Return sorted list of semi-preferring semi_nl nodes.
+    std::vector<uint32_t> compute_preferred_semi_locations() const {
+        std::vector<uint32_t> result;
+        auto mark_semi_from_input = [&](const optional_t<semi_nl_t> &n) {
+            if (n && n->has_source() && substr(n->range) == L";") {
+                result.push_back(n->range.start);
+            }
+        };
+
+        // andor_job_lists get semis if the input uses semis.
+        for (const auto &node : ast) {
+            // See if we have a condition and an andor_job_list.
+            const optional_t<semi_nl_t> *condition = nullptr;
+            const andor_job_list_t *andors = nullptr;
+            if (const auto *ifc = node.try_as<if_clause_t>()) {
+                condition = &ifc->condition.semi_nl;
+                andors = &ifc->andor_tail;
+            } else if (const auto *wc = node.try_as<while_header_t>()) {
+                condition = &wc->condition.semi_nl;
+                andors = &wc->andor_tail;
+            }
+
+            // If there is no and-or tail then we always use a newline.
+            if (andors && andors->count() > 0) {
+                if (condition) mark_semi_from_input(*condition);
+                // Mark all but last of the andor list.
+                for (uint32_t i = 0; i + 1 < andors->count(); i++) {
+                    mark_semi_from_input(andors->at(i)->job.semi_nl);
+                }
+            }
+        }
+
+        // `x ; and y` gets semis if it has them already, and they are on the same line.
+        for (const auto &node : ast) {
+            if (const auto *job_list = node.try_as<job_list_t>()) {
+                const semi_nl_t *prev_job_semi_nl = nullptr;
+                for (const job_conjunction_t &job : *job_list) {
+                    // Set up prev_job_semi_nl for the next iteration to make control flow easier.
+                    const semi_nl_t *prev = prev_job_semi_nl;
+                    prev_job_semi_nl = job.semi_nl.contents.get();
+
+                    // Is this an 'and' or 'or' job?
+                    if (!job.decorator) continue;
+
+                    // Now see if we want to mark 'prev' as allowing a semi.
+                    // Did we have a previous semi_nl which was a newline?
+                    if (!prev || substr(prev->range) != L";") continue;
+
+                    // Is there a newline between them?
+                    assert(prev->range.start <= job.decorator->range.start &&
+                           "Ranges out of order");
+                    auto start = source.begin() + prev->range.start;
+                    auto end = source.begin() + job.decorator->range.end();
+                    if (std::find(start, end, L'\n') == end) {
+                        // We're going to allow the previous semi_nl to be a semi.
+                        result.push_back(prev->range.start);
+                    }
+                }
+            }
+        }
+        std::sort(result.begin(), result.end());
+        return result;
+    }
+
+    // Emit a space or indent as necessary, depending on the previous output.
+    void emit_space_or_indent(gap_flags_t flags = default_flags) {
+        if (at_line_start()) {
+            output.append(SPACES_PER_INDENT * current_indent, L' ');
+        } else if (!(flags & skip_space) && !has_preceding_space()) {
+            output.append(1, L' ');
         }
     }
 
-    void append_newline(bool is_continuation = false) {
-        output.push_back('\n');
-        has_new_line = true;
-        needs_continuation_newline = false;
-        line_continuation_indent = is_continuation ? 1 : 0;
+    // Emit "gap text:" newlines and comments from the original source.
+    // Gap text may be a few things:
+    //
+    // 1. Just a space is common. We will trim the spaces to be empty.
+    //
+    // Here the gap text is the comment, followed by the newline:
+    //
+    //    echo abc # arg
+    //    echo def
+    //
+    // 2. It may also be an escaped newline:
+    // Here the gap text is a space, backslash, newline, space.
+    //
+    //     echo \
+    //       hi
+    //
+    // 3. Lastly it may be an error, if there was an error token. Here the gap text is the pipe:
+    //
+    //   begin | stuff
+    //
+    //  We do not handle errors here - instead our caller does.
+    bool emit_gap_text(source_range_t range, gap_flags_t flags) {
+        wcstring gap_text = substr(range);
+        // Common case: if we are only spaces, do nothing.
+        if (gap_text.find_first_not_of(L' ') == wcstring::npos) return false;
+
+        // Look to see if there is an escaped newline.
+        // Emit it if either we allow it, or it comes before the first comment.
+        // Note we do not have to be concerned with escaped backslashes or escaped #s. This is gap
+        // text - we already know it has no semantic significance.
+        size_t escaped_nl = gap_text.find(L"\\\n");
+        if (escaped_nl != wcstring::npos) {
+            size_t comment_idx = gap_text.find(L'#');
+            if ((flags & allow_escaped_newlines) ||
+                (comment_idx != wcstring::npos && escaped_nl < comment_idx)) {
+                // Emit a space before the escaped newline.
+                if (!at_line_start() && !has_preceding_space()) {
+                    output.append(L" ");
+                }
+                output.append(L"\\\n");
+                // Indent the continuation line and any leading comments (#7252).
+                // Use the indentation level of the next newline.
+                current_indent = indents.at(range.start + escaped_nl + 1);
+                emit_space_or_indent();
+            }
+        }
+
+        // It seems somewhat ambiguous whether we always get a newline after a comment. Ensure we
+        // always emit one.
+        bool needs_nl = false;
+
+        tokenizer_t tokenizer(gap_text.c_str(), TOK_SHOW_COMMENTS | TOK_SHOW_BLANK_LINES);
+        while (maybe_t<tok_t> tok = tokenizer.next()) {
+            wcstring tok_text = tokenizer.text_of(*tok);
+
+            if (needs_nl) {
+                emit_newline();
+                needs_nl = false;
+                if (tok_text == L"\n") continue;
+            } else if (gap_text_mask_newline) {
+                // We only respect mask_newline the first time through the loop.
+                gap_text_mask_newline = false;
+                if (tok_text == L"\n") continue;
+            }
+
+            if (tok->type == token_type_t::comment) {
+                emit_space_or_indent();
+                output.append(tok_text);
+                needs_nl = true;
+            } else if (tok->type == token_type_t::end) {
+                // This may be either a newline or semicolon.
+                // Semicolons found here are not part of the ast and can simply be removed.
+                // Newlines are preserved unless mask_newline is set.
+                if (tok_text == L"\n") {
+                    emit_newline();
+                }
+            } else {
+                fprintf(stderr,
+                        "Gap text should only have comments and newlines - instead found token "
+                        "type %d with text: %ls\n",
+                        (int)tok->type, tok_text.c_str());
+                DIE("Gap text should only have comments and newlines");
+            }
+        }
+        if (needs_nl) emit_newline();
+        return needs_nl;
     }
 
-    // Append whitespace as necessary. If we have a newline, append the appropriate indent.
-    // Otherwise, append a space.
-    void append_whitespace(indent_t node_indent) {
-        if (needs_continuation_newline) {
-            append_newline(true);
+    /// \return the gap text ending at a given index into the string, or empty if none.
+    source_range_t gap_text_to(uint32_t end) const {
+        auto where = std::lower_bound(
+            gaps.begin(), gaps.end(), end,
+            [](source_range_t r, uint32_t end) { return r.start + r.length < end; });
+        if (where == gaps.end() || where->start + where->length != end) {
+            // Not found.
+            return source_range_t{0, 0};
+        } else {
+            return *where;
         }
-        if (!has_new_line) {
-            output.push_back(L' ');
-        } else if (do_indent) {
-            output.append((node_indent + line_continuation_indent) * SPACES_PER_INDENT, L' ');
+    }
+
+    /// \return whether a range \p r overlaps an error range from our ast.
+    bool range_contained_error(source_range_t r) const {
+        const auto &errs = ast.extras().errors;
+        auto range_is_before = [](source_range_t x, source_range_t y) {
+            return x.start + x.length <= y.start;
+        };
+        assert(std::is_sorted(errs.begin(), errs.end(), range_is_before) &&
+               "Error ranges should be sorted");
+        return std::binary_search(errs.begin(), errs.end(), r, range_is_before);
+    }
+
+    // Emit the gap text before a source range.
+    bool emit_gap_text_before(source_range_t r, gap_flags_t flags) {
+        assert(r.start <= source.size() && "source out of bounds");
+        bool added_newline = false;
+
+        // Find the gap text which ends at start.
+        source_range_t range = gap_text_to(r.start);
+        if (range.length > 0) {
+            // Set the indent from the beginning of this gap text.
+            // For example:
+            // begin
+            //    cmd
+            //    # comment
+            // end
+            // Here the comment is the gap text before the end, but we want the indent from the
+            // command.
+            if (range.start < indents.size()) current_indent = indents.at(range.start);
+
+            // If this range contained an error, append the gap text without modification.
+            // For example in: echo foo "
+            // We don't want to mess with the quote.
+            if (range_contained_error(range)) {
+                output.append(substr(range));
+            } else {
+                added_newline = emit_gap_text(range, flags);
+            }
         }
+        // Always clear gap_text_mask_newline after emitting even empty gap text.
+        gap_text_mask_newline = false;
+        return added_newline;
+    }
+
+    /// Given a string \p input, remove unnecessary quotes, etc.
+    wcstring clean_text(const wcstring &input) {
+        // Unescape the string - this leaves special markers around if there are any
+        // expansions or anything. We specifically tell it to not compute backslash-escapes
+        // like \U or \x, because we want to leave them intact.
+        wcstring unescaped = input;
+        unescape_string_in_place(&unescaped, UNESCAPE_SPECIAL | UNESCAPE_NO_BACKSLASHES);
+
+        // Remove INTERNAL_SEPARATOR because that's a quote.
+        auto quote = [](wchar_t ch) { return ch == INTERNAL_SEPARATOR; };
+        unescaped.erase(std::remove_if(unescaped.begin(), unescaped.end(), quote), unescaped.end());
+
+        // If no non-"good" char is left, use the unescaped version.
+        // This can be extended to other characters, but giving the precise list is tough,
+        // can change over time (see "^", "%" and "?", in some cases "{}") and it just makes
+        // people feel more at ease.
+        auto goodchars = [](wchar_t ch) {
+            return fish_iswalnum(ch) || ch == L'_' || ch == L'-' || ch == L'/';
+        };
+        if (std::find_if_not(unescaped.begin(), unescaped.end(), goodchars) == unescaped.end() &&
+            !unescaped.empty()) {
+            return unescaped;
+        } else {
+            return input;
+        }
+    }
+
+    // Emit a range of original text. This indents as needed, and also inserts preceding gap text.
+    // If \p tolerate_line_splitting is set, then permit escaped newlines; otherwise collapse such
+    // lines.
+    void emit_text(source_range_t r, gap_flags_t flags) {
+        emit_gap_text_before(r, flags);
+        current_indent = indents.at(r.start);
+        if (r.length > 0) {
+            emit_space_or_indent(flags);
+            output.append(clean_text(substr(r)));
+        }
+    }
+
+    template <type_t Type>
+    void emit_node_text(const leaf_t<Type> &node) {
+        emit_text(node.range, gap_text_flags_before_node(node));
+    }
+
+    // Emit one newline.
+    void emit_newline() { output.push_back(L'\n'); }
+
+    // Emit a semicolon.
+    void emit_semi() { output.push_back(L';'); }
+
+    // For branch and list nodes, default is to visit their children.
+    template <typename Node>
+    enable_if_t<Node::Category == category_t::branch> visit(const Node &node) {
+        node_visitor(*this).accept_children_of(node);
+    }
+
+    template <typename Node>
+    enable_if_t<Node::Category == ast::category_t::list> visit(const Node &node) {
+        node_visitor(*this).accept_children_of(node);
+    }
+
+    // Leaf nodes we just visit their text.
+    void visit(const keyword_base_t &node) { emit_node_text(node); }
+    void visit(const token_base_t &node) { emit_node_text(node); }
+    void visit(const argument_t &node) { emit_node_text(node); }
+    void visit(const variable_assignment_t &node) { emit_node_text(node); }
+
+    void visit(const semi_nl_t &node) {
+        // These are semicolons or newlines which are part of the ast. That means it includes e.g.
+        // ones terminating a job or 'if' header, but not random semis in job lists. We respect
+        // preferred_semi_locations to decide whether or not these should stay as newlines or
+        // become semicolons.
+
+        // Check if we should prefer a semicolon.
+        bool prefer_semi = node.range.length > 0 &&
+                           std::binary_search(preferred_semi_locations.begin(),
+                                              preferred_semi_locations.end(), node.range.start);
+        emit_gap_text_before(node.range, gap_text_flags_before_node(node));
+
+        // Don't emit anything if the gap text put us on a newline (because it had a comment).
+        if (!at_line_start()) {
+            prefer_semi ? emit_semi() : emit_newline();
+
+            // If it was a semi but we emitted a newline, swallow a subsequent newline.
+            if (!prefer_semi && substr(node.range) == L";") {
+                gap_text_mask_newline = true;
+            }
+        }
+    }
+
+    void visit(const redirection_t &node) {
+        // No space between a redirection operator and its target (#2899).
+        emit_text(node.oper.range, default_flags);
+        emit_text(node.target.range, skip_space);
+    }
+
+    void visit(const maybe_newlines_t &node) {
+        // Our newlines may have comments embedded in them, example:
+        //    cmd |
+        //    # something
+        //    cmd2
+        // Treat it as gap text.
+        if (node.range.length > 0) {
+            auto flags = gap_text_flags_before_node(node);
+            current_indent = indents.at(node.range.start);
+            bool added_newline = emit_gap_text_before(node.range, flags);
+            source_range_t gap_range = node.range;
+            if (added_newline && gap_range.length > 0 && source.at(gap_range.start) == L'\n') {
+                gap_range.start++;
+            }
+            emit_gap_text(gap_range, flags);
+        }
+    }
+
+    void visit(const begin_header_t &node) {
+        // 'begin' does not require a newline after it, but we insert one.
+        node_visitor(*this).accept_children_of(node);
+        if (!at_line_start()) {
+            emit_newline();
+        }
+    }
+
+    // The flags we use to parse.
+    static parse_tree_flags_t parse_flags() {
+        return parse_flag_continue_after_error | parse_flag_include_comments |
+               parse_flag_leave_unterminated | parse_flag_show_blank_lines;
     }
 };
-
-// Dump a parse tree node in a form helpful to someone debugging the behavior of this program.
-static void dump_node(indent_t node_indent, const parse_node_t &node, const wcstring &source) {
-    wchar_t nextc = L' ';
-    wchar_t prevc = L' ';
-    wcstring source_txt;
-    if (node.source_start != SOURCE_OFFSET_INVALID && node.source_length != SOURCE_OFFSET_INVALID) {
-        int nextc_idx = node.source_start + node.source_length;
-        if (static_cast<size_t>(nextc_idx) < source.size()) {
-            nextc = source[node.source_start + node.source_length];
-        }
-        if (node.source_start > 0) prevc = source[node.source_start - 1];
-        source_txt = source.substr(node.source_start, node.source_length);
-    }
-    wchar_t prevc_str[4] = {prevc, 0, 0, 0};
-    wchar_t nextc_str[4] = {nextc, 0, 0, 0};
-    if (prevc < L' ') {
-        prevc_str[0] = L'\\';
-        prevc_str[1] = L'c';
-        prevc_str[2] = prevc + '@';
-    }
-    if (nextc < L' ') {
-        nextc_str[0] = L'\\';
-        nextc_str[1] = L'c';
-        nextc_str[2] = nextc + '@';
-    }
-    std::fwprintf(stderr, L"{off %4u, len %4u, indent %2u, kw %ls, %ls} [%ls|%ls|%ls]\n",
-                  node.source_start, node.source_length, node_indent,
-                  keyword_description(node.keyword), token_type_description(node.type), prevc_str,
-                  source_txt.c_str(), nextc_str);
-}
-
-void prettifier_t::prettify_node(const parse_node_tree_t &tree, node_offset_t node_idx,
-                                 indent_t node_indent, parse_token_type_t parent_type) {
-    // Use an explicit stack to avoid stack overflow.
-    struct pending_node_t {
-        node_offset_t index;
-        indent_t indent;
-        parse_token_type_t parent_type;
-    };
-    std::stack<pending_node_t> pending_node_stack;
-
-    pending_node_stack.push({node_idx, node_indent, parent_type});
-    while (!pending_node_stack.empty()) {
-        pending_node_t args = pending_node_stack.top();
-        pending_node_stack.pop();
-        auto node_idx = args.index;
-        auto node_indent = args.indent;
-        auto parent_type = args.parent_type;
-
-        const parse_node_t &node = tree.at(node_idx);
-        const parse_token_type_t node_type = node.type;
-        const parse_token_type_t prev_node_type =
-            node_idx > 0 ? tree.at(node_idx - 1).type : token_type_invalid;
-
-        // Increment the indent if we are either a root job_list, or root case_item_list, or in an
-        // if or while header (#1665).
-        const bool is_root_job_list =
-            node_type == symbol_job_list && parent_type != symbol_job_list;
-        const bool is_root_case_list =
-            node_type == symbol_case_item_list && parent_type != symbol_case_item_list;
-        const bool is_if_while_header =
-            (node_type == symbol_job_conjunction || node_type == symbol_andor_job_list) &&
-            (parent_type == symbol_if_clause || parent_type == symbol_while_header);
-
-        if (is_root_job_list || is_root_case_list || is_if_while_header) {
-            node_indent += 1;
-        }
-
-        if (dump_parse_tree) dump_node(node_indent, node, source);
-
-        // Prepend any escaped newline.
-        maybe_prepend_escaped_newline(node);
-
-        // handle comments, which come before the text
-        if (node.has_comments()) {
-            auto comment_nodes = tree.comment_nodes_for_node(node);
-            for (const auto &comment : comment_nodes) {
-                maybe_prepend_escaped_newline(*comment.node());
-                append_whitespace(node_indent);
-                auto source_range = comment.source_range();
-                output.append(source, source_range->start, source_range->length);
-                needs_continuation_newline = true;
-            }
-        }
-
-        if (node_type == parse_token_type_end) {
-            // For historical reasons, semicolon also get "TOK_END".
-            // We need to distinguish between them, because otherwise `a;;;;` gets extra lines
-            // instead of the semicolons. Semicolons are just ignored, unless they are followed by a
-            // command. So `echo;` removes the semicolon, but `echo; echo` removes it and adds a
-            // newline.
-            last_was_semicolon = false;
-            if (node.get_source(source) == L"\n") {
-                append_newline();
-            } else if (!has_new_line) {
-                // The semicolon is only useful if we haven't just had a newline.
-                last_was_semicolon = true;
-            }
-        } else if ((node_type >= FIRST_PARSE_TOKEN_TYPE && node_type <= LAST_PARSE_TOKEN_TYPE) ||
-                   node_type == parse_special_type_parse_error) {
-            if (last_was_semicolon) {
-                // We keep the semicolon for `; and` and `; or`,
-                // others we turn into newlines.
-                if (node.keyword != parse_keyword_and && node.keyword != parse_keyword_or) {
-                    append_newline();
-                } else {
-                    output.push_back(L';');
-                }
-                last_was_semicolon = false;
-            }
-
-            if (node.has_source()) {
-                // Some type representing a particular token.
-                if (prev_node_type != parse_token_type_redirection) {
-                    append_whitespace(node_indent);
-                }
-                output.append(source, node.source_start, node.source_length);
-                has_new_line = false;
-            }
-        }
-
-        // Put all children in stack in reversed order
-        // This way they will be processed in correct order.
-        for (node_offset_t idx = node.child_count; idx > 0; idx--) {
-            // Note: We pass our type to our child, which becomes its parent node type.
-            // Note: While node.child_start could be -1 (NODE_OFFSET_INVALID) the addition is safe
-            // because we won't execute this call in that case since node.child_count should be
-            // zero.
-            pending_node_stack.push({node.child_start + (idx - 1), node_indent, node_type});
-        }
-    }
-}
+}  // namespace
 
 static const char *highlight_role_to_string(highlight_role_t role) {
 #define TEST_ROLE(x)          \
@@ -275,10 +628,10 @@ static const char *highlight_role_to_string(highlight_role_t role) {
         TEST_ROLE(normal)
         TEST_ROLE(error)
         TEST_ROLE(command)
+        TEST_ROLE(keyword)
         TEST_ROLE(statement_terminator)
         TEST_ROLE(param)
         TEST_ROLE(comment)
-        TEST_ROLE(match)
         TEST_ROLE(search_match)
         TEST_ROLE(operat)
         TEST_ROLE(escape)
@@ -314,7 +667,7 @@ static const char *highlight_role_to_string(highlight_role_t role) {
 static std::string make_pygments_csv(const wcstring &src) {
     const size_t len = src.size();
     std::vector<highlight_spec_t> colors;
-    highlight_shell_no_io(src, colors, src.size(), operation_context_t::globals());
+    highlight_shell(src, colors, operation_context_t::globals());
     assert(colors.size() == len && "Colors and src should have same size");
 
     struct token_range_t {
@@ -351,29 +704,17 @@ static std::string make_pygments_csv(const wcstring &src) {
 
 // Entry point for prettification.
 static wcstring prettify(const wcstring &src, bool do_indent) {
-    parse_node_tree_t parse_tree;
-    int parse_flags = (parse_flag_continue_after_error | parse_flag_include_comments |
-                       parse_flag_leave_unterminated | parse_flag_show_blank_lines);
-    if (!parse_tree_from_string(src, parse_flags, &parse_tree, nullptr)) {
-        return src;  // we return the original string on failure
-    }
-
     if (dump_parse_tree) {
-        const wcstring dump = parse_dump_tree(parse_tree, src);
-        std::fwprintf(stderr, L"%ls\n", dump.c_str());
+        auto ast =
+            ast::ast_t::parse(src, parse_flag_leave_unterminated | parse_flag_include_comments |
+                                       parse_flag_show_extra_semis);
+        wcstring ast_dump = ast.dump(src);
+        std::fwprintf(stderr, L"%ls\n", ast_dump.c_str());
     }
 
-    // We may have a forest of disconnected trees on a parse failure. We have to handle all nodes
-    // that have no parent, and all parse errors.
-    prettifier_t prettifier{src, do_indent};
-    for (node_offset_t i = 0; i < parse_tree.size(); i++) {
-        const parse_node_t &node = parse_tree.at(i);
-        if (node.parent == NODE_OFFSET_INVALID || node.type == parse_special_type_parse_error) {
-            // A root node.
-            prettifier.prettify_node(parse_tree, i, 0, symbol_job_list);
-        }
-    }
-    return std::move(prettifier.output);
+    pretty_printer_t printer{src, do_indent};
+    wcstring output = printer.prettify();
+    return output;
 }
 
 /// Given a string and list of colors of the same size, return the string with HTML span elements
@@ -398,9 +739,6 @@ static const wchar_t *html_class_name_for_color(highlight_spec_t spec) {
         }
         case highlight_role_t::comment: {
             return P(comment);
-        }
-        case highlight_role_t::match: {
-            return P(match);
         }
         case highlight_role_t::search_match: {
             return P(search_match);
@@ -503,13 +841,17 @@ int main(int argc, char *argv[]) {
         output_type_file,
         output_type_ansi,
         output_type_pygments_csv,
+        output_type_check,
         output_type_html
     } output_type = output_type_plain_text;
     const char *output_location = "";
     bool do_indent = true;
+    // File path for debug output.
+    std::string debug_output;
 
-    const char *short_opts = "+d:hvwiD:";
-    const struct option long_opts[] = {{"debug-level", required_argument, nullptr, 'd'},
+    const char *short_opts = "+d:hvwicD:";
+    const struct option long_opts[] = {{"debug", required_argument, nullptr, 'd'},
+                                       {"debug-output", required_argument, nullptr, 'o'},
                                        {"debug-stack-frames", required_argument, nullptr, 'D'},
                                        {"dump-parse-tree", no_argument, nullptr, 'P'},
                                        {"no-indent", no_argument, nullptr, 'i'},
@@ -519,6 +861,7 @@ int main(int argc, char *argv[]) {
                                        {"html", no_argument, nullptr, 1},
                                        {"ansi", no_argument, nullptr, 2},
                                        {"pygments", no_argument, nullptr, 3},
+                                       {"check", no_argument, nullptr, 'c'},
                                        {nullptr, 0, nullptr, 0}};
 
     int opt;
@@ -531,12 +874,10 @@ int main(int argc, char *argv[]) {
             case 'h': {
                 print_help("fish_indent", 1);
                 exit(0);
-                break;
             }
             case 'v': {
-                std::fwprintf(stderr, _(L"%ls, version %s\n"), program_name, get_fish_version());
+                std::fwprintf(stdout, _(L"%ls, version %s\n"), program_name, get_fish_version());
                 exit(0);
-                break;
             }
             case 'w': {
                 output_type = output_type_file;
@@ -558,6 +899,10 @@ int main(int argc, char *argv[]) {
                 output_type = output_type_pygments_csv;
                 break;
             }
+            case 'c': {
+                output_type = output_type_check;
+                break;
+            }
             case 'd': {
                 char *end;
                 long tmp;
@@ -568,37 +913,49 @@ int main(int argc, char *argv[]) {
                 if (tmp >= 0 && tmp <= 10 && !*end && !errno) {
                     debug_level = static_cast<int>(tmp);
                 } else {
-                    std::fwprintf(stderr, _(L"Invalid value '%s' for debug-level flag"), optarg);
-                    exit(1);
+                    activate_flog_categories_by_pattern(str2wcstring(optarg));
+                }
+                for (auto cat : get_flog_categories()) {
+                    if (cat->enabled) {
+                        printf("Debug enabled for category: %ls\n", cat->name);
+                    }
                 }
                 break;
             }
             case 'D': {
-                char *end;
-                long tmp;
-
-                errno = 0;
-                tmp = strtol(optarg, &end, 10);
-
-                if (tmp > 0 && tmp <= 128 && !*end && !errno) {
-                    set_debug_stack_frames(static_cast<int>(tmp));
-                } else {
-                    std::fwprintf(stderr, _(L"Invalid value '%s' for debug-stack-frames flag"),
-                                  optarg);
-                    exit(1);
-                }
+                // TODO: Option is currently useless.
+                // Either remove it or make it work with FLOG.
+                break;
+            }
+            case 'o': {
+                debug_output = optarg;
                 break;
             }
             default: {
                 // We assume getopt_long() has already emitted a diagnostic msg.
                 exit(1);
-                break;
             }
         }
     }
 
     argc -= optind;
     argv += optind;
+
+    // Direct any debug output right away.
+    FILE *debug_output_file = nullptr;
+    if (!debug_output.empty()) {
+        debug_output_file = fopen(debug_output.c_str(), "w");
+        if (!debug_output_file) {
+            fprintf(stderr, "Could not open file %s\n", debug_output.c_str());
+            perror("fopen");
+            exit(-1);
+        }
+        set_cloexec(fileno(debug_output_file));
+        setlinebuf(debug_output_file);
+        set_flog_output_file(debug_output_file);
+    }
+
+    int retval = 0;
 
     wcstring src;
     for (int i = 0; i < argc || (argc == 0 && i == 0); i++) {
@@ -617,7 +974,7 @@ int main(int argc, char *argv[]) {
                 fclose(fh);
                 output_location = argv[i];
             } else {
-                std::fwprintf(stderr, _(L"Opening \"%s\" failed: %s\n"), *argv,
+                std::fwprintf(stderr, _(L"Opening \"%s\" failed: %s\n"), argv[i],
                               std::strerror(errno));
                 exit(1);
             }
@@ -634,8 +991,7 @@ int main(int argc, char *argv[]) {
         // Maybe colorize.
         std::vector<highlight_spec_t> colors;
         if (output_type != output_type_plain_text) {
-            highlight_shell_no_io(output_wtext, colors, output_wtext.size(),
-                                  operation_context_t::globals());
+            highlight_shell(output_wtext, colors, operation_context_t::globals());
         }
 
         std::string colored_output;
@@ -657,7 +1013,7 @@ int main(int argc, char *argv[]) {
                 break;
             }
             case output_type_ansi: {
-                colored_output = colorize(output_wtext, colors);
+                colored_output = colorize(output_wtext, colors, env_stack_t::globals());
                 break;
             }
             case output_type_html: {
@@ -666,11 +1022,19 @@ int main(int argc, char *argv[]) {
             }
             case output_type_pygments_csv: {
                 DIE("pygments_csv should have been handled above");
+            }
+            case output_type_check: {
+                if (output_wtext != src) {
+                    if (argc) {
+                        std::fwprintf(stderr, _(L"%s\n"), argv[i]);
+                    }
+                    retval++;
+                }
                 break;
             }
         }
 
         std::fputws(str2wcstring(colored_output).c_str(), stdout);
     }
-    return 0;
+    return retval;
 }

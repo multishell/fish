@@ -38,10 +38,8 @@ enum class expand_flag {
     executables_only,
     /// Only match directories.
     directories_only,
-    /// Don't generate descriptions.
-    no_descriptions,
-    /// Don't expand jobs (but still expand processes).
-    skip_jobs,
+    /// Generate descriptions, stored in the description field of completions.
+    gen_descriptions,
     /// Don't expand home directories.
     skip_home_directories,
     /// Allow fuzzy matching.
@@ -71,6 +69,7 @@ using expand_flags_t = enum_set_t<expand_flag>;
 
 class completion_t;
 using completion_list_t = std::vector<completion_t>;
+class completion_receiver_t;
 
 enum : wchar_t {
     /// Character representing a home directory.
@@ -96,18 +95,43 @@ enum : wchar_t {
     VARIABLE_EXPAND_EMPTY,
     /// This is a special pseudo-char that is not used other than to mark the end of the the special
     /// characters so we can sanity check the enum range.
-    EXPAND_SENTINAL
+    EXPAND_SENTINEL
 };
 
 /// These are the possible return values for expand_string.
-enum class expand_result_t {
-    /// There was a syntax error, for example, unmatched braces.
-    error,
-    /// Expansion succeeded.
-    ok,
-    /// Expansion succeeded, but a wildcard in the string matched no files,
-    /// so the output is empty.
-    wildcard_no_match,
+struct expand_result_t {
+    enum result_t {
+        /// There was an error, for example, unmatched braces.
+        error,
+        /// Expansion succeeded.
+        ok,
+        /// Expansion was cancelled (e.g. control-C).
+        cancel,
+        /// Expansion succeeded, but a wildcard in the string matched no files,
+        /// so the output is empty.
+        wildcard_no_match,
+    };
+
+    /// The result of expansion.
+    result_t result;
+
+    /// If expansion resulted in an error, this is an appropriate value with which to populate
+    /// $status.
+    int status{0};
+
+    /* implicit */ expand_result_t(result_t result) : result(result) {}
+
+    /// operator== allows for comparison against result_t values.
+    bool operator==(result_t rhs) const { return result == rhs; }
+    bool operator!=(result_t rhs) const { return !(*this == rhs); }
+
+    /// Make an error value with the given status.
+    static expand_result_t make_error(int status) {
+        assert(status != 0 && "status cannot be 0 for an error result");
+        expand_result_t result(error);
+        result.status = status;
+        return result;
+    }
 };
 
 /// The string represented by PROCESS_EXPAND_SELF
@@ -135,6 +159,11 @@ __warn_unused expand_result_t expand_string(wcstring input, completion_list_t *o
                                             expand_flags_t flags, const operation_context_t &ctx,
                                             parse_error_list_t *errors = nullptr);
 
+/// Variant of string that inserts its results into a completion_receiver_t.
+__warn_unused expand_result_t expand_string(wcstring input, completion_receiver_t *output,
+                                            expand_flags_t flags, const operation_context_t &ctx,
+                                            parse_error_list_t *errors = nullptr);
+
 /// expand_one is identical to expand_string, except it will fail if in expands to more than one
 /// string. This is used for expanding command names.
 ///
@@ -153,10 +182,12 @@ bool expand_one(wcstring &string, expand_flags_t flags, const operation_context_
 /// If the expansion resulted in no or an empty command, the command will be an empty string. Note
 /// that API does not distinguish between expansion resulting in an empty command (''), and
 /// expansion resulting in no command (e.g. unset variable).
-// \return an expand error.
+/// If \p skip_wildcards is true, then do not do wildcard expansion
+/// \return an expand error.
 expand_result_t expand_to_command_and_args(const wcstring &instr, const operation_context_t &ctx,
                                            wcstring *out_cmd, wcstring_list_t *out_args,
-                                           parse_error_list_t *errors = nullptr);
+                                           parse_error_list_t *errors = nullptr,
+                                           bool skip_wildcards = false);
 
 /// Convert the variable value to a human readable form, i.e. escape things, handle arrays, etc.
 /// Suitable for pretty-printing.
@@ -164,7 +195,7 @@ wcstring expand_escape_variable(const env_var_t &var);
 
 /// Convert a string value to a human readable form, i.e. escape things, handle arrays, etc.
 /// Suitable for pretty-printing.
-wcstring expand_escape_string(const wcstring &str);
+wcstring expand_escape_string(const wcstring &el);
 
 /// Perform tilde expansion and nothing else on the specified string, which is modified in place.
 ///

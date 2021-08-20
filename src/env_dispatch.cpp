@@ -37,6 +37,7 @@
 #include "common.h"
 #include "complete.h"
 #include "env.h"
+#include "env_dispatch.h"
 #include "env_universal_common.h"
 #include "event.h"
 #include "fallback.h"  // IWYU pragma: keep
@@ -51,6 +52,7 @@
 #include "proc.h"
 #include "reader.h"
 #include "screen.h"
+#include "termsize.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 #define DEFAULT_TERM1 "ansi"
@@ -135,7 +137,7 @@ void env_dispatch_init(const environment_t &vars) {
 /// Properly sets all timezone information.
 static void handle_timezone(const wchar_t *env_var_name, const environment_t &vars) {
     const auto var = vars.get(env_var_name, ENV_DEFAULT);
-    debug(2, L"handle_timezone() current timezone var: |%ls| => |%ls|", env_var_name,
+    FLOGF(env_dispatch, L"handle_timezone() current timezone var: |%ls| => |%ls|", env_var_name,
           !var ? L"MISSING" : var->as_string().c_str());
     const std::string &name = wcs2string(env_var_name);
     if (var.missing_or_empty()) {
@@ -152,7 +154,8 @@ static void guess_emoji_width(const environment_t &vars) {
     if (auto width_str = vars.get(L"fish_emoji_width")) {
         int new_width = fish_wcstol(width_str->as_string().c_str());
         g_fish_emoji_width = std::max(0, new_width);
-        debug(2, "'fish_emoji_width' preference: %d, overwriting default", g_fish_emoji_width);
+        FLOGF(term_support, "'fish_emoji_width' preference: %d, overwriting default",
+              g_fish_emoji_width);
         return;
     }
 
@@ -170,18 +173,18 @@ static void guess_emoji_width(const environment_t &vars) {
     if (term == L"Apple_Terminal" && version >= 400) {
         // Apple Terminal on High Sierra
         g_guessed_fish_emoji_width = 2;
-        debug(2, "default emoji width: 2 for %ls", term.c_str());
+        FLOGF(term_support, "default emoji width: 2 for %ls", term.c_str());
     } else if (term == L"iTerm.app") {
         // iTerm2 defaults to Unicode 8 sizes.
         // See https://gitlab.com/gnachman/iterm2/wikis/unicodeversionswitching
         g_guessed_fish_emoji_width = 1;
-        debug(2, "default emoji width: 1");
+        FLOGF(term_support, "default emoji width: 1");
     } else {
         // Default to whatever system wcwidth says to U+1F603,
         // but only if it's at least 1.
         int w = wcwidth(L'😃');
         g_guessed_fish_emoji_width = w > 0 ? w : 1;
-        debug(2, "default emoji width: %d", g_guessed_fish_emoji_width);
+        FLOGF(term_support, "default emoji width: %d", g_guessed_fish_emoji_width);
     }
 }
 
@@ -192,11 +195,6 @@ void env_dispatch_var_change(const wcstring &key, env_stack_t &vars) {
     if (!s_var_dispatch_table) return;
 
     s_var_dispatch_table->dispatch(key, vars);
-
-    // Eww.
-    if (string_prefixes_string(L"fish_color_", key)) {
-        reader_react_to_color_change();
-    }
 }
 
 /// Universal variable callback function. This function makes sure the proper events are triggered
@@ -216,12 +214,12 @@ void env_universal_callbacks(env_stack_t *stack, const callback_data_list_t &cal
     }
 }
 
-static void handle_fish_term_change(env_stack_t &vars) {
+static void handle_fish_term_change(const env_stack_t &vars) {
     update_fish_color_support(vars);
-    reader_react_to_color_change();
+    reader_schedule_prompt_repaint();
 }
 
-static void handle_change_ambiguous_width(env_stack_t &vars) {
+static void handle_change_ambiguous_width(const env_stack_t &vars) {
     int new_width = 1;
     if (auto width_str = vars.get(L"fish_ambiguous_width")) {
         new_width = fish_wcstol(width_str->as_string().c_str());
@@ -229,26 +227,25 @@ static void handle_change_ambiguous_width(env_stack_t &vars) {
     g_fish_ambiguous_width = std::max(0, new_width);
 }
 
-static void handle_term_size_change(env_stack_t &vars) {
-    UNUSED(vars);
-    invalidate_termsize(true);  // force fish to update its idea of the terminal size plus vars
+static void handle_term_size_change(const env_stack_t &vars) {
+    termsize_container_t::shared().handle_columns_lines_var_change(vars);
 }
 
-static void handle_fish_history_change(env_stack_t &vars) {
+static void handle_fish_history_change(const env_stack_t &vars) {
     reader_change_history(history_session_id(vars));
 }
 
-static void handle_function_path_change(env_stack_t &vars) {
+static void handle_function_path_change(const env_stack_t &vars) {
     UNUSED(vars);
     function_invalidate_path();
 }
 
-static void handle_complete_path_change(env_stack_t &vars) {
+static void handle_complete_path_change(const env_stack_t &vars) {
     UNUSED(vars);
     complete_invalidate_path();
 }
 
-static void handle_tz_change(const wcstring &var_name, env_stack_t &vars) {
+static void handle_tz_change(const wcstring &var_name, const env_stack_t &vars) {
     handle_timezone(var_name.c_str(), vars);
 }
 
@@ -277,7 +274,7 @@ static void handle_read_limit_change(const environment_t &vars) {
     if (!read_byte_limit_var.missing_or_empty()) {
         size_t limit = fish_wcstoull(read_byte_limit_var->as_string().c_str());
         if (errno) {
-            debug(1, "Ignoring fish_read_limit since it is not valid");
+            FLOGF(warning, "Ignoring fish_read_limit since it is not valid");
         } else {
             read_byte_limit = limit;
         }
@@ -311,8 +308,17 @@ static std::unique_ptr<const var_dispatch_table_t> create_dispatch_table() {
     var_dispatch_table->add(L"TZ", handle_tz_change);
     var_dispatch_table->add(L"fish_use_posix_spawn", handle_fish_use_posix_spawn_change);
 
-    // This std::move is required to avoid a build error on old versions of libc++ (#5801)
+    // This std::move is required to avoid a build error on old versions of libc++ (#5801),
+    // but it causes a different warning under newer versions of GCC (observed under GCC 9.3.0,
+    // but not under llvm/clang 9).
+#if __GNUC__ > 4
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wredundant-move"
+#endif
     return std::move(var_dispatch_table);
+#if __GNUC__ > 4
+#pragma GCC diagnostic pop
+#endif
 }
 
 static void run_inits(const environment_t &vars) {
@@ -338,11 +344,11 @@ static void update_fish_color_support(const environment_t &vars) {
     if (auto fish_term256 = vars.get(L"fish_term256")) {
         // $fish_term256
         support_term256 = bool_from_string(fish_term256->as_string());
-        debug(2, L"256 color support determined by '$fish_term256'");
+        FLOGF(term_support, L"256 color support determined by '$fish_term256'");
     } else if (term.find(L"256color") != wcstring::npos) {
         // TERM is *256color*: 256 colors explicitly supported
         support_term256 = true;
-        debug(2, L"256 color support enabled for TERM=%ls", term.c_str());
+        FLOGF(term_support, L"256 color support enabled for TERM=%ls", term.c_str());
     } else if (term.find(L"xterm") != wcstring::npos) {
         // Assume that all 'xterm's can handle 256, except for Terminal.app from Snow Leopard
         wcstring term_program;
@@ -352,28 +358,69 @@ static void update_fish_color_support(const environment_t &vars) {
             if (tpv && fish_wcstod(tpv->as_string().c_str(), nullptr) > 299) {
                 // OS X Lion is version 299+, it has 256 color support (see github Wiki)
                 support_term256 = true;
-                debug(2, L"256 color support enabled for TERM=%ls on Terminal.app", term.c_str());
+                FLOGF(term_support, L"256 color support enabled for TERM=%ls on Terminal.app",
+                      term.c_str());
             }
         } else {
             support_term256 = true;
-            debug(2, L"256 color support enabled for TERM=%ls", term.c_str());
+            FLOGF(term_support, L"256 color support enabled for TERM=%ls", term.c_str());
         }
     } else if (cur_term != nullptr) {
         // See if terminfo happens to identify 256 colors
         support_term256 = (max_colors >= 256);
-        debug(2, L"256 color support: %d colors per terminfo entry for %ls", max_colors,
+        FLOGF(term_support, L"256 color support: %d colors per terminfo entry for %ls", max_colors,
               term.c_str());
     }
 
     // Handle $fish_term24bit
     if (auto fish_term24bit = vars.get(L"fish_term24bit")) {
         support_term24bit = bool_from_string(fish_term24bit->as_string());
-        debug(2, L"'fish_term24bit' preference: 24-bit color %ls",
+        FLOGF(term_support, L"'fish_term24bit' preference: 24-bit color %ls",
               support_term24bit ? L"enabled" : L"disabled");
     } else {
-        // We don't attempt to infer term24 bit support yet.
-        // XXX: actually, we do, in config.fish.
-        // So we actually change the color mode shortly after startup
+        if (vars.get(L"STY") || string_prefixes_string(L"eterm", term)) {
+            // Screen and emacs' ansi-term swallow truecolor sequences,
+            // so we ignore them unless force-enabled.
+            FLOGF(term_support, L"Truecolor support: disabling for eterm/screen");
+            support_term24bit = false;
+        } else if (cur_term != nullptr && max_colors >= 32767) {
+            // $TERM wins, xterm-direct reports 32767 colors, we assume that's the minimum
+            // as xterm is weird when it comes to color.
+            FLOGF(term_support, L"Truecolor support: Enabling per terminfo for %ls with %d colors",
+                  term.c_str(), max_colors);
+            support_term24bit = true;
+        } else {
+            if (auto ct = vars.get(L"COLORTERM")) {
+                // If someone set $COLORTERM, that's the sort of color they want.
+                if (ct->as_string() == L"truecolor" || ct->as_string() == L"24bit") {
+                    FLOGF(term_support, L"Truecolor support: Enabling per $COLORTERM='%ls'",
+                          ct->as_string().c_str());
+                    support_term24bit = true;
+                }
+            } else if (vars.get(L"KONSOLE_VERSION") || vars.get(L"KONSOLE_PROFILE_NAME")) {
+                // All konsole versions that use $KONSOLE_VERSION are new enough to support this,
+                // so no check is necessary.
+                FLOGF(term_support, L"Truecolor support: Enabling for Konsole");
+                support_term24bit = true;
+            } else if (auto it = vars.get(L"ITERM_SESSION_ID")) {
+                // Supporting versions of iTerm include a colon here.
+                // We assume that if this is iTerm, it can't also be st, so having this check
+                // inside is okay.
+                if (it->as_string().find(L':') != wcstring::npos) {
+                    FLOGF(term_support, L"Truecolor support: Enabling for ITERM");
+                    support_term24bit = true;
+                }
+            } else if (string_prefixes_string(L"st-", term)) {
+                FLOGF(term_support, L"Truecolor support: Enabling for st");
+                support_term24bit = true;
+            } else if (auto vte = vars.get(L"VTE_VERSION")) {
+                if (fish_wcstod(vte->as_string().c_str(), nullptr) > 3600) {
+                    FLOGF(term_support, L"Truecolor support: Enabling for VTE version %ls",
+                          vte->as_string().c_str());
+                    support_term24bit = true;
+                }
+            }
+        }
     }
     color_support_t support = (support_term256 ? color_support_term256 : 0) |
                               (support_term24bit ? color_support_term24bit : 0);
@@ -394,13 +441,13 @@ static bool initialize_curses_using_fallback(const char *term) {
     auto term_env = wcs2string(term_var->as_string());
     if (term_env == DEFAULT_TERM1 || term_env == DEFAULT_TERM2) return false;
 
-    if (session_interactivity() != session_interactivity_t::not_interactive)
-        debug(1, _(L"Using fallback terminal type '%s'."), term);
+    if (is_interactive_session()) FLOGF(warning, _(L"Using fallback terminal type '%s'."), term);
 
     int err_ret;
     if (setupterm(const_cast<char *>(term), STDOUT_FILENO, &err_ret) == OK) return true;
-    if (session_interactivity() != session_interactivity_t::not_interactive) {
-        debug(1, _(L"Could not set up terminal using the fallback terminal type '%s'."), term);
+    if (is_interactive_session()) {
+        FLOGF(warning, _(L"Could not set up terminal using the fallback terminal type '%s'."),
+              term);
     }
     return false;
 }
@@ -414,7 +461,8 @@ static bool initialize_curses_using_fallback(const char *term) {
 /// One situation in which this breaks down is with screen, since screen supports setting the
 /// terminal title if the underlying terminal does so, but will print garbage on terminals that
 /// don't. Since we can't see the underlying terminal below screen there is no way to fix this.
-static const wchar_t *const title_terms[] = {L"xterm", L"screen", L"tmux", L"nxterm", L"rxvt"};
+static const wchar_t *const title_terms[] = {L"xterm",  L"screen", L"tmux",
+                                             L"nxterm", L"rxvt",   L"alacritty"};
 static bool does_term_support_setting_title(const environment_t &vars) {
     const auto term_var = vars.get(L"TERM");
     if (term_var.missing_or_empty()) return false;
@@ -422,9 +470,9 @@ static bool does_term_support_setting_title(const environment_t &vars) {
     const wcstring term_str = term_var->as_string();
     const wchar_t *term = term_str.c_str();
     bool recognized = contains(title_terms, term_var->as_string());
-    if (!recognized) recognized = !std::wcsncmp(term, L"xterm-", std::wcslen(L"xterm-"));
-    if (!recognized) recognized = !std::wcsncmp(term, L"screen-", std::wcslen(L"screen-"));
-    if (!recognized) recognized = !std::wcsncmp(term, L"tmux-", std::wcslen(L"tmux-"));
+    if (!recognized) recognized = !std::wcsncmp(term, L"xterm-", const_strlen(L"xterm-"));
+    if (!recognized) recognized = !std::wcsncmp(term, L"screen-", const_strlen(L"screen-"));
+    if (!recognized) recognized = !std::wcsncmp(term, L"tmux-", const_strlen(L"tmux-"));
     if (!recognized) {
         if (std::wcscmp(term, L"linux") == 0) return false;
         if (std::wcscmp(term, L"dumb") == 0) return false;
@@ -446,11 +494,11 @@ static void init_curses(const environment_t &vars) {
         std::string name = wcs2string(var_name);
         const auto var = vars.get(var_name, ENV_EXPORT);
         if (var.missing_or_empty()) {
-            debug(2, L"curses var %s missing or empty", name.c_str());
+            FLOGF(term_support, L"curses var %s missing or empty", name.c_str());
             unsetenv_lock(name.c_str());
         } else {
             std::string value = wcs2string(var->as_string());
-            debug(2, L"curses var %s='%s'", name.c_str(), value.c_str());
+            FLOGF(term_support, L"curses var %s='%s'", name.c_str(), value.c_str());
             setenv_lock(name.c_str(), value.c_str(), 1);
         }
     }
@@ -458,13 +506,14 @@ static void init_curses(const environment_t &vars) {
     int err_ret;
     if (setupterm(nullptr, STDOUT_FILENO, &err_ret) == ERR) {
         auto term = vars.get(L"TERM");
-        if (session_interactivity() != session_interactivity_t::not_interactive) {
-            debug(1, _(L"Could not set up terminal."));
+        if (is_interactive_session()) {
+            FLOGF(warning, _(L"Could not set up terminal."));
             if (term.missing_or_empty()) {
-                debug(1, _(L"TERM environment variable not set."));
+                FLOGF(warning, _(L"TERM environment variable not set."));
             } else {
-                debug(1, _(L"TERM environment variable set to '%ls'."), term->as_string().c_str());
-                debug(1, _(L"Check that this terminal type is supported on this system."));
+                FLOGF(warning, _(L"TERM environment variable set to '%ls'."),
+                      term->as_string().c_str());
+                FLOGF(warning, _(L"Check that this terminal type is supported on this system."));
             }
         }
 
@@ -474,10 +523,11 @@ static void init_curses(const environment_t &vars) {
     }
 
     can_set_term_title = does_term_support_setting_title(vars);
-    term_has_xn = tigetflag((char *)"xenl") == 1;  // does terminal have the eat_newline_glitch
+    term_has_xn =
+        tigetflag(const_cast<char *>("xenl")) == 1;  // does terminal have the eat_newline_glitch
     update_fish_color_support(vars);
     // Invalidate the cached escape sequences since they may no longer be valid.
-    cached_layouts.clear();
+    layout_cache_t::shared.clear();
     curses_initialized = true;
 }
 

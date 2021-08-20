@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "STRING" "1" "Apr 29, 2020" "3.1" "fish-shell"
+.TH "STRING" "1" "Mar 01, 2021" "3.2" "fish-shell"
 .SH NAME
 string \- manipulate strings
 .
@@ -43,6 +43,7 @@ string join0 [(\-q | \-\-quiet)] [STRING...]
 string length [(\-q | \-\-quiet)] [STRING...]
 string lower [(\-q | \-\-quiet)] [STRING...]
 string match [(\-a | \-\-all)] [(\-e | \-\-entire)] [(\-i | \-\-ignore\-case)] [(\-r | \-\-regex)] [(\-n | \-\-index)] [(\-q | \-\-quiet)] [(\-v | \-\-invert)] PATTERN [STRING...]
+string pad [(\-r | \-\-right)] [(\-c | \-\-char) CHAR] [(\-w | \-\-width) INTEGER] [STRING...]
 string repeat [(\-n | \-\-count) COUNT] [(\-m | \-\-max) MAX] [(\-N | \-\-no\-newline)] [(\-q | \-\-quiet)] [STRING...]
 string replace [(\-a | \-\-all)] [(\-f | \-\-filter)] [(\-i | \-\-ignore\-case)] [(\-r | \-\-regex)] [(\-q | \-\-quiet)] PATTERN REPLACEMENT [STRING...]
 string split [(\-m | \-\-max) MAX] [(\-n | \-\-no\-empty)] [(\-q | \-\-quiet)] [(\-r | \-\-right)] SEP [STRING...]
@@ -63,7 +64,7 @@ STRING arguments are taken from the command line unless standard input is connec
 .sp
 Arguments beginning with \fB\-\fP are normally interpreted as switches; \fB\-\-\fP causes the following arguments not to be treated as switches even if they begin with \fB\-\fP\&. Switches and required arguments are recognized only on the command line.
 .sp
-Most subcommands accept a \fB\-q\fP or \fB\-\-quiet\fP switch, which suppresses the usual output but exits with the documented status.
+Most subcommands accept a \fB\-q\fP or \fB\-\-quiet\fP switch, which suppresses the usual output but exits with the documented status. In this case these commands will quit early, without reading all of the available input.
 .sp
 The following subcommands are available.
 .SH "COLLECT" SUBCOMMAND
@@ -92,13 +93,13 @@ Any trailing newlines on the input are trimmed, just as with \fB"$(cmd)"\fP subs
 >_ echo \e"(echo one\entwo\enthree | string collect)\e"
 "one
 two
-three
-"
+three"
 
 >_ echo \e"(echo one\entwo\enthree | string collect \-N)\e"
 "one
 two
-three"
+three
+"
 .ft P
 .fi
 .UNINDENT
@@ -131,11 +132,11 @@ string unescape [\-\-style=xxx] [STRING...]
 .sp
 .nf
 .ft C
->_ echo \e\ex07 | string escape
-cg
+>_ echo \ex07 | string escape
+\ecg
 
->_ string escape \-\-style=var \(aqa1 b2\(aq\e\eu6161
-a1_20b2__c_E6_85_A1
+>_ string escape \-\-style=var \(aqa1 b2\(aq\eu6161
+a1_20_b2_E6_85_A1_
 .ft P
 .fi
 .UNINDENT
@@ -193,7 +194,7 @@ string length [(\-q | \-\-quiet)] [STRING...]
 >_ set str foo
 >_ string length \-q $str; echo $status
 0
-# Equivalent to test \-n $str
+# Equivalent to test \-n "$str"
 .ft P
 .fi
 .UNINDENT
@@ -233,6 +234,8 @@ If \fB\-\-index\fP or \fB\-n\fP is given, each match is reported as a 1\-based s
 .sp
 If \fB\-\-regex\fP or \fB\-r\fP is given, PATTERN is interpreted as a Perl\-compatible regular expression, which does not have to match the entire STRING. For a regular expression containing capturing groups, multiple items will be reported for each match, one for the entire match and one for each capturing group. With this, only the matching part of the STRING will be reported, unless \fB\-\-entire\fP is given.
 .sp
+When matching via regular expressions, \fBstring match\fP automatically sets variables for all named capturing groups (\fB(?<name>expression)\fP). It will create a variable with the name of the group, in the default scope, for each named capturing group, and set it to the value of the capturing group in the first matched argument. If a named capture group matched an empty string, the variable will be set to the empty string (like \fBset var ""\fP). If it did not match, the variable will be set to nothing (like \fBset var\fP).  When \fB\-\-regex\fP is used with \fB\-\-all\fP, this behavior changes. Each named variable will contain a list of matches, with the first match contained in the first element, the second match in the second, and so on. If the group was empty or did not match, the corresponding element will be an empty string.
+.sp
 If \fB\-\-invert\fP or \fB\-v\fP is used the selected lines will be only those which do not match the given glob pattern or regular expression.
 .sp
 Exit status: 0 if at least one match was found, or 1 otherwise.
@@ -251,7 +254,7 @@ axxb
 >_ string match \-i \(aqa??B\(aq Axxb
 Axxb
 
->_ echo \(aqok?\(aq | string match \(aq*\e\e?\(aq
+>_ echo \(aqok?\(aq | string match \(aq*\e?\(aq
 ok?
 
 # Note that only the second STRING will match here.
@@ -265,7 +268,6 @@ foo2
 
 >_ string match \(aqfoo?\(aq \(aqfoo1\(aq \(aqfoo\(aq \(aqfoo2\(aq
 foo1
-foo
 foo2
 .ft P
 .fi
@@ -288,13 +290,13 @@ dog3
 cat4
 dog4
 
->_ string match \-r \(aq(\e\ed\e\ed?):(\e\ed\e\ed):(\e\ed\e\ed)\(aq 2:34:56
+>_ string match \-r \(aq(\ed\ed?):(\ed\ed):(\ed\ed)\(aq 2:34:56
 2:34:56
 2
 34
 56
 
->_ string match \-r \(aq^(\e\ew{{2,4}})\e\eg1$\(aq papa mud murmur
+>_ string match \-r \(aq^(\ew{2,4})\e1$\(aq papa mud murmur
 papa
 pa
 murmur
@@ -305,11 +307,71 @@ mur
 4 2
 6 2
 
->_ string match \-r \-i \(aq0x[0\-9a\-f]{{1,8}}\(aq \(aqint magic = 0xBadC0de;\(aq
+>_ string match \-r \-i \(aq0x[0\-9a\-f]{1,8}\(aq \(aqint magic = 0xBadC0de;\(aq
 0xBadC0de
+
+>_ echo $version
+3.1.2\-1575\-ga2ff32d90
+>_ string match \-rq \(aq(?<major>\ed+).(?<minor>\ed+).(?<revision>\ed+)\(aq \-\- $version
+>_ echo "You are using fish $major!"
+You are using fish 3!
+
+>_ string match \-raq \(aq *(?<sentence>[^.!?]+)(?<punctuation>[.!?])?\(aq "hello, friend. goodbye"
+>_ printf "%s\en" \-\- $sentence
+hello, friend
+goodbye
+>_ printf "%s\en" \-\- $punctuation
+\&.
+
+>_ string match \-rq \(aq(?<word>hello)\(aq \(aqhi\(aq
+>_ count $word
+0
 .ft P
 .fi
 .UNINDENT
+.UNINDENT
+.SH "PAD" SUBCOMMAND
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+string pad [(\-r | \-\-right)] [(\-c | \-\-char) CHAR] [(\-w | \-\-width) INTEGER] [STRING...]
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.sp
+\fBstring pad\fP extends each STRING to the given width by adding CHAR to the left.
+.sp
+If \fB\-r\fP or \fB\-\-right\fP is given, add the padding after a string.
+.sp
+If \fB\-c\fP or \fB\-\-char\fP is given, pad with CHAR instead of whitespace.
+.sp
+The output is padded to the maximum width of all input strings. If \fB\-w\fP or \fB\-\-width\fP is given, use at least that.
+.INDENT 0.0
+.INDENT 3.5
+.sp
+.nf
+.ft C
+>_ string pad \-w 10 abc abcdef
+       abc
+    abcdef
+
+>_ string pad \-\-right \-\-char=🐟 "fish are pretty" "rich. "
+fish are pretty
+rich.  🐟🐟🐟🐟
+
+>_ string pad \-w$COLUMNS (date)
+# Prints the current time on the right edge of the screen.
+.ft P
+.fi
+.UNINDENT
+.UNINDENT
+.SH SEE ALSO
+.INDENT 0.0
+.IP \(bu 2
+The printf command can do simple padding, for example \fBprintf %10s\en\fP works like \fBstring pad \-w10\fP\&.
 .UNINDENT
 .SH "REPEAT" SUBCOMMAND
 .INDENT 0.0
@@ -391,13 +453,13 @@ spaces_to_underscores
 .sp
 .nf
 .ft C
->_ string replace \-r \-a \(aq[^\e\ed.]+\(aq \(aq \(aq \(aq0 one two 3.14 four 5x\(aq
+>_ string replace \-r \-a \(aq[^\ed.]+\(aq \(aq \(aq \(aq0 one two 3.14 four 5x\(aq
 0 3.14 5
 
->_ string replace \-r \(aq(\e\ew+)\e\es+(\e\ew+)\(aq \(aq$2 $1 $$\(aq \(aqleft right\(aq
+>_ string replace \-r \(aq(\ew+)\es+(\ew+)\(aq \(aq$2 $1 $$\(aq \(aqleft right\(aq
 right left $
 
->_ string replace \-r \(aq\e\es*newline\e\es*\(aq \(aq\e\en\(aq \(aqput a newline here\(aq
+>_ string replace \-r \(aq\es*newline\es*\(aq \(aq\en\(aq \(aqput a newline here\(aq
 put a
 here
 .ft P
@@ -410,8 +472,8 @@ here
 .sp
 .nf
 .ft C
-string split [(\-m | \-\-max) MAX] [(\-n | \-\-no\-empty)] [(\-q | \-\-quiet)] [(\-r | \-\-right)] SEP [STRING...]
-string split0 [(\-m | \-\-max) MAX] [(\-n | \-\-no\-empty)] [(\-q | \-\-quiet)] [(\-r | \-\-right)] [STRING...]
+string split [(\-f | \-\-fields) FIELDS] [(\-m | \-\-max) MAX] [(\-n | \-\-no\-empty)] [(\-q | \-\-quiet)] [(\-r | \-\-right)] SEP [STRING...]
+string split0 [(\-f | \-\-fields) FIELDS] [(\-m | \-\-max) MAX] [(\-n | \-\-no\-empty)] [(\-q | \-\-quiet)] [(\-r | \-\-right)] [STRING...]
 .ft P
 .fi
 .UNINDENT
@@ -419,7 +481,9 @@ string split0 [(\-m | \-\-max) MAX] [(\-n | \-\-no\-empty)] [(\-q | \-\-quiet)] 
 .sp
 \fBstring split\fP splits each STRING on the separator SEP, which can be an empty string. If \fB\-m\fP or \fB\-\-max\fP is specified, at most MAX splits are done on each STRING. If \fB\-r\fP or \fB\-\-right\fP is given, splitting is performed right\-to\-left. This is useful in combination with \fB\-m\fP or \fB\-\-max\fP\&. With \fB\-n\fP or \fB\-\-no\-empty\fP, empty results are excluded from consideration (e.g. \fBhello\en\enworld\fP would expand to two strings and not three). Exit status: 0 if at least one split was performed, or 1 otherwise.
 .sp
-See also \fBread \-\-delimiter\fP\&.
+Use \fB\-f\fP or \fB\-\-fields\fP to print out specific fields. Unless \fB\-\-allow\-empty\fP is used, if a given field does not exist, then the command exits with status 1 and does not print anything.
+.sp
+See also the \fB\-\-delimiter\fP option of the read command.
 .sp
 \fBstring split0\fP splits each STRING on the zero byte (NUL). Options are the same as \fBstring split\fP except that no separator is given.
 .sp
@@ -442,6 +506,10 @@ fish
 a
 b
 c
+
+>_ string split \-\-allow\-empty \-f1,3,5 \(aq\(aq abc
+a
+c
 .ft P
 .fi
 .UNINDENT
@@ -457,10 +525,10 @@ c
 42
 
 >_ # Sort a list of elements which may contain newlines
->_ set foo beta alpha\e\engamma
+>_ set foo beta alpha\engamma
 >_ set foo (string join0 $foo | sort \-z | string split0)
 >_ string escape $foo[1]
-alpha\e\engamma
+alpha\engamma
 .ft P
 .fi
 .UNINDENT
@@ -471,13 +539,13 @@ alpha\e\engamma
 .sp
 .nf
 .ft C
-string sub [(\-s | \-\-start) START] [(\-l | \-\-length) LENGTH] [(\-q | \-\-quiet)] [STRING...]
+string sub [(\-s | \-\-start) START] [(\-e | \-\-end) END] [(\-l | \-\-length) LENGTH] [(\-q | \-\-quiet)] [STRING...]
 .ft P
 .fi
 .UNINDENT
 .UNINDENT
 .sp
-\fBstring sub\fP prints a substring of each string argument. The start of the substring can be specified with \fB\-s\fP or \fB\-\-start\fP followed by a 1\-based index value. Positive index values are relative to the start of the string and negative index values are relative to the end of the string. The default start value is 1. The length of the substring can be specified with \fB\-l\fP or \fB\-\-length\fP\&. If the length is not specified, the substring continues to the end of each STRING. Exit status: 0 if at least one substring operation was performed, 1 otherwise.
+\fBstring sub\fP prints a substring of each string argument. The start/end of the substring can be specified with \fB\-s\fP/\fB\-e\fP or \fB\-\-start\fP/\fB\-\-end\fP followed by a 1\-based index value. Positive index values are relative to the start of the string and negative index values are relative to the end of the string. The default start value is 1. The length of the substring can be specified with \fB\-l\fP or \fB\-\-length\fP\&. If the length or end is not specified, the substring continues to the end of each STRING. Exit status: 0 if at least one substring operation was performed, 1 otherwise. \fB\-\-length\fP is mutually exclusive with \fB\-\-end\fP\&.
 .SS Examples
 .INDENT 0.0
 .INDENT 3.5
@@ -492,6 +560,18 @@ bc
 
 >_ string sub \-\-start=\-2 abcde
 de
+
+>_ string sub \-\-end=3 abcde
+abc
+
+>_ string sub \-e \-1 abcde
+abcd
+
+>_ string sub \-s 2 \-e \-1 abcde
+bcd
+
+>_ string sub \-s \-3 \-e \-2 abcde
+c
 .ft P
 .fi
 .UNINDENT
@@ -639,12 +719,12 @@ If you are familiar with these, it is useful to know how \fBstring\fP differs fr
 .sp
 In contrast to these classics, \fBstring\fP reads input either from stdin or as arguments. \fBstring\fP also does not deal with files, so it requires redirections to be used with them.
 .sp
-In contrast to \fBgrep\fP, \fBstring\fPs \fImatch\fP defaults to glob\-mode, while \fIreplace\fP defaults to literal matching. If set to regex\-mode, they use PCRE regular expressions, which is comparable to \fBgrep\fPs \fI\-P\fP option. \fImatch\fP defaults to printing just the match, which is like \fBgrep\fP with \fI\-o\fP (use \fI\-\-entire\fP to enable grep\-like behavior).
+In contrast to \fBgrep\fP, \fBstring\fP\(aqs \fBmatch\fP defaults to glob\-mode, while \fBreplace\fP defaults to literal matching. If set to regex\-mode, they use PCRE regular expressions, which is comparable to \fBgrep\fP\(aqs \fB\-P\fP option. \fBmatch\fP defaults to printing just the match, which is like \fBgrep\fP with \fB\-o\fP (use \fB\-\-entire\fP to enable grep\-like behavior).
 .sp
-Like \fBsed\fPs \fIs/\fP command, \fBstring replace\fP still prints strings that don\(aqt match. \fBsed\fPs \fI\-n\fP in combination with a \fI/p\fP modifier or command is like \fBstring replace \-f\fP\&.
+Like \fBsed\fP\(aqs \fBs/old/new/\fP command, \fBstring replace\fP still prints strings that don\(aqt match. \fBsed\fP\(aqs \fB\-n\fP in combination with a \fB/p\fP modifier or command is like \fBstring replace \-f\fP\&.
 .sp
-\fBstring split somedelimiter\fP is a replacement for \fBtr somedelimiter \e\en\fP\&.
+\fBstring split somedelimiter\fP is a replacement for \fBtr somedelimiter \en\fP\&.
 .SH COPYRIGHT
-2019, fish-shell developers
+2020, fish-shell developers
 .\" Generated by docutils manpage writer.
 .

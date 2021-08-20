@@ -1,4 +1,4 @@
-function __fish_complete_ssh -d "common completions for ssh commands" --argument command
+function __fish_complete_ssh -d "common completions for ssh commands" --argument-names command
     complete -c $command -s 1 -d "Protocol version 1 only"
     complete -c $command -s 2 -d "Protocol version 2 only"
     complete -c $command -s 4 -d "IPv4 addresses only"
@@ -7,7 +7,7 @@ function __fish_complete_ssh -d "common completions for ssh commands" --argument
     complete -xc $command -s c -d "Encryption algorithm" -a "blowfish 3des des"
     complete -r -c $command -s F -d "Configuration file"
     complete -r -c $command -s i -d "Identity file"
-    complete -x -c $command -s o -d "Options" -a "
+    complete -x -c $command -s o -d Options -a "
 		AddressFamily
 		BatchMode
 		BindAddress

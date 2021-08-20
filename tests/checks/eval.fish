@@ -21,14 +21,14 @@ echo $status
 false
 eval "("
 echo $status
-# CHECK: 1
+# CHECK: 123
 # CHECKERR: {{.*}}checks/eval.fish (line {{\d+}}): Unexpected end of string, expecting ')'
 # CHECKERR: (
 # CHECKERR: ^
 false
 eval '""'
 echo $status
-# CHECK: 1
+# CHECK: 123
 # CHECKERR: {{.*}}checks/eval.fish (line {{\d+}}): The expanded command was empty.
 # CHECKERR: ""
 # CHECKERR: ^
@@ -56,3 +56,7 @@ false
 eval "begin; end;"
 echo empty block eval: $status # 0
 # CHECK: empty block eval: 0
+
+source /banana/\t/foo
+# CHECKERR: source: Error encountered while sourcing file '/banana/\t/foo':
+# CHECKERR: source: No such file or directory

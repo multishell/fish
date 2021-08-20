@@ -34,6 +34,8 @@ controllers.controller("colorsController", function($scope, $http) {
 
     $scope.border_color_for_color = border_color_for_color;
 
+    $scope.interpret_color = interpret_color;
+
     $scope.getColorArraysArray = function() {
         var result = null;
         if ( $scope.selectedColorScheme.colors && $scope.selectedColorScheme.colors.length > 0)
@@ -77,20 +79,35 @@ controllers.controller("colorsController", function($scope, $http) {
     $scope.sampleTerminalBackgroundColors = ['white', '#' + solarized.base3, '#300', '#003', '#' + solarized.base03, '#232323', '#'+nord.nord0, 'black'];
 
     /* Array of FishColorSchemes */
-    $scope.colorSchemes = [color_scheme_fish_default, color_scheme_solarized_light, color_scheme_solarized_dark, color_scheme_tomorrow, color_scheme_tomorrow_night, color_scheme_tomorrow_night_bright, color_scheme_nord, color_scheme_base16_default_dark, color_scheme_base16_default_light, color_scheme_base16_eighties];
+    $scope.colorSchemes = [
+        color_scheme_fish_default,
+        color_scheme_ayu_light,
+        color_scheme_ayu_dark,
+        color_scheme_ayu_mirage,
+        color_scheme_solarized_light,
+        color_scheme_solarized_dark,
+        color_scheme_tomorrow,
+        color_scheme_tomorrow_night,
+        color_scheme_tomorrow_night_bright,
+        color_scheme_nord,
+        color_scheme_base16_default_dark,
+        color_scheme_base16_default_light,
+        color_scheme_base16_eighties
+    ];
     for (var i=0; i < additional_color_schemes.length; i++)
         $scope.colorSchemes.push(additional_color_schemes[i])
 
 
     $scope.getCurrentTheme = function() {
-        $http.get("colors/").success(function(data, status, headers, config) {
-           var currentScheme = { "name": "Current", "colors":[], "preferred_background": "" };
+        $http.get("colors/").then(function(arg) {
+            var currentScheme = { "name": "Current", "colors":[], "preferred_background": "black" };
+            var data = arg.data
             for (var i in data) {
                 currentScheme[data[i].name] = data[i].color;
             }
             $scope.colorSchemes.splice(0, 0, currentScheme);
             $scope.changeSelectedColorScheme(currentScheme);
-     })};
+        })};
 
 	$scope.saveThemeButtonTitle = "Set Theme";
 
@@ -141,8 +158,8 @@ controllers.controller("colorsController", function($scope, $http) {
                 selected = $scope.selectedColorScheme[name];
             }
             var postData = "what=" + name + "&color=" + selected + "&background_color=&bold=&underline=&dim=&reverse=&italics=";
-            $http.post("set_color/", postData, { headers: {'Content-Type': 'application/x-www-form-urlencoded'} }).success(function(data, status, headers, config) {
-            	if (status == 200) {
+            $http.post("set_color/", postData, { headers: {'Content-Type': 'application/x-www-form-urlencoded'} }).then(function(arg) {
+            	if (arg.status == 200) {
             		remaining -= 1;
             		if (remaining == 0) {
             			/* All styles set! */
@@ -162,9 +179,8 @@ controllers.controller("promptController", function($scope, $http) {
     $scope.savePromptButtonTitle = "Set Prompt";
 
     $scope.fetchSamplePrompts= function() {
-        $http.get("sample_prompts/").success(function(data, status, headers, config) {
-            $scope.samplePrompts = data;
-            $scope.samplePromptsArrayArray = get_colors_as_nested_array($scope.samplePrompts, 1);
+        $http.get("sample_prompts/").then(function(arg) {
+            $scope.samplePrompts = arg.data;
 
             if ($scope.selectedPrompt == null) {
                 $scope.selectPrompt($scope.samplePrompts[0]);
@@ -172,13 +188,13 @@ controllers.controller("promptController", function($scope, $http) {
         })};
 
     $scope.selectPrompt = function(prompt) {
-        $scope.selectedPrompt= prompt;
+        $scope.selectedPrompt = prompt;
 
         $scope.savePromptButtonTitle = "Set Prompt";
     }
 
     $scope.setNewPrompt = function(selectedPrompt) {
-        $http.post("set_prompt/", {'fish_prompt': selectedPrompt.function,}).success(function(data, status, headers, config){
+        $http.post("set_prompt/", {'fish_prompt': selectedPrompt.function,}).then(function(arg){
 
             // Update attributes of current prompt and select it
             $scope.samplePrompts[0].demo = selectedPrompt.demo;
@@ -209,14 +225,14 @@ controllers.controller("functionsController", function($scope, $http) {
     }
 
     $scope.fetchFunctions= function() {
-        $http.get("functions/").success(function(data, status, headers, config) {
-            $scope.functions = data;
+        $http.get("functions/").then(function(arg) {
+            $scope.functions = arg.data;
             $scope.selectFunction($scope.functions[0]);
     })};
 
     $scope.cleanupFishFunction = function (contents) {
         /* Replace leading tabs and groups of four spaces at the beginning of a line with two spaces. */
-        lines = contents.split('\n')
+        lines = contents ? contents.split('\n') : [];
         rx = /^[\t ]+/
         for (var i=0; i < lines.length; i++) {
             line = lines[i]
@@ -233,8 +249,8 @@ controllers.controller("functionsController", function($scope, $http) {
     }
 
     $scope.fetchFunctionDefinition = function(name) {
-         $http.post("get_function/","what=" + name, { headers: {'Content-Type': 'application/x-www-form-urlencoded'} }).success(function(data, status, headers, config) {
-            $scope.functionDefinition = $scope.cleanupFishFunction(data[0]);
+         $http.post("get_function/","what=" + name, { headers: {'Content-Type': 'application/x-www-form-urlencoded'} }).then(function(arg) {
+            $scope.functionDefinition = $scope.cleanupFishFunction(arg.data[0]);
     })};
 
     $scope.fetchFunctions();
@@ -244,8 +260,8 @@ controllers.controller("variablesController", function($scope, $http) {
     $scope.query = null;
 
     $scope.fetchVariables= function() {
-        $http.get("variables/").success(function(data, status, headers, config) {
-        $scope.variables = data;
+        $http.get("variables/").then(function(arg) {
+        $scope.variables = arg.data;
     })};
 
     $scope.fetchVariables();
@@ -299,7 +315,7 @@ controllers.controller("historyController", function($scope, $http, $timeout) {
     $scope.prevPage = function () {
         $scope.currentPage = Math.max($scope.currentPage - 1, 0);
     };
-    
+
     $scope.nextPage = function () {
         $scope.currentPage = Math.min($scope.currentPage + 1,
                                       $scope.filteredItemPages.length - 1);
@@ -318,15 +334,15 @@ controllers.controller("historyController", function($scope, $http, $timeout) {
 
     // Get history from server
     $scope.fetchHistory = function() {
-        $http.get("history/").success(function(data, status, headers, config) {
-            $scope.allItems = data;
+        $http.get("history/").then(function(arg) {
+            $scope.allItems = arg.data;
             $scope.filterAndGroup();
         });
     };
 
     $scope.deleteHistoryItem = function(item) {
         index = $scope.allItems.indexOf(item);
-        $http.post("delete_history_item/","what=" + encodeURIComponent(item), { headers: {'Content-Type': 'application/x-www-form-urlencoded'} }).success(function(data, status, headers, config) {
+        $http.post("delete_history_item/","what=" + encodeURIComponent(item), { headers: {'Content-Type': 'application/x-www-form-urlencoded'} }).then(function(arg) {
         $scope.allItems.splice(index, 1);
         $scope.filterAndGroup();
     })};
@@ -350,8 +366,8 @@ controllers.controller("historyController", function($scope, $http, $timeout) {
 controllers.controller("bindingsController", function($scope, $http) {
     $scope.bindings = [];
     $scope.fetchBindings = function() {
-        $http.get("bindings/").success(function(data, status, headers, config) {
-            $scope.bindings = data;
+        $http.get("bindings/").then(function(arg) {
+            $scope.bindings = arg.data;
     })};
 
     $scope.fetchBindings();
@@ -367,13 +383,14 @@ controllers.controller("abbreviationsController", function($scope, $http) {
                 this.hasBlank = true;
             }
         }, hasBlank);
+        if (!$scope.abbreviations) $scope.abbreviations = [];
         if (! hasBlank.hasBlank) {
             $scope.abbreviations.push({phrase: "", word: "", editable: true})
         }
     }
     $scope.fetchAbbreviations = function() {
-        $http.get("abbreviations/").success(function(data, status, headers, config) {
-            $scope.abbreviations = data;
+        $http.get("abbreviations/").then(function(arg) {
+            $scope.abbreviations = arg.data;
             $scope.addBlank();
     })};
 
@@ -383,7 +400,7 @@ controllers.controller("abbreviationsController", function($scope, $http) {
 
     $scope.saveAbbreviation = function(abbreviation) {
         if (abbreviation.word && abbreviation.phrase) {
-            $http.post("save_abbreviation/", abbreviation).success(function(data, status, headers, config) {
+            $http.post("save_abbreviation/", abbreviation).then(function(arg) {
                 abbreviation.editable = false;
                 $scope.addBlank();
             });
@@ -392,7 +409,7 @@ controllers.controller("abbreviationsController", function($scope, $http) {
 
     $scope.removeAbbreviation = function(abbreviation) {
         if (abbreviation.word) {
-            $http.post("remove_abbreviation/", abbreviation).success(function(data, status, headers, config) {
+            $http.post("remove_abbreviation/", abbreviation).then(function(arg) {
                 $scope.abbreviations.splice($scope.abbreviations.indexOf(abbreviation), 1);
                 $scope.addBlank();
             });

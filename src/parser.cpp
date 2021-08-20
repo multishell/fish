@@ -11,6 +11,7 @@
 #include <memory>
 #include <utility>
 
+#include "ast.h"
 #include "common.h"
 #include "env.h"
 #include "event.h"
@@ -19,13 +20,14 @@
 #include "flog.h"
 #include "function.h"
 #include "intern.h"
+#include "job_group.h"
 #include "parse_constants.h"
 #include "parse_execution.h"
 #include "parse_util.h"
 #include "proc.h"
 #include "reader.h"
 #include "sanity.h"
-#include "tnode.h"
+#include "signal.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 class io_chain_t;
@@ -100,11 +102,6 @@ std::shared_ptr<parser_t> parser_t::principal{new parser_t()};
 parser_t &parser_t::principal_parser() {
     ASSERT_IS_MAIN_THREAD();
     return *principal;
-}
-
-void parser_t::cancel_requested(int sig) {
-    assert(sig != 0 && "Signal must not be 0");
-    principal->cancellation_signal = sig;
 }
 
 int parser_t::set_var_and_fire(const wcstring &key, env_mode_flags_t mode, wcstring_list_t vals) {
@@ -224,26 +221,6 @@ const wchar_t *parser_t::get_block_desc(block_type_t block) {
     return _(UNKNOWN_BLOCK);
 }
 
-#if 0
-// TODO: Lint says this isn't used (which is true). Should this be removed?
-wcstring parser_t::block_stack_description() const {
-    wcstring result;
-    size_t idx = this->block_count();
-    size_t spaces = 0;
-    while (idx--) {
-        if (spaces > 0) {
-            result.push_back(L'\n');
-        }
-        for (size_t j = 0; j < spaces; j++) {
-            result.push_back(L' ');
-        }
-        result.append(this->block_at_index(idx)->description());
-        spaces++;
-    }
-    return result;
-}
-#endif
-
 const block_t *parser_t::block_at_index(size_t idx) const {
     return idx < block_list.size() ? &block_list[idx] : nullptr;
 }
@@ -255,62 +232,56 @@ block_t *parser_t::block_at_index(size_t idx) {
 block_t *parser_t::current_block() { return block_at_index(0); }
 
 /// Print profiling information to the specified stream.
-static void print_profile(const std::vector<std::unique_ptr<profile_item_t>> &items, FILE *out) {
-    for (size_t pos = 0; pos < items.size(); pos++) {
-        const profile_item_t *me, *prev;
-        size_t i;
-        int my_time;
+static void print_profile(const std::deque<profile_item_t> &items, FILE *out) {
+    for (size_t idx = 0; idx < items.size(); idx++) {
+        const profile_item_t &item = items.at(idx);
+        if (item.skipped || item.cmd.empty()) continue;
 
-        me = items.at(pos).get();
-        if (me->skipped) {
-            continue;
+        long long total_time = item.duration;
+
+        // Compute the self time as the total time, minus the total time consumed by subsequent
+        // items exactly one eval level deeper.
+        long long self_time = item.duration;
+        for (size_t i = idx + 1; i < items.size(); i++) {
+            const profile_item_t &nested_item = items.at(i);
+            if (nested_item.skipped) continue;
+
+            // If the eval level is not larger, then we have exhausted nested items.
+            if (nested_item.level <= item.level) break;
+
+            // If the eval level is exactly one more than our level, it is a directly nested item.
+            if (nested_item.level == item.level + 1) self_time -= nested_item.duration;
         }
 
-        my_time = me->parse + me->exec;
-        for (i = pos + 1; i < items.size(); i++) {
-            prev = items.at(i).get();
-            if (prev->skipped) {
-                continue;
-            }
-            if (prev->level <= me->level) {
-                break;
-            }
-            if (prev->level > me->level + 1) {
-                continue;
-            }
-
-            my_time -= prev->parse + prev->exec;
-        }
-
-        if (me->cmd.empty()) {
-            continue;
-        }
-
-        if (std::fwprintf(out, L"%d\t%d\t", my_time, me->parse + me->exec) < 0) {
+        if (std::fwprintf(out, L"%lld\t%lld\t", self_time, total_time) < 0) {
             wperror(L"fwprintf");
             return;
         }
 
-        for (i = 0; i < me->level; i++) {
+        for (size_t i = 0; i < item.level; i++) {
             if (std::fwprintf(out, L"-") < 0) {
                 wperror(L"fwprintf");
                 return;
             }
         }
 
-        if (std::fwprintf(out, L"> %ls\n", me->cmd.c_str()) < 0) {
+        if (std::fwprintf(out, L"> %ls\n", item.cmd.c_str()) < 0) {
             wperror(L"fwprintf");
             return;
         }
     }
 }
 
+void parser_t::clear_profiling() {
+    profile_items.clear();
+}
+
 void parser_t::emit_profiling(const char *path) const {
     // Save profiling information. OK to not use CLO_EXEC here because this is called while fish is
-    // dying (and hence will not fork).
+    // exiting (and hence will not fork).
     FILE *f = fopen(path, "w");
     if (!f) {
-        debug(1, _(L"Could not write profiling information to file '%s'"), path);
+        FLOGF(warning, _(L"Could not write profiling information to file '%s'"), path);
     } else {
         if (std::fwprintf(f, _(L"Time\tSum\tCommand\n"), profile_items.size()) < 0) {
             wperror(L"fwprintf");
@@ -328,19 +299,18 @@ completion_list_t parser_t::expand_argument_list(const wcstring &arg_list_src,
                                                  expand_flags_t eflags,
                                                  const operation_context_t &ctx) {
     // Parse the string as an argument list.
-    parse_node_tree_t tree;
-    if (!parse_tree_from_string(arg_list_src, parse_flag_none, &tree, nullptr /* errors */,
-                                symbol_freestanding_argument_list)) {
+    auto ast = ast::ast_t::parse_argument_list(arg_list_src);
+    if (ast.errored()) {
         // Failed to parse. Here we expect to have reported any errors in test_args.
         return {};
     }
 
     // Get the root argument list and extract arguments from it.
     completion_list_t result;
-    assert(!tree.empty());
-    tnode_t<grammar::freestanding_argument_list> arg_list(&tree, &tree.at(0));
-    while (auto arg = arg_list.next_in_list<grammar::argument>()) {
-        const wcstring arg_src = arg.get_source(arg_list_src);
+    const ast::freestanding_argument_list_t *list =
+        ast.top()->as<ast::freestanding_argument_list_t>();
+    for (const ast::argument_t &arg : list->arguments) {
+        wcstring arg_src = arg.source(arg_list_src);
         if (expand_string(arg_src, &result, eflags, ctx) == expand_result_t::error) {
             break;  // failed to expand a string
         }
@@ -351,7 +321,7 @@ completion_list_t parser_t::expand_argument_list(const wcstring &arg_list_src,
 std::shared_ptr<parser_t> parser_t::shared() { return shared_from_this(); }
 
 cancel_checker_t parser_t::cancel_checker() const {
-    return [this]() { return this->cancellation_signal != 0; };
+    return [] { return signal_check_cancel() != 0; };
 }
 
 operation_context_t parser_t::context() {
@@ -359,8 +329,8 @@ operation_context_t parser_t::context() {
 }
 
 /// Append stack trace info for the block \p b to \p trace.
-static void append_block_description_to_stack_trace(const block_t &b, wcstring &trace,
-                                                    const environment_t &vars) {
+static void append_block_description_to_stack_trace(const parser_t &parser, const block_t &b,
+                                                    wcstring &trace) {
     bool print_call_site = false;
     switch (b.type()) {
         case block_type_t::function_call:
@@ -394,13 +364,13 @@ static void append_block_description_to_stack_trace(const block_t &b, wcstring &
         case block_type_t::source: {
             const wchar_t *source_dest = b.sourced_file;
             append_format(trace, _(L"from sourcing file %ls\n"),
-                          user_presentable_path(source_dest, vars).c_str());
+                          user_presentable_path(source_dest, parser.vars()).c_str());
             print_call_site = true;
             break;
         }
         case block_type_t::event: {
             assert(b.event && "Should have an event");
-            wcstring description = event_get_desc(*b.event);
+            wcstring description = event_get_desc(parser, *b.event);
             append_format(trace, _(L"in event handler: %ls\n"), description.c_str());
             print_call_site = true;
             break;
@@ -422,7 +392,7 @@ static void append_block_description_to_stack_trace(const block_t &b, wcstring &
         const wchar_t *file = b.src_filename;
         if (file) {
             append_format(trace, _(L"\tcalled on line %d of file %ls\n"), b.src_lineno,
-                          user_presentable_path(file, vars).c_str());
+                          user_presentable_path(file, parser.vars()).c_str());
         } else if (is_within_fish_initialization()) {
             append_format(trace, _(L"\tcalled during startup\n"));
         }
@@ -432,7 +402,7 @@ static void append_block_description_to_stack_trace(const block_t &b, wcstring &
 wcstring parser_t::stack_trace() const {
     wcstring trace;
     for (const auto &b : blocks()) {
-        append_block_description_to_stack_trace(b, trace, vars());
+        append_block_description_to_stack_trace(*this, b, trace);
 
         // Stop at event handler. No reason to believe that any other code is relevant.
         //
@@ -605,19 +575,18 @@ job_t *parser_t::job_get(job_id_t id) {
     return nullptr;
 }
 
-job_t *parser_t::job_get_from_pid(pid_t pid) const {
-    pid_t pgid = getpgid(pid);
-
-    if (pgid == -1) {
-        return nullptr;
+const job_t *parser_t::job_get(job_id_t id) const {
+    for (const auto &job : job_list) {
+        if (id <= 0 || job->job_id() == id) return job.get();
     }
+    return nullptr;
+}
 
+job_t *parser_t::job_get_from_pid(pid_t pid) const {
     for (const auto &job : jobs()) {
-        if (job->pgid == pgid) {
-            for (const process_ptr_t &p : job->processes) {
-                if (p->pid == pid) {
-                    return job.get();
-                }
+        for (const process_ptr_t &p : job->processes) {
+            if (p->pid == pid) {
+                return job.get();
             }
         }
     }
@@ -625,20 +594,19 @@ job_t *parser_t::job_get_from_pid(pid_t pid) const {
 }
 
 profile_item_t *parser_t::create_profile_item() {
-    profile_item_t *result = nullptr;
     if (g_profiling_active) {
-        profile_items.push_back(make_unique<profile_item_t>());
-        result = profile_items.back().get();
+        profile_items.emplace_back();
+        return &profile_items.back();
     }
-    return result;
+    return nullptr;
 }
 
-eval_result_t parser_t::eval(const wcstring &cmd, const io_chain_t &io,
-                             enum block_type_t block_type, maybe_t<pid_t> parent_pgid) {
+eval_res_t parser_t::eval(const wcstring &cmd, const io_chain_t &io,
+                          const job_group_ref_t &job_group, enum block_type_t block_type) {
     // Parse the source into a tree, if we can.
     parse_error_list_t error_list;
-    if (parsed_source_ref_t ps = parse_source(cmd, parse_flag_none, &error_list)) {
-        return this->eval(ps, io, block_type, parent_pgid);
+    if (parsed_source_ref_t ps = parse_source(wcstring{cmd}, parse_flag_none, &error_list)) {
+        return this->eval(ps, io, job_group, block_type);
     } else {
         // Get a backtrace. This includes the message.
         wcstring backtrace_and_desc;
@@ -646,43 +614,74 @@ eval_result_t parser_t::eval(const wcstring &cmd, const io_chain_t &io,
 
         // Print it.
         std::fwprintf(stderr, L"%ls\n", backtrace_and_desc.c_str());
-        return eval_result_t::error;
+
+        // Set a valid status.
+        this->set_last_statuses(statuses_t::just(STATUS_ILLEGAL_CMD));
+        bool break_expand = true;
+        return eval_res_t{proc_status_t::from_exit_code(STATUS_ILLEGAL_CMD), break_expand};
     }
 }
 
-eval_result_t parser_t::eval(const parsed_source_ref_t &ps, const io_chain_t &io,
-                             enum block_type_t block_type, maybe_t<pid_t> parent_pgid) {
+eval_res_t parser_t::eval(const parsed_source_ref_t &ps, const io_chain_t &io,
+                          const job_group_ref_t &job_group, enum block_type_t block_type) {
     assert(block_type == block_type_t::top || block_type == block_type_t::subst);
-    if (!ps->tree.empty()) {
-        job_lineage_t lineage;
-        lineage.block_io = io;
-        lineage.parent_pgid = parent_pgid;
-        // Execute the first node.
-        tnode_t<grammar::job_list> start{&ps->tree, &ps->tree.front()};
-        return this->eval_node(ps, start, std::move(lineage), block_type);
+    const auto *job_list = ps->ast.top()->as<ast::job_list_t>();
+    if (!job_list->empty()) {
+        // Execute the top job list.
+        return this->eval_node(ps, *job_list, io, job_group, block_type);
+    } else {
+        auto status = proc_status_t::from_exit_code(get_last_status());
+        bool break_expand = false;
+        bool was_empty = true;
+        bool no_status = true;
+        return eval_res_t{status, break_expand, was_empty, no_status};
     }
-    return eval_result_t::ok;
 }
 
 template <typename T>
-eval_result_t parser_t::eval_node(const parsed_source_ref_t &ps, tnode_t<T> node,
-                                  job_lineage_t lineage, block_type_t block_type) {
+eval_res_t parser_t::eval_node(const parsed_source_ref_t &ps, const T &node,
+                               const io_chain_t &block_io, const job_group_ref_t &job_group,
+                               block_type_t block_type) {
     static_assert(
-        std::is_same<T, grammar::statement>::value || std::is_same<T, grammar::job_list>::value,
+        std::is_same<T, ast::statement_t>::value || std::is_same<T, ast::job_list_t>::value,
         "Unexpected node type");
-    // Handle cancellation requests. If our block stack is currently empty, then we already did
-    // successfully cancel (or there was nothing to cancel); clear the flag. If our block stack is
-    // not empty, we are still in the process of cancelling; refuse to evaluate anything.
-    if (this->cancellation_signal) {
-        if (!block_list.empty()) {
-            return eval_result_t::cancelled;
-        }
-        this->cancellation_signal = 0;
-    }
 
     // Only certain blocks are allowed.
     assert((block_type == block_type_t::top || block_type == block_type_t::subst) &&
            "Invalid block type");
+
+    // If fish itself got a cancel signal, then we want to unwind back to the principal parser.
+    // If we are the principal parser and our block stack is empty, then we want to clear the
+    // signal.
+    // Note this only happens in interactive sessions. In non-interactive sessions, SIGINT will
+    // cause fish to exit.
+    if (int sig = signal_check_cancel()) {
+        if (this == principal.get() && block_list.empty()) {
+            signal_clear_cancel();
+        } else {
+            return proc_status_t::from_signal(sig);
+        }
+    }
+
+    // If we are provided a cancellation group, use it; otherwise create one.
+    cancellation_group_ref_t cancel_group =
+        job_group ? job_group->cancel_group : cancellation_group_t::create();
+
+    // A helper to detect if we got a signal.
+    // This includes both signals sent to fish (user hit control-C while fish is foreground) and
+    // signals from the job group (e.g. some external job terminated with SIGQUIT).
+    auto check_cancel_signal = [=] {
+        // Did fish itself get a signal?
+        int sig = signal_check_cancel();
+        // Has this job group been cancelled?
+        if (!sig) sig = cancel_group->get_cancel_signal();
+        return sig;
+    };
+
+    // If we have a job group which is cancelled, then do nothing.
+    if (int sig = check_cancel_signal()) {
+        return proc_status_t::from_signal(sig);
+    }
 
     job_reap(*this, false);  // not sure why we reap jobs here
 
@@ -690,32 +689,45 @@ eval_result_t parser_t::eval_node(const parsed_source_ref_t &ps, tnode_t<T> node
     operation_context_t op_ctx = this->context();
     block_t *scope_block = this->push_block(block_t::scope_block(block_type));
 
-    // Propogate any parent pgid.
-    op_ctx.parent_pgid = lineage.parent_pgid;
+    // Propogate our job group.
+    op_ctx.job_group = job_group;
+
+    // Replace the context's cancel checker with one that checks the job group's signal.
+    op_ctx.cancel_checker = [=] { return check_cancel_signal() != 0; };
 
     // Create and set a new execution context.
     using exc_ctx_ref_t = std::unique_ptr<parse_execution_context_t>;
     scoped_push<exc_ctx_ref_t> exc(&execution_context, make_unique<parse_execution_context_t>(
-                                                           ps, this, op_ctx, std::move(lineage)));
-    eval_result_t res = execution_context->eval_node(node, scope_block);
+                                                           ps, op_ctx, cancel_group, block_io));
+
+    // Check the exec count so we know if anything got executed.
+    const size_t prev_exec_count = libdata().exec_count;
+    const size_t prev_status_count = libdata().status_count;
+    end_execution_reason_t reason = execution_context->eval_node(node, scope_block);
+    const size_t new_exec_count = libdata().exec_count;
+    const size_t new_status_count = libdata().status_count;
+
     exc.restore();
     this->pop_block(scope_block);
 
     job_reap(*this, false);  // reap again
 
-    // control_flow is used internally to react to break and return.
-    // Here we treat that as success.
-    if (res == eval_result_t::control_flow) {
-        res = eval_result_t::ok;
+    if (int sig = check_cancel_signal()) {
+        return proc_status_t::from_signal(sig);
+    } else {
+        auto status = proc_status_t::from_exit_code(this->get_last_status());
+        bool break_expand = (reason == end_execution_reason_t::error);
+        bool was_empty = !break_expand && prev_exec_count == new_exec_count;
+        bool no_status = prev_status_count == new_status_count;
+        return eval_res_t{status, break_expand, was_empty, no_status};
     }
-    return res;
 }
 
 // Explicit instantiations. TODO: use overloads instead?
-template eval_result_t parser_t::eval_node(const parsed_source_ref_t &, tnode_t<grammar::statement>,
-                                           job_lineage_t, block_type_t);
-template eval_result_t parser_t::eval_node(const parsed_source_ref_t &, tnode_t<grammar::job_list>,
-                                           job_lineage_t, block_type_t);
+template eval_res_t parser_t::eval_node(const parsed_source_ref_t &, const ast::statement_t &,
+                                        const io_chain_t &, const job_group_ref_t &, block_type_t);
+template eval_res_t parser_t::eval_node(const parsed_source_ref_t &, const ast::job_list_t &,
+                                        const io_chain_t &, const job_group_ref_t &, block_type_t);
 
 void parser_t::get_backtrace(const wcstring &src, const parse_error_list_t &errors,
                              wcstring &output) const {

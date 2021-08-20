@@ -1,6 +1,8 @@
 #ifndef FISH_TOPIC_MONITOR_H
 #define FISH_TOPIC_MONITOR_H
 
+#include <semaphore.h>
+
 #include <array>
 #include <atomic>
 #include <bitset>
@@ -9,7 +11,6 @@
 #include <numeric>
 
 #include "common.h"
-#include "enum_set.h"
 #include "io.h"
 
 /** Topic monitoring support. Topics are conceptually "a thing that can happen." For example,
@@ -32,52 +33,155 @@
  set. This is the real power of topics: you can wait for a sigchld signal OR a thread exit.
  */
 
-/// The list of topics that may be observed.
-enum class topic_t : uint8_t {
-    sigchld,        // Corresponds to SIGCHLD signal.
-    sighupint,      // Corresponds to both SIGHUP and SIGINT signals.
-    internal_exit,  // Corresponds to an internal process exit.
-    COUNT
-};
-
-/// Allow enum_iter to be used.
-template <>
-struct enum_info_t<topic_t> {
-    static constexpr auto count = topic_t::COUNT;
-};
-
-/// Set of topics.
-using topic_set_t = enum_set_t<topic_t>;
-
-/// Counting iterator for topics.
-using topic_iter_t = enum_iter_t<topic_t>;
-
 /// A generation is a counter incremented every time the value of a topic changes.
 /// It is 64 bit so it will never wrap.
 using generation_t = uint64_t;
 
-/// A generation value which is guaranteed to never be set and be larger than any valid generation.
+/// A generation value which indicates the topic is not of interest.
 constexpr generation_t invalid_generation = std::numeric_limits<generation_t>::max();
 
-/// List of generation values, indexed by topics.
-/// The initial value of a generation is always 0.
-using generation_list_t = enum_array_t<generation_t, topic_t>;
+/// The list of topics which may be observed.
+enum class topic_t : uint8_t {
+    sighupint,      // Corresponds to both SIGHUP and SIGINT signals.
+    sigchld,        // Corresponds to SIGCHLD signal.
+    internal_exit,  // Corresponds to an internal process exit.
+};
+
+/// Helper to return all topics, allowing easy iteration.
+inline std::array<topic_t, 3> all_topics() {
+    return {{topic_t::sighupint, topic_t::sigchld, topic_t::internal_exit}};
+}
+
+/// Simple value type containing the values for a topic.
+/// This should be kept in sync with topic_t.
+class generation_list_t {
+   public:
+    generation_list_t() = default;
+
+    generation_t sighupint{0};
+    generation_t sigchld{0};
+    generation_t internal_exit{0};
+
+    /// \return the value for a topic.
+    generation_t &at(topic_t topic) {
+        switch (topic) {
+            case topic_t::sigchld:
+                return sigchld;
+            case topic_t::sighupint:
+                return sighupint;
+            case topic_t::internal_exit:
+                return internal_exit;
+        }
+        DIE("Unreachable");
+    }
+
+    generation_t at(topic_t topic) const {
+        switch (topic) {
+            case topic_t::sighupint:
+                return sighupint;
+            case topic_t::sigchld:
+                return sigchld;
+            case topic_t::internal_exit:
+                return internal_exit;
+        }
+        DIE("Unreachable");
+    }
+
+    /// \return ourselves as an array.
+    std::array<generation_t, 3> as_array() const { return {{sighupint, sigchld, internal_exit}}; }
+
+    /// Set the value of \p topic to the smaller of our value and the value in \p other.
+    void set_min_from(topic_t topic, const generation_list_t &other) {
+        if (this->at(topic) > other.at(topic)) {
+            this->at(topic) = other.at(topic);
+        }
+    }
+
+    /// \return whether a topic is valid.
+    bool is_valid(topic_t topic) const { return this->at(topic) != invalid_generation; }
+
+    /// \return whether any topic is valid.
+    bool any_valid() const {
+        bool valid = false;
+        for (auto gen : as_array()) {
+            if (gen != invalid_generation) valid = true;
+        }
+        return valid;
+    }
+
+    bool operator==(const generation_list_t &rhs) const {
+        return sighupint == rhs.sighupint && sigchld == rhs.sigchld &&
+               internal_exit == rhs.internal_exit;
+    }
+
+    bool operator!=(const generation_list_t &rhs) const { return !(*this == rhs); }
+
+    /// return a string representation for debugging.
+    wcstring describe() const;
+
+    /// Generation list containing invalid generations only.
+    static generation_list_t invalids() {
+        return generation_list_t(invalid_generation, invalid_generation, invalid_generation);
+    }
+
+   private:
+    generation_list_t(generation_t sighupint, generation_t sigchld, generation_t internal_exit)
+        : sighupint(sighupint), sigchld(sigchld), internal_exit(internal_exit) {}
+};
+
+/// A simple binary semaphore.
+/// On systems that do not support unnamed semaphores (macOS in particular) this is built on top of
+/// a self-pipe. Note that post() must be async-signal safe.
+class binary_semaphore_t {
+   public:
+    binary_semaphore_t();
+    ~binary_semaphore_t();
+
+    /// Release a waiting thread.
+    void post();
+
+    /// Wait for a post.
+    /// This loops on EINTR.
+    void wait();
+
+   private:
+    // Print a message and exit.
+    void die(const wchar_t *msg) const;
+
+    // Whether our semaphore was successfully initialized.
+    bool sem_ok_{};
+
+    // The semaphore, if initalized.
+    sem_t sem_{};
+
+    // Pipes used to emulate a semaphore, if not initialized.
+    autoclose_pipes_t pipes_{};
+};
 
 /// The topic monitor class. This permits querying the current generation values for topics,
 /// optionally blocking until they increase.
+/// What we would like to write is that we have a set of topics, and threads wait for changes on a
+/// condition variable which is tickled in post(). But this can't work because post() may be called
+/// from a signal handler and condition variables are not async-signal safe.
+/// So instead the signal handler announces changes via a binary semaphore.
+/// In the wait case, what generally happens is:
+///   A thread fetches the generations, see they have not changed, and then decides to try to wait.
+///   It does so by atomically swapping in STATUS_NEEDS_WAKEUP to the status bits.
+///   If that succeeds, it waits on the binary semaphore. The post() call will then wake the thread
+///   up. If if failed, then either a post() call updated the status values (so perhaps there is a
+///   new topic post) or some other thread won the race and called wait() on the semaphore. Here our
+///   thread will wait on the data_notifier_ queue.
 class topic_monitor_t {
    private:
-    using topic_set_raw_t = uint8_t;
-
-    static_assert(sizeof(topic_set_raw_t) * CHAR_BIT >= enum_count<topic_t>(),
-                  "topic_set_raw is too small");
+    using topic_bitmask_t = uint8_t;
 
     // Some stuff that needs to be protected by the same lock.
     struct data_t {
-        /// The current generation list.
-        generation_list_t current_gens{};
+        /// The current values.
+        generation_list_t current{};
 
-        /// Whether there is a thread currently reading from the notifier pipe.
+        /// A flag indicating that there is a current reader.
+        /// The 'reader' is responsible for calling sema_.wait().
         bool has_reader{false};
     };
     owning_lock<data_t> data_{};
@@ -86,15 +190,23 @@ class topic_monitor_t {
     /// This is associated with data_'s mutex.
     std::condition_variable data_notifier_{};
 
-    /// The set of topics which have pending increments.
-    /// This is managed via atomics.
-    std::atomic<topic_set_raw_t> pending_updates_{};
+    /// A status value which describes our current state, managed via atomics.
+    /// Three possibilities:
+    ///    0:   no changed topics, no thread is waiting.
+    ///    128: no changed topics, some thread is waiting and needs wakeup.
+    ///    anything else: some changed topic, no thread is waiting.
+    ///  Note that if the msb is set (status == 128) no other bit may be set.
+    using status_bits_t = uint8_t;
+    std::atomic<uint8_t> status_{};
 
-    /// Self-pipes used to communicate changes.
-    /// The writer is a signal handler.
-    /// "The reader" refers to a thread that wants to wait for changes. Only one thread can be the
-    /// reader at a given time.
-    autoclose_pipes_t pipes_;
+    /// Sentinel status value indicating that a thread is waiting and needs a wakeup.
+    /// Note it is an error for this bit to be set and also any topic bit.
+    static constexpr uint8_t STATUS_NEEDS_WAKEUP = 128;
+
+    /// Binary semaphore used to communicate changes.
+    /// If status_ is STATUS_NEEDS_WAKEUP, then a thread has commited to call wait() on our sema and
+    /// this must be balanced by the next call to post(). Note only one thread may wait at a time.
+    binary_semaphore_t sema_{};
 
     /// Apply any pending updates to the data.
     /// This accepts data because it must be locked.
@@ -105,10 +217,9 @@ class topic_monitor_t {
     /// If \p gens is older, then just return those by reference, and directly return false (not
     /// becoming the reader).
     /// If \p gens is current and there is not a reader, then do not update \p gens and return true,
-    /// indicating we should become the reader. Now it is our responsibility to read from the pipes
-    /// and notify on a change via the condition variable.
-    /// If \p gens is current, and there is already a reader, then wait until the reader notifies us
-    /// and try again.
+    /// indicating we should become the reader. Now it is our responsibility to wait on the
+    /// semaphore and notify on a change via the condition variable. If \p gens is current, and
+    /// there is already a reader, then wait until the reader notifies us and try again.
     bool try_update_gens_maybe_becoming_reader(generation_list_t *gens);
 
     /// Wait for some entry in the list of generations to change.
@@ -117,6 +228,9 @@ class topic_monitor_t {
 
     /// \return the current generation list, opportunistically applying any pending updates.
     generation_list_t updated_gens();
+
+    /// Helper to convert a topic to a bitmask containing just that topic.
+    static topic_bitmask_t topic_to_bit(topic_t t) { return 1 << static_cast<topic_bitmask_t>(t); }
 
    public:
     topic_monitor_t();
@@ -140,11 +254,12 @@ class topic_monitor_t {
     /// Access the generation for a topic.
     generation_t generation_for_topic(topic_t topic) { return current_generations().at(topic); }
 
-    /// See if for any topic (specified in \p topics) has changed from the values in the generation
-    /// list \p gens. If \p wait is set, then wait if there are no changes; otherwise return
-    /// immediately.
-    /// \return the set of topics that changed, updating the generation list \p gens.
-    topic_set_t check(generation_list_t *gens, topic_set_t topics, bool wait);
+    /// For each valid topic in \p gens, check to see if the current topic is larger than
+    /// the value in \p gens.
+    /// If \p wait is set, then wait if there are no changes; otherwise return immediately.
+    /// \return true if some topic changed, false if none did.
+    /// On a true return, this updates the generation list \p gens.
+    bool check(generation_list_t *gens, bool wait);
 };
 
 #endif

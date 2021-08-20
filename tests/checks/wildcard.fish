@@ -10,8 +10,22 @@ mkdir b
 touch ./b/file.txt
 
 set dirs ./a ./b
-echo $dirs/*.txt
-# CHECK: ./b/file.txt
+echo $dirs/*.txt # CHECK: ./b/file.txt
 
 cd $oldpwd
 rm -Rf $dir
+
+
+# Verify that we can do wildcard expansion when we
+# don't have read access to some path components
+# See #2099
+set -l where ../test/temp/fish_wildcard_permissions_test/noaccess/yesaccess
+mkdir -p $where
+chmod 300 (dirname $where) # no read permissions
+mkdir -p $where
+# "__env.fish" here to confirm ordering - #6593.
+touch $where/alpha.txt $where/beta.txt $where/delta.txt $where/__env.fish
+echo $where/*
+#CHECK: ../test/temp/fish_wildcard_permissions_test/noaccess/yesaccess/__env.fish ../test/temp/fish_wildcard_permissions_test/noaccess/yesaccess/alpha.txt ../test/temp/fish_wildcard_permissions_test/noaccess/yesaccess/beta.txt ../test/temp/fish_wildcard_permissions_test/noaccess/yesaccess/delta.txt
+chmod 700 (dirname $where) # so we can delete it
+rm -rf ../test/temp/fish_wildcard_permissions_test

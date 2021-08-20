@@ -3,10 +3,12 @@
 #define FISH_WCSTRINGUTIL_H
 
 #include <algorithm>
+#include <cstring>
 #include <string>
 #include <utility>
 
 #include "common.h"
+#include "expand.h"
 
 /// Test if a string prefixes another. Returns true if a is a prefix of b.
 bool string_prefixes_string(const wcstring &proposed_prefix, const wcstring &value);
@@ -32,6 +34,88 @@ bool string_prefixes_string_case_insensitive(const wcstring &proposed_prefix,
 /// `haystack`, or `string::npos()` if no results were found.
 size_t ifind(const wcstring &haystack, const wcstring &needle, bool fuzzy = false);
 size_t ifind(const std::string &haystack, const std::string &needle, bool fuzzy = false);
+
+/// A lightweight value-type describing how closely a string fuzzy-matches another string.
+struct string_fuzzy_match_t {
+    // The ways one string can contain another.
+    enum class contain_type_t : uint8_t {
+        exact,   // exact match: foobar matches foo
+        prefix,  // prefix match: foo matches foobar
+        substr,  // substring match: ooba matches foobar
+        subseq,  // subsequence match: fbr matches foobar
+    };
+    contain_type_t type;
+
+    // The case-folding required for the match.
+    enum class case_fold_t : uint8_t {
+        samecase,   // exact match: foobar matches foobar
+        smartcase,  // case insensitive match with lowercase input. foobar matches FoBar.
+        icase,      // case insensitive: FoBaR matches foobAr
+    };
+    case_fold_t case_fold;
+
+    // Constructor.
+    constexpr string_fuzzy_match_t(contain_type_t type, case_fold_t case_fold)
+        : type(type), case_fold(case_fold) {}
+
+    // Helper to return an exact match.
+    static constexpr string_fuzzy_match_t exact_match() {
+        return string_fuzzy_match_t(contain_type_t::exact, case_fold_t::samecase);
+    }
+
+    /// \return whether this is a samecase exact match.
+    bool is_samecase_exact() const {
+        return type == contain_type_t::exact && case_fold == case_fold_t::samecase;
+    }
+
+    /// \return if we are exact or prefix match.
+    bool is_exact_or_prefix() const {
+        switch (type) {
+            case contain_type_t::exact:
+            case contain_type_t::prefix:
+                return true;
+            case contain_type_t::substr:
+            case contain_type_t::subseq:
+                return false;
+        }
+        DIE("Unreachable");
+        return false;
+    }
+
+    // \return if our match requires a full replacement, i.e. is not a strict extension of our
+    // existing string. This is false only if our case matches, and our type is prefix or exact.
+    bool requires_full_replacement() const {
+        if (case_fold != case_fold_t::samecase) return true;
+        switch (type) {
+            case contain_type_t::exact:
+            case contain_type_t::prefix:
+                return false;
+            case contain_type_t::substr:
+            case contain_type_t::subseq:
+                return true;
+        }
+        DIE("Unreachable");
+        return false;
+    }
+
+    /// Try creating a fuzzy match for \p string against \p match_against.
+    /// \p string is something like "foo" and \p match_against is like "FooBar".
+    /// If \p anchor_start is set, then only exact and prefix matches are permitted.
+    static maybe_t<string_fuzzy_match_t> try_create(const wcstring &string,
+                                                    const wcstring &match_against,
+                                                    bool anchor_start);
+
+    /// \return a rank for filtering matches.
+    /// Earlier (smaller) ranks are better matches.
+    uint32_t rank() const;
+};
+
+/// Cover over string_fuzzy_match_t::try_create().
+inline maybe_t<string_fuzzy_match_t> string_fuzzy_match_string(const wcstring &string,
+                                                               const wcstring &match_against,
+                                                               bool anchor_start = false) {
+    return string_fuzzy_match_t::try_create(string, match_against, anchor_start);
+}
 
 /// Split a string by a separator character.
 wcstring_list_t split_string(const wcstring &val, wchar_t sep);
@@ -135,6 +219,51 @@ wcstring trim(wcstring input, const wchar_t *any_of);
 
 /// Converts a string to lowercase.
 wcstring wcstolower(wcstring input);
+
+/// \return the number of escaping backslashes before a character.
+/// \p idx may be "one past the end."
+size_t count_preceding_backslashes(const wcstring &text, size_t idx);
+
+// Out-of-line helper for wcs2string_callback.
+void wcs2string_bad_char(wchar_t);
+
+/// Implementation of wcs2string that accepts a callback.
+/// This invokes \p func with (const char*, size_t) pairs.
+/// If \p func returns false, it stops; otherwise it continues.
+/// \return false if the callback returned false, otherwise true.
+template <typename Func>
+bool wcs2string_callback(const wchar_t *input, size_t len, const Func &func) {
+    mbstate_t state = {};
+    char converted[MB_LEN_MAX];
+
+    for (size_t i = 0; i < len; i++) {
+        wchar_t wc = input[i];
+        // TODO: this doesn't seem sound.
+        if (wc == INTERNAL_SEPARATOR) {
+            // do nothing
+        } else if (wc >= ENCODE_DIRECT_BASE && wc < ENCODE_DIRECT_BASE + 256) {
+            converted[0] = wc - ENCODE_DIRECT_BASE;
+            if (!func(converted, 1)) return false;
+        } else if (MB_CUR_MAX == 1) {  // single-byte locale (C/POSIX/ISO-8859)
+            // If `wc` contains a wide character we emit a question-mark.
+            if (wc & ~0xFF) {
+                wc = '?';
+            }
+            converted[0] = wc;
+            if (!func(converted, 1)) return false;
+        } else {
+            std::memset(converted, 0, sizeof converted);
+            size_t len = std::wcrtomb(converted, wc, &state);
+            if (len == static_cast<size_t>(-1)) {
+                wcs2string_bad_char(wc);
+                std::memset(&state, 0, sizeof(state));
+            } else {
+                if (!func(converted, len)) return false;
+            }
+        }
+    }
+    return true;
+}
 
 /// Support for iterating over a newline-separated string.
 template <typename Collection>

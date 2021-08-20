@@ -3,7 +3,7 @@ function __fish_print_hostnames -d "Print a list of known hostnames"
     # `getent` did not exist or `getent hosts` failed, based off the (documented) assumption that
     # the former *might* return more hosts than the latter, which has never been officially noted
     # to be the case. As `getent` is several times slower, involves shelling out, and is not
-    # available on some platforms (Cygin and at least some versions of macOS, such as 10.10), that
+    # available on some platforms (Cygwin and at least some versions of macOS, such as 10.10), that
     # order is now reversed and `getent hosts` is only used if the hosts file is not found at
     # `/etc/hosts` for portability reasons.
 
@@ -11,16 +11,16 @@ function __fish_print_hostnames -d "Print a list of known hostnames"
         test -r /etc/hosts && read -z </etc/hosts
         or type -q getent && getent hosts 2>/dev/null
     end |
-    # Ignore comments, own IP addresses (127.*, 0.0[.0[.0]], ::1), non-host IPs (fe00::*, ff00::*),
-    # and leading/trailing whitespace. Split results on whitespace to handle multiple aliases for
-    # one IP.
-    string replace -irf '^\s*?(?!(?:#|0\.|127\.|ff0|fe0|::1))\S+\s*(.*?)\s*$' '$1' |
-    string split ' '
+        # Ignore comments, own IP addresses (127.*, 0.0[.0[.0]], ::1), non-host IPs (fe00::*, ff00::*),
+        # and leading/trailing whitespace. Split results on whitespace to handle multiple aliases for
+        # one IP.
+        string replace -irf '^\s*?(?!(?:#|0\.|127\.|ff0|fe0|::1))\S+\s*(.*?)\s*$' '$1' |
+        string split ' '
 
     # Print nfs servers from /etc/fstab
     if test -r /etc/fstab
         string match -r '^\s*[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3]:|^[a-zA-Z\.]*:' </etc/fstab |
-        string replace -r ':.*' ''
+            string replace -r ':.*' ''
     end
 
     # Check hosts known to ssh.
@@ -40,10 +40,10 @@ function __fish_print_hostnames -d "Print a list of known hostnames"
         set -l ssh_func_tokens (functions ssh | string match '*command ssh *' | string split ' ')
         set -l ssh_command $ssh_func_tokens (commandline -cpo)
         # Extract ssh config path from last -F short option.
-        if contains -- '-F' $ssh_command
+        if contains -- -F $ssh_command
             set -l ssh_config_path_is_next 1
             for token in $ssh_command
-                if contains -- '-F' $token
+                if contains -- -F $token
                     set ssh_config_path_is_next 0
                 else if test $ssh_config_path_is_next -eq 0
                     set ssh_config (eval "echo $token")
@@ -59,7 +59,7 @@ function __fish_print_hostnames -d "Print a list of known hostnames"
         # system or user level config. -F will not override this behaviour
         set -l relative_path $HOME/.ssh
         if string match '/etc/ssh/*' -- $ssh_config
-            set relative_path '/etc/ssh'
+            set relative_path /etc/ssh
         end
 
         function _recursive --no-scope-shadowing
@@ -109,30 +109,29 @@ function __fish_print_hostnames -d "Print a list of known hostnames"
 
             # Print hosts from system wide ssh configuration file
             # Multiple names for a single host can be given separated by spaces, so just split it explicitly (#6698).
-            string replace -rfi '^\s*Host\s+(\S.*?)\s*$' '$1' -- $contents | string split " " | string match -v '*\**'
+            string replace -rfi '^\s*Host\s+(\S.*?)\s*$' '$1' -- $contents | string split " " | string match -rv '[\*\?]'
             # Also extract known_host paths.
             set known_hosts $known_hosts (string replace -rfi '.*KnownHostsFile\s*' '' -- $contents)
         end
     end
 
-    # Avoid shelling out to `awk` more than once by reading all files and operating on their
-    # combined contents
+    # Read all files and operate on their combined content
     for file in $known_hosts
         if test -r $file
             read -z <$file
         end
     end |
-    # Ignore hosts that are hashed, commented or @-marked and strip the key
-    # Handle multiple comma-separated hostnames sharing a key, too.
-    #
-    # This one regex does everything we need, finding all matches including comma-separated
-    # values, but fish does not let us print only a capturing group without the entire match,
-    # and we can't use `string replace` instead (because CSV then fails).
-    # string match -ar "(?:^|,)(?![@|*!])\[?([^ ,:\]]+)\]?"
-    #
-    # Instead, manually piece together the regular expressions
-    string match -v -r '^\s*[!*|@#]' | string replace -r '^\s*(\S+) .*' '$1' |
-    string split ',' | string replace -r '\[?([^:\]]+).*' '$1'
+        # Ignore hosts that are hashed, commented or @-marked and strip the key
+        # Handle multiple comma-separated hostnames sharing a key, too.
+        #
+        # This one regex does everything we need, finding all matches including comma-separated
+        # values, but fish does not let us print only a capturing group without the entire match,
+        # and we can't use `string replace` instead (because CSV then fails).
+        # string match -ar "(?:^|,)(?![@|*!])\[?([^ ,:\]]+)\]?"
+        #
+        # Instead, manually piece together the regular expressions
+        string match -v -r '^\s*[!*|@#]' | string replace -rf '^\s*(\S+) .*' '$1' |
+        string split ',' | string replace -r '\[?([^\]]+).*' '$1'
 
     return 0
 end

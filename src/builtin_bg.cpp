@@ -12,6 +12,7 @@
 #include "common.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "io.h"
+#include "job_group.h"
 #include "parser.h"
 #include "proc.h"
 #include "wutil.h"  // IWYU pragma: keep
@@ -30,13 +31,13 @@ static int send_to_bg(parser_t &parser, io_streams_t &streams, job_t *j) {
     streams.err.append_format(_(L"Send job %d '%ls' to background\n"), j->job_id(),
                               j->command_wcstr());
     parser.job_promote(j);
-    j->mut_flags().foreground = false;
-    j->continue_job(parser, true, j->is_stopped());
+    j->group->set_is_foreground(false);
+    j->continue_job(parser, false /* not in_foreground */);
     return STATUS_CMD_OK;
 }
 
 /// Builtin for putting a job in the background.
-int builtin_bg(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_bg(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     const wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
     help_only_cmd_opts_t opts;
@@ -90,7 +91,7 @@ int builtin_bg(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     // Background all existing jobs that match the pids.
     // Non-existent jobs aren't an error, but information about them is useful.
     for (auto p : pids) {
-        if (job_t *j = job_t::from_pid(p)) {
+        if (job_t *j = parser.job_get_from_pid(p)) {
             retval |= send_to_bg(parser, streams, j);
         } else {
             streams.err.append_format(_(L"%ls: Could not find job '%d'\n"), cmd, p);

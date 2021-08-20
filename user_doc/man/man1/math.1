@@ -1,8 +1,8 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "MATH" "1" "Apr 29, 2020" "3.1" "fish-shell"
+.TH "MATH" "1" "Mar 01, 2021" "3.2" "fish-shell"
 .SH NAME
-math \- Perform mathematics calculations
+math \- perform mathematics calculations
 .
 .nr rst2man-indent-level 0
 .
@@ -36,18 +36,18 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .sp
 .nf
 .ft C
-math [\-sN | \-\-scale=N] [\-\-] EXPRESSION
+math [\-sN | \-\-scale=N] [\-bBASE | \-\-base=BASE] [\-\-] EXPRESSION
 .ft P
 .fi
 .UNINDENT
 .UNINDENT
 .SH DESCRIPTION
 .sp
-\fBmath\fP is used to perform mathematical calculations. It supports all the usual operations such as addition, subtraction, etc. As well as functions like \fBabs()\fP, \fBsqrt()\fP and \fBlog2()\fP\&.
+\fBmath\fP performs mathematical calculations. It supports simple operations such as addition, subtraction, and so on, as well as functions like \fBabs()\fP, \fBsqrt()\fP and \fBln()\fP\&.
 .sp
-By default, the output is as a float with trailing zeroes trimmed. To get a fixed representation, the \fB\-\-scale\fP option can be used, including \fB\-\-scale=0\fP for integer output.
+By default, the output is a floating\-point number with trailing zeroes trimmed. To get a fixed representation, the \fB\-\-scale\fP option can be used, including \fB\-\-scale=0\fP for integer output.
 .sp
-Keep in mind that parameter expansion takes before expressions are evaluated. This can be very useful in order to perform calculations involving shell variables or the output of command substitutions, but it also means that parenthesis (\fB()\fP) and the asterisk (\fB*\fP) glob character have to be escaped or quoted. \fBx\fP can also be used to denote multiplication, but it needs to be followed by whitespace to distinguish it from hexadecimal numbers.
+Keep in mind that parameter expansion happens before expressions are evaluated. This can be very useful in order to perform calculations involving shell variables or the output of command substitutions, but it also means that parenthesis (\fB()\fP) and the asterisk (\fB*\fP) glob character have to be escaped or quoted. \fBx\fP can also be used to denote multiplication, but it needs to be followed by whitespace to distinguish it from hexadecimal numbers.
 .sp
 \fBmath\fP ignores whitespace between arguments and takes its input as multiple arguments (internally joined with a space), so \fBmath 2 +2\fP and \fBmath "2 +    2"\fP work the same. \fBmath 2 2\fP is an error.
 .sp
@@ -55,6 +55,8 @@ The following options are available:
 .INDENT 0.0
 .IP \(bu 2
 \fB\-sN\fP or \fB\-\-scale=N\fP sets the scale of the result. \fBN\fP must be an integer or the word "max" for the maximum scale. A scale of zero causes results to be rounded down to the nearest integer. So \fB3/2\fP returns \fB1\fP rather than \fB2\fP which \fB1.5\fP would normally round to. This is for compatibility with \fBbc\fP which was the basis for this command prior to fish 3.0.0. Scale values greater than zero causes the result to be rounded using the usual rules to the specified number of decimal places.
+.IP \(bu 2
+\fB\-b BASE\fP or \fB\-\-base BASE\fP sets the numeric base used for output (\fBmath\fP always understands hexadecimal numbers as input). It currently understands "hex" or "16" for hexadecimal and "octal" or "8" for octal and implies a scale of 0 (other scales cause an error), so it will truncate the result down to an integer. This might change in the future. Hex numbers will be printed with a \fB0x\fP prefix. Octal numbers will have a prefix of \fB0\fP and aren\(aqt understood by \fBmath\fP as input.
 .UNINDENT
 .SH RETURN VALUES
 .sp
@@ -63,7 +65,7 @@ If the expression is successfully evaluated and doesn\(aqt over/underflow or ret
 .sp
 \fBmath\fP knows some operators, constants, functions and can (obviously) read numbers.
 .sp
-For numbers, \fB\&.\fP is always the radix character regardless of locale \- \fB2.5\fP, not \fB2,5\fP\&. Scientific notation (\fB10e5\fP) is also available.
+For numbers, \fB\&.\fP is always the radix character regardless of locale \- \fB2.5\fP, not \fB2,5\fP\&. Scientific notation (\fB10e5\fP) and hexadecimal (\fB0xFF\fP) are also available.
 .SH OPERATORS
 .sp
 \fBmath\fP knows the following operators:
@@ -88,7 +90,9 @@ They are all used in an infix manner \- \fB5 + 2\fP, not \fB+ 5 2\fP\&.
 .IP \(bu 2
 \fBe\fP \- Euler\(aqs number.
 .IP \(bu 2
-\fBpi\fP \- You know that one. Half of Tau. (Tau is not implemented)
+\fBpi\fP \- π. You know this one. Half of Tau.
+.IP \(bu 2
+\fBtau\fP\&. Equivalent to 2π, or the number of radians in a circle.
 .UNINDENT
 .sp
 Use them without a leading \fB$\fP \- \fBpi \- 3\fP should be about 0.
@@ -107,6 +111,8 @@ Use them without a leading \fB$\fP \- \fBpi \- 3\fP should be about 0.
 .IP \(bu 2
 \fBatan2\fP
 .IP \(bu 2
+\fBbitand\fP, \fBbitor\fP and \fBbitxor\fP to perform bitwise operations. These will throw away any non\-integer parts and interpret the rest as an int.
+.IP \(bu 2
 \fBceil\fP
 .IP \(bu 2
 \fBcos\fP
@@ -119,7 +125,7 @@ Use them without a leading \fB$\fP \- \fBpi \- 3\fP should be about 0.
 .IP \(bu 2
 \fBfloor\fP
 .IP \(bu 2
-\fBln\fP
+\fBln\fP \- the base\-e logarithm
 .IP \(bu 2
 \fBlog\fP or \fBlog10\fP \- the base\-10 logarithm
 .IP \(bu 2
@@ -160,12 +166,18 @@ All of the trigonometric functions use radians.
 \fBmath 5 \e* 2\fP or \fBmath "5 * 2"\fP or \fBmath 5 "*" 2\fP all output \fB10\fP\&.
 .sp
 \fBmath 0xFF\fP outputs 255, \fBmath 0 x 3\fP outputs 0 (because it computes 0 multiplied by 3).
+.sp
+\fBmath "bitand(0xFE, 0x2e)"\fP outputs 46.
+.sp
+\fBmath "bitor(9,2)"\fP outputs 11.
+.sp
+\fBmath \-\-base=hex 192\fP prints \fB0xc0\fP\&.
 .SH COMPATIBILITY NOTES
 .sp
 Fish 1.x and 2.x releases relied on the \fBbc\fP command for handling \fBmath\fP expressions. Starting with fish 3.0.0 fish uses the tinyexpr library and evaluates the expression without the involvement of any external commands.
 .sp
-You don\(aqt need to use \fB\-\-\fP before the expression even if it begins with a minus sign which might otherwise be interpreted as an invalid option. If you do insert \fB\-\-\fP before the expression it will cause option scanning to stop just like for every other command and it won\(aqt be part of the expression.
+You don\(aqt need to use \fB\-\-\fP before the expression, even if it begins with a minus sign which might otherwise be interpreted as an invalid option. If you do insert \fB\-\-\fP before the expression, it will cause option scanning to stop just like for every other command and it won\(aqt be part of the expression.
 .SH COPYRIGHT
-2019, fish-shell developers
+2020, fish-shell developers
 .\" Generated by docutils manpage writer.
 .

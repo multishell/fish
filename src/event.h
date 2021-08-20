@@ -29,7 +29,7 @@ enum class event_type_t {
     variable,
     /// An event triggered by a job or process exit.
     exit,
-    /// An event triggered by a caller exit.
+    /// An event triggered by a job exit, triggering the 'caller'-style events only.
     caller_exit,
     /// A generic event.
     generic,
@@ -74,7 +74,7 @@ struct event_handler_t {
 
     explicit event_handler_t(event_type_t t) : desc(t) {}
     event_handler_t(event_description_t d, wcstring name)
-        : desc(d), function_name(std::move(name)) {}
+        : desc(std::move(d)), function_name(std::move(name)) {}
 };
 using event_handler_list_t = std::vector<std::shared_ptr<event_handler_t>>;
 
@@ -119,7 +119,7 @@ void event_enqueue_signal(int signal);
 void event_print(io_streams_t &streams, maybe_t<event_type_t> type_filter);
 
 /// Returns a string describing the specified event.
-wcstring event_get_desc(const event_t &e);
+wcstring event_get_desc(const parser_t &parser, const event_t &e);
 
 /// Fire a generic event with the specified name.
 void event_fire_generic(parser_t &parser, const wchar_t *name,

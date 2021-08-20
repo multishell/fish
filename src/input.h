@@ -23,25 +23,11 @@ void init_input();
 
 struct input_mapping_t;
 class inputter_t {
-    input_event_queue_t event_queue_{};
-    std::vector<wchar_t> input_function_args_{};
-    bool function_status_{false};
-
-    // We need a parser to evaluate bindings.
-    const std::shared_ptr<parser_t> parser_;
-
-    void function_push_arg(wchar_t arg);
-    void function_push_args(readline_cmd_t code);
-    void mapping_execute(const input_mapping_t &m, bool allow_commands);
-    void mapping_execute_matching_or_generic(bool allow_commands);
-    bool mapping_is_match(const input_mapping_t &m);
-    maybe_t<input_mapping_t> find_mapping();
-    char_event_t read_characters_no_readline();
-
    public:
-    inputter_t(parser_t &parser);
+    /// Construct from a parser, and the fd from which to read.
+    explicit inputter_t(parser_t &parser, int in = STDIN_FILENO);
 
-    /// Read a character from fd 0. Try to convert some escape sequences into character constants,
+    /// Read a character from stdin. Try to convert some escape sequences into character constants,
     /// but do not permanently block the escape character.
     ///
     /// This is performed in the same way vim does it, i.e. if an escape character is read, wait for
@@ -50,10 +36,11 @@ class inputter_t {
     /// to parse it. If no more input follows after the escape key, it is assumed to be an actual
     /// escape key press, and is returned as such.
     ///
-    /// The argument determines whether fish commands are allowed to be run as bindings. If false,
-    /// when a character is encountered that would invoke a fish command, it is unread and
-    /// char_event_type_t::check_exit is returned.
-    char_event_t readch(bool allow_commands = true);
+    /// \p command_handler is used to run commands. If empty (in the std::function sense), when a
+    /// character is encountered that would invoke a fish command, it is unread and
+    /// char_event_type_t::check_exit is returned. Note the handler is not stored.
+    using command_handler_t = std::function<void(const wcstring_list_t &)>;
+    char_event_t readch(const command_handler_t &command_handler = {});
 
     /// Enqueue a char event to the queue of unread characters that input_readch will return before
     /// actually reading from fd 0.
@@ -67,6 +54,23 @@ class inputter_t {
 
     /// Pop an argument from the function argument stack.
     wchar_t function_pop_arg();
+
+   private:
+    input_event_queue_t event_queue_;
+    std::vector<wchar_t> input_function_args_{};
+    bool function_status_{false};
+
+    // We need a parser to evaluate bindings.
+    const std::shared_ptr<parser_t> parser_;
+
+    void function_push_arg(wchar_t arg);
+    void function_push_args(readline_cmd_t code);
+    void mapping_execute(const input_mapping_t &m, const command_handler_t &command_handler);
+    void mapping_execute_matching_or_generic(const command_handler_t &command_handler);
+    bool mapping_is_match(const input_mapping_t &m);
+    bool have_mouse_tracking_csi();
+    maybe_t<input_mapping_t> find_mapping();
+    char_event_t read_characters_no_readline();
 };
 
 struct input_mapping_name_t {
@@ -100,7 +104,7 @@ class input_mapping_set_t {
     /// Gets the command bound to the specified key sequence in the specified mode. Returns true if
     /// it exists, false if not.
     bool get(const wcstring &sequence, const wcstring &mode, wcstring_list_t *out_cmds, bool user,
-             wcstring *out_sets_mode);
+             wcstring *out_sets_mode) const;
 
     /// Returns all mapping names and modes.
     std::vector<input_mapping_name_t> get_names(bool user = true) const;
@@ -140,6 +144,6 @@ wcstring_list_t input_terminfo_get_names(bool skip_null);
 maybe_t<readline_cmd_t> input_function_get_code(const wcstring &name);
 
 /// Returns a list of all existing input function names.
-wcstring_list_t input_function_get_names(void);
+const wcstring_list_t &input_function_get_names(void);
 
 #endif

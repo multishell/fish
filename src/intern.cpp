@@ -13,7 +13,9 @@
 #include "common.h"
 #include "fallback.h"  // IWYU pragma: keep
 
-bool string_less_than_string(const wchar_t *a, const wchar_t *b) { return std::wcscmp(a, b) < 0; }
+static bool string_less_than_string(const wchar_t *a, const wchar_t *b) {
+    return std::wcscmp(a, b) < 0;
+}
 
 /// The table of intern'd strings.
 owning_lock<std::vector<const wchar_t *>> string_table;
@@ -21,7 +23,6 @@ owning_lock<std::vector<const wchar_t *>> string_table;
 static const wchar_t *intern_with_dup(const wchar_t *in, bool dup) {
     if (!in) return nullptr;
 
-    debug(5, L"intern %ls", in);
     auto table = string_table.acquire();
 
     const wchar_t *result;

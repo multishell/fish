@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FISH_GIT_PROMPT" "1" "Apr 29, 2020" "3.1" "fish-shell"
+.TH "FISH_GIT_PROMPT" "1" "Mar 01, 2021" "3.2" "fish-shell"
 .SH NAME
 fish_git_prompt \- output git information for use in a prompt
 .
@@ -37,7 +37,7 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .nf
 .ft C
 function fish_prompt
-     echo \-n (pwd)(fish_git_prompt) \(aq$ \(aq
+     printf \(aq%s\(aq $PWD (fish_git_prompt) \(aq $ \(aq
 end
 .ft P
 .fi
@@ -49,10 +49,10 @@ The \fBfish_git_prompt\fP function displays information about the current git re
 .sp
 \fI\%Git\fP must be installed.
 .sp
-There are numerous customization options, which can be controlled with git options or fish variables. git options, where available, take precedence over the fish variable with the same function. git options can be set on a per\-repository or global basis. git options can be set with the \fIgit config\fP command, while fish variables can be set as usual with the set command.
+There are numerous customization options, which can be controlled with git options or fish variables. git options, where available, take precedence over the fish variable with the same function. git options can be set on a per\-repository or global basis. git options can be set with the \fBgit config\fP command, while fish variables can be set as usual with the set command.
 .INDENT 0.0
 .IP \(bu 2
-\fB$__fish_git_prompt_show_informative_status\fP or the git option \fBbash.showInformativeStatus\fP can be set to enable the "informative" display, which will show a large amount of information \- the number of untracked files, dirty files, unpushed/unpulled commits, and more. In large repositories, this can take a lot of time, so it you may wish to disable it in these repositories with  \fBgit config \-\-local bash.showInformativeStatus false\fP\&.
+\fB$__fish_git_prompt_show_informative_status\fP or the git option \fBbash.showInformativeStatus\fP can be set to enable the "informative" display, which will show a large amount of information \- the number of untracked files, dirty files, unpushed/unpulled commits, and more. In large repositories, this can take a lot of time, so it you may wish to disable it in these repositories with  \fBgit config \-\-local bash.showInformativeStatus false\fP\&. It also changes the characters the prompt uses to less plain ones (\fB✚\fP instead of \fB*\fP for the dirty state for example) , and if you are only interested in that, set \fB$__fish_git_prompt_use_informative_chars\fP instead.
 .IP \(bu 2
 \fB$__fish_git_prompt_showdirtystate\fP or the git option \fBbash.showDirtyState\fP can be set to show if the repository is "dirty", i.e. has uncommitted changes.
 .IP \(bu 2
@@ -106,8 +106,10 @@ relative to newer tag or branch, such as \fB(master~4)\fP
 relative to older annotated tag, such as \fB(v1.6.3.1\-13\-gdd42c2f)\fP
 .TP
 .B \fBdefault\fP
-exactly matching tag
+an exactly matching tag (\fB(develop)\fP)
 .UNINDENT
+.sp
+If none of these apply, the commit SHA shortened to 8 characters is used.
 .UNINDENT
 .UNINDENT
 .IP \(bu 2
@@ -117,23 +119,23 @@ exactly matching tag
 A number of variables set characters and color used as indicators. Many of these have a different default if used with informative status enabled, or \fB$__fish_git_prompt_use_informative_chars\fP set. The usual default is given first, then the informative default (if it is different). If no default for the colors is given, they default to \fB$__fish_git_prompt_color\fP\&.
 .INDENT 0.0
 .IP \(bu 2
-\fB$__fish_git_prompt_char_stateseparator\fP (\(aq \(aq, \fI|\fP)
+\fB$__fish_git_prompt_char_stateseparator\fP (\(aq \(aq, \fB|\fP) \- the character to be used between the state characters
 .IP \(bu 2
-\fB$__fish_git_prompt_color\fP (\(aq\(aq)
+\fB$__fish_git_prompt_color\fP (no default)
 .IP \(bu 2
-\fB$__fish_git_prompt_color_prefix\fP
+\fB$__fish_git_prompt_color_prefix\fP \- the color of the \fB(\fP prefix
 .IP \(bu 2
-\fB$__fish_git_prompt_color_suffix\fP
+\fB$__fish_git_prompt_color_suffix\fP \- the color of the \fB)\fP suffix
 .IP \(bu 2
-\fB$__fish_git_prompt_color_bare\fP
+\fB$__fish_git_prompt_color_bare\fP \- the color to use for a bare repository \- one without a working tree
 .IP \(bu 2
-\fB$__fish_git_prompt_color_merging\fP
+\fB$__fish_git_prompt_color_merging\fP \- the color when a merge/rebase/revert/bisect or cherry\-pick is in progress
 .UNINDENT
 .sp
 Some variables are only used in some modes, like when informative status is enabled:
 .INDENT 0.0
 .IP \(bu 2
-\fB$__fish_git_prompt_char_cleanstate\fP (✔)
+\fB$__fish_git_prompt_char_cleanstate\fP (✔) \- the character to be used when nothing else applies
 .IP \(bu 2
 \fB$__fish_git_prompt_color_cleanstate\fP
 .UNINDENT
@@ -141,11 +143,11 @@ Some variables are only used in some modes, like when informative status is enab
 Variables used with \fBshowdirtystate\fP:
 .INDENT 0.0
 .IP \(bu 2
-\fB$__fish_git_prompt_char_dirtystate\fP (\fI*\fP, ✚)
+\fB$__fish_git_prompt_char_dirtystate\fP (\fI*\fP, ✚) \- the number of "dirty" changes, i.e. unstaged files with changes
 .IP \(bu 2
-\fB$__fish_git_prompt_char_invalidstate\fP (#, ✖)
+\fB$__fish_git_prompt_char_invalidstate\fP (#, ✖) \- the number of "unmerged" changes, e.g. additional changes to already added files
 .IP \(bu 2
-\fB$__fish_git_prompt_char_stagedstate\fP (+, ●)
+\fB$__fish_git_prompt_char_stagedstate\fP (+, ●) \- the number of staged files without additional changes
 .IP \(bu 2
 \fB$__fish_git_prompt_color_dirtystate\fP (red with showcolorhints, same as color_flags otherwise)
 .IP \(bu 2
@@ -165,7 +167,7 @@ Variables used with \fBshowstashstate\fP:
 Variables used with \fBshowuntrackedfiles\fP:
 .INDENT 0.0
 .IP \(bu 2
-\fB$__fish_git_prompt_char_untrackedfiles\fP (%, …)
+\fB$__fish_git_prompt_char_untrackedfiles\fP (%, …) \- the symbol for untracked files
 .IP \(bu 2
 \fB$__fish_git_prompt_color_untrackedfiles\fP (same as color_flags)
 .UNINDENT
@@ -173,13 +175,13 @@ Variables used with \fBshowuntrackedfiles\fP:
 Variables used with \fBshowupstream\fP (also implied by informative status):
 .INDENT 0.0
 .IP \(bu 2
-\fB$__fish_git_prompt_char_upstream_ahead\fP (>, ↑)
+\fB$__fish_git_prompt_char_upstream_ahead\fP (>, ↑) \- the character for the commits this repository is ahead of upstream
 .IP \(bu 2
-\fB$__fish_git_prompt_char_upstream_behind\fP (<, ↓)
+\fB$__fish_git_prompt_char_upstream_behind\fP (<, ↓) \- the character for the commits this repository is behind upstream
 .IP \(bu 2
-\fB$__fish_git_prompt_char_upstream_diverged\fP (<>)
+\fB$__fish_git_prompt_char_upstream_diverged\fP (<>) \- the symbol if this repository is both ahead and behind upstream
 .IP \(bu 2
-\fB$__fish_git_prompt_char_upstream_equal\fP (=)
+\fB$__fish_git_prompt_char_upstream_equal\fP (=) \- the symbol if this repo is equal to upstream
 .IP \(bu 2
 \fB$__fish_git_prompt_char_upstream_prefix\fP (\(aq\(aq)
 .IP \(bu 2
@@ -189,11 +191,11 @@ Variables used with \fBshowupstream\fP (also implied by informative status):
 Colors used with \fBshowcolorhints\fP:
 .INDENT 0.0
 .IP \(bu 2
-\fB$__fish_git_prompt_color_branch\fP (green)
+\fB$__fish_git_prompt_color_branch\fP (green) \- the color of the branch
 .IP \(bu 2
-\fB$__fish_git_prompt_color_branch_detached\fP (red)
+\fB$__fish_git_prompt_color_branch_detached\fP (red) the color of the branch if it\(aqs detached (e.g. a commit is checked out)
 .IP \(bu 2
-\fB$__fish_git_prompt_color_flags\fP (\-\-bold blue)
+\fB$__fish_git_prompt_color_flags\fP (\-\-bold blue) \- the default color for dirty/staged/stashed/untracked state
 .UNINDENT
 .sp
 Note that all colors can also have a corresponding \fB_done\fP color. For example, the contents of \fB$__fish_git_prompt_color_upstream_done\fP is printed right _after_ the upstream.
@@ -217,6 +219,6 @@ end
 .UNINDENT
 .UNINDENT
 .SH COPYRIGHT
-2019, fish-shell developers
+2020, fish-shell developers
 .\" Generated by docutils manpage writer.
 .

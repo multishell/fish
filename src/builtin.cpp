@@ -4,17 +4,18 @@
 //
 // 1). Create a function in builtin.c with the following signature:
 //
-//     <tt>static int builtin_NAME(parser_t &parser, io_streams_t &streams, wchar_t **argv)</tt>
+//     <tt>static maybe_t<int> builtin_NAME(parser_t &parser, io_streams_t &streams, wchar_t
+//     **argv)</tt>
 //
 // where NAME is the name of the builtin, and args is a zero-terminated list of arguments.
 //
 // 2). Add a line like { L"NAME", &builtin_NAME, N_(L"Bla bla bla") }, to the builtin_data_t
 // variable. The description is used by the completion system. Note that this array is sorted.
 //
-// 3). Create a file sphinx_doc_src/NAME.rst, containing the manual for the builtin in
+// 3). Create a file doc_src/NAME.rst, containing the manual for the builtin in
 // reStructuredText-format. Check the other builtin manuals for proper syntax.
 //
-// 4). Use 'git add sphinx_doc_src/NAME.txt' to start tracking changes to the documentation file.
+// 4). Use 'git add doc_src/NAME.txt' to start tracking changes to the documentation file.
 #include "config.h"  // IWYU pragma: keep
 
 #include "builtin.h"
@@ -61,6 +62,7 @@
 #include "builtin_status.h"
 #include "builtin_string.h"
 #include "builtin_test.h"
+#include "builtin_type.h"
 #include "builtin_ulimit.h"
 #include "builtin_wait.h"
 #include "common.h"
@@ -137,7 +139,6 @@ int parse_help_only_cmd_opts(struct help_only_cmd_opts_t &opts, int *optind, int
             }
             default: {
                 DIE("unexpected retval from wgetopt_long");
-                break;
             }
         }
     }
@@ -152,7 +153,7 @@ int parse_help_only_cmd_opts(struct help_only_cmd_opts_t &opts, int *optind, int
 ///    builtin or function name to get up help for
 ///
 /// Process and print help for the specified builtin or function.
-void builtin_print_help(parser_t &parser, io_streams_t &streams, const wchar_t *name,
+void builtin_print_help(parser_t &parser, const io_streams_t &streams, const wchar_t *name,
                         wcstring *error_message) {
     UNUSED(streams);
     // This won't ever work if no_exec is set.
@@ -202,7 +203,7 @@ void builtin_print_error_trailer(parser_t &parser, output_stream_t &b, const wch
 
 /// A generic bultin that only supports showing a help message. This is only a placeholder that
 /// prints the help message. Useful for commands that live in the parser.
-static int builtin_generic(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+static maybe_t<int> builtin_generic(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     const wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
     help_only_cmd_opts_t opts;
@@ -217,7 +218,7 @@ static int builtin_generic(parser_t &parser, io_streams_t &streams, wchar_t **ar
 
     // Hackish - if we have no arguments other than the command, we are a "naked invocation" and we
     // just print help.
-    if (argc == 1) {
+    if (argc == 1 || wcscmp(cmd, L"time") == 0) {
         builtin_print_help(parser, streams, cmd);
         return STATUS_INVALID_ARGS;
     }
@@ -229,17 +230,23 @@ static int builtin_generic(parser_t &parser, io_streams_t &streams, wchar_t **ar
 // Since this is just for counting, it can be massive.
 #define COUNT_CHUNK_SIZE (512 * 256)
 /// Implementation of the builtin count command, used to count the number of arguments sent to it.
-static int builtin_count(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+static maybe_t<int> builtin_count(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     UNUSED(parser);
     int argc = 0;
 
     // Count the newlines coming in via stdin like `wc -l`.
     if (streams.stdin_is_directly_redirected) {
+        assert(streams.stdin_fd >= 0 &&
+               "Should have a valid fd since stdin is directly redirected");
         char buf[COUNT_CHUNK_SIZE];
         while (true) {
             long n = read_blocked(streams.stdin_fd, buf, COUNT_CHUNK_SIZE);
-            // Ignore all errors for now.
-            if (n <= 0) break;
+            if (n == 0) {
+                break;
+            } else if (n < 0) {
+                wperror(L"read");
+                return STATUS_CMD_ERROR;
+            }
             for (int i = 0; i < n; i++) {
                 if (buf[i] == L'\n') {
                     argc++;
@@ -257,7 +264,8 @@ static int builtin_count(parser_t &parser, io_streams_t &streams, wchar_t **argv
 
 /// This function handles both the 'continue' and the 'break' builtins that are used for loop
 /// control.
-static int builtin_break_continue(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+static maybe_t<int> builtin_break_continue(parser_t &parser, io_streams_t &streams,
+                                           wchar_t **argv) {
     int is_break = (std::wcscmp(argv[0], L"break") == 0);
     int argc = builtin_count_args(argv);
 
@@ -288,7 +296,7 @@ static int builtin_break_continue(parser_t &parser, io_streams_t &streams, wchar
 }
 
 /// Implementation of the builtin breakpoint command, used to launch the interactive debugger.
-static int builtin_breakpoint(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+static maybe_t<int> builtin_breakpoint(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     wchar_t *cmd = argv[0];
     if (argv[1] != nullptr) {
         streams.err.append_format(BUILTIN_ERR_ARG_COUNT1, cmd, 0, builtin_count_args(argv) - 1);
@@ -314,24 +322,27 @@ static int builtin_breakpoint(parser_t &parser, io_streams_t &streams, wchar_t *
     return parser.get_last_status();
 }
 
-int builtin_true(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_true(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     UNUSED(parser);
     UNUSED(streams);
-    if (argv[1] != nullptr) {
-        streams.err.append_format(BUILTIN_ERR_ARG_COUNT1, argv[0], 0, builtin_count_args(argv) - 1);
-        return STATUS_INVALID_ARGS;
-    }
+    UNUSED(argv);
     return STATUS_CMD_OK;
 }
 
-int builtin_false(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_false(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     UNUSED(parser);
     UNUSED(streams);
-    if (argv[1] != nullptr) {
-        streams.err.append_format(BUILTIN_ERR_ARG_COUNT1, argv[0], 0, builtin_count_args(argv) - 1);
-        return STATUS_INVALID_ARGS;
-    }
+    UNUSED(argv);
     return STATUS_CMD_ERROR;
+}
+
+maybe_t<int> builtin_gettext(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+    UNUSED(parser);
+    UNUSED(streams);
+    for (int i = 1; i < builtin_count_args(argv); i++) {
+        streams.out.append(_(argv[i]));
+    }
+    return STATUS_CMD_OK;
 }
 
 // END OF BUILTIN COMMANDS
@@ -342,7 +353,10 @@ int builtin_false(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
 // Functions that are bound to builtin_generic are handled directly by the parser.
 // NOTE: These must be kept in sorted order!
 static const builtin_data_t builtin_datas[] = {
+    {L".", &builtin_source, N_(L"Evaluate contents of file")},
+    {L":", &builtin_true, N_(L"Return a successful result")},
     {L"[", &builtin_test, N_(L"Test a condition")},
+    {L"_", &builtin_gettext, N_(L"Translate a string")},
     {L"and", &builtin_generic, N_(L"Execute command if previous command succeeded")},
     {L"argparse", &builtin_argparse, N_(L"Parse options in fish script")},
     {L"begin", &builtin_generic, N_(L"Create a block of code")},
@@ -396,9 +410,11 @@ static const builtin_data_t builtin_datas[] = {
     {L"test", &builtin_test, N_(L"Test a condition")},
     {L"time", &builtin_generic, N_(L"Measure how long a command or block takes")},
     {L"true", &builtin_true, N_(L"Return a successful result")},
+    {L"type", &builtin_type, N_(L"Check if a thing is a thing")},
     {L"ulimit", &builtin_ulimit, N_(L"Set or get the shells resource usage limits")},
     {L"wait", &builtin_wait, N_(L"Wait for background processes completed")},
-    {L"while", &builtin_generic, N_(L"Perform a command multiple times")}};
+    {L"while", &builtin_generic, N_(L"Perform a command multiple times")},
+};
 
 #define BUILTIN_COUNT (sizeof builtin_datas / sizeof *builtin_datas)
 
@@ -438,7 +454,7 @@ static const wchar_t *const help_builtins[] = {L"for", L"while",  L"function", L
 static bool cmd_needs_help(const wchar_t *cmd) { return contains(help_builtins, cmd); }
 
 /// Execute a builtin command
-proc_status_t builtin_run(parser_t &parser, int job_pgid, wchar_t **argv, io_streams_t &streams) {
+proc_status_t builtin_run(parser_t &parser, wchar_t **argv, io_streams_t &streams) {
     UNUSED(parser);
     UNUSED(streams);
     if (argv == nullptr || argv[0] == nullptr)
@@ -453,16 +469,19 @@ proc_status_t builtin_run(parser_t &parser, int job_pgid, wchar_t **argv, io_str
     }
 
     if (const builtin_data_t *data = builtin_lookup(argv[0])) {
-        // If we are interactive, save the foreground pgroup and restore it after in case the
-        // builtin needs to read from the terminal. See #4540.
-        bool grab_tty = session_interactivity() != session_interactivity_t::not_interactive &&
-                        isatty(streams.stdin_fd);
-        pid_t pgroup_to_restore = grab_tty ? terminal_acquire_before_builtin(job_pgid) : -1;
-        int ret = data->func(parser, streams, argv);
-        if (pgroup_to_restore >= 0) {
-            tcsetpgrp(STDIN_FILENO, pgroup_to_restore);
+        maybe_t<int> ret = data->func(parser, streams, argv);
+        if (!ret) {
+            return proc_status_t::empty();
         }
-        return proc_status_t::from_exit_code(ret);
+
+        // The exit code is cast to an 8-bit unsigned integer, so saturate to 255. Otherwise,
+        // multiples of 256 are reported as 0.
+        int code = ret.value();
+        if (code > 255) {
+            code = 255;
+        }
+
+        return proc_status_t::from_exit_code(code);
     }
 
     FLOGF(error, UNKNOWN_BUILTIN_ERR_MSG, argv[0]);

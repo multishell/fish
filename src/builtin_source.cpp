@@ -22,7 +22,7 @@
 
 /// The  source builtin, sometimes called `.`. Evaluates the contents of a file in the current
 /// context.
-int builtin_source(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_source(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     ASSERT_IS_MAIN_THREAD();
     const wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
@@ -37,11 +37,20 @@ int builtin_source(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         return STATUS_CMD_OK;
     }
 
-    int fd;
+    // If we open a file, this ensures we close it.
+    autoclose_fd_t opened_fd;
+
+    // The fd that we read from, either from opened_fd or stdin.
+    int fd = -1;
+
     struct stat buf;
     const wchar_t *fn, *fn_intern;
 
     if (argc == optind || std::wcscmp(argv[optind], L"-") == 0) {
+        if (streams.stdin_fd < 0) {
+            streams.err.append_format(_(L"%ls: stdin is closed\n"), cmd);
+            return STATUS_CMD_ERROR;
+        }
         // Either a bare `source` which means to implicitly read from stdin or an explicit `-`.
         if (argc == optind && isatty(streams.stdin_fd)) {
             // Don't implicitly read from the terminal.
@@ -49,31 +58,36 @@ int builtin_source(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         }
         fn = L"-";
         fn_intern = fn;
-        fd = dup(streams.stdin_fd);
+        fd = streams.stdin_fd;
     } else {
-        if ((fd = wopen_cloexec(argv[optind], O_RDONLY)) == -1) {
+        opened_fd = autoclose_fd_t(wopen_cloexec(argv[optind], O_RDONLY));
+        if (!opened_fd.valid()) {
+            wcstring esc = escape_string(argv[optind], ESCAPE_ALL);
             streams.err.append_format(_(L"%ls: Error encountered while sourcing file '%ls':\n"),
-                                      cmd, argv[optind]);
+                                      cmd, esc.c_str());
             builtin_wperror(cmd, streams);
             return STATUS_CMD_ERROR;
         }
 
+        fd = opened_fd.fd();
         if (fstat(fd, &buf) == -1) {
-            close(fd);
+            wcstring esc = escape_string(argv[optind], ESCAPE_ALL);
             streams.err.append_format(_(L"%ls: Error encountered while sourcing file '%ls':\n"),
-                                      cmd, argv[optind]);
+                                      cmd, esc.c_str());
             builtin_wperror(L"source", streams);
             return STATUS_CMD_ERROR;
         }
 
         if (!S_ISREG(buf.st_mode)) {
-            close(fd);
-            streams.err.append_format(_(L"%ls: '%ls' is not a file\n"), cmd, argv[optind]);
+            wcstring esc = escape_string(argv[optind], ESCAPE_ALL);
+            streams.err.append_format(_(L"%ls: '%ls' is not a file\n"),
+                                      cmd, esc.c_str());
             return STATUS_CMD_ERROR;
         }
 
         fn_intern = intern(argv[optind]);
     }
+    assert(fd >= 0 && "Should have a valid fd");
 
     const block_t *sb = parser.push_block(block_t::source_block(fn_intern));
     auto &ld = parser.libdata();
@@ -90,8 +104,9 @@ int builtin_source(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     parser.pop_block(sb);
 
     if (retval != STATUS_CMD_OK) {
+        wcstring esc = escape_string(fn_intern, ESCAPE_ALL);
         streams.err.append_format(_(L"%ls: Error while reading file '%ls'\n"), cmd,
-                                  fn_intern == intern_static(L"-") ? L"<stdin>" : fn_intern);
+                                  fn_intern == intern_static(L"-") ? L"<stdin>" : esc.c_str());
     } else {
         retval = parser.get_last_status();
     }

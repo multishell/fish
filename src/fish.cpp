@@ -65,6 +65,9 @@ class fish_cmd_opts_t {
     wcstring features;
     // File path for debug output.
     std::string debug_output;
+    // File path for profiling output, or empty for none.
+    std::string profile_output;
+    std::string profile_startup_output;
     // Commands to be executed in place of interactive shell.
     std::vector<std::string> batch_cmds;
     // Commands to execute after the shell's config has been read.
@@ -77,13 +80,12 @@ class fish_cmd_opts_t {
     bool is_login{false};
     /// Whether this is an interactive session.
     bool is_interactive_session{false};
+    /// Whether to enable private mode.
+    bool enable_private_mode{false};
 };
 
-/// If we are doing profiling, the filename to output to.
-static const char *s_profiling_output_filename = nullptr;
-
 /// \return a timeval converted to milliseconds.
-long long tv_to_msec(const struct timeval &tv) {
+static long long tv_to_msec(const struct timeval &tv) {
     long long msec = static_cast<long long>(tv.tv_sec) * 1000;  // milliseconds per second
     msec += tv.tv_usec / 1000;                                  // microseconds per millisecond
     return msec;
@@ -107,9 +109,9 @@ static void print_rusage_self(FILE *fp) {
     long rss_kb = rs.ru_maxrss;
 #endif
     fprintf(fp, "  rusage self:\n");
-    fprintf(fp, "      user time: %llu ms\n", tv_to_msec(rs.ru_utime));
-    fprintf(fp, "       sys time: %llu ms\n", tv_to_msec(rs.ru_stime));
-    fprintf(fp, "     total time: %llu ms\n", tv_to_msec(rs.ru_utime) + tv_to_msec(rs.ru_stime));
+    fprintf(fp, "      user time: %lld ms\n", tv_to_msec(rs.ru_utime));
+    fprintf(fp, "       sys time: %lld ms\n", tv_to_msec(rs.ru_stime));
+    fprintf(fp, "     total time: %lld ms\n", tv_to_msec(rs.ru_utime) + tv_to_msec(rs.ru_stime));
     fprintf(fp, "        max rss: %ld kb\n", rss_kb);
     fprintf(fp, "        signals: %ld\n", rs.ru_nsignals);
 #endif
@@ -136,13 +138,13 @@ static struct config_paths_t determine_config_directory_paths(const char *argv0)
     bool done = false;
     std::string exec_path = get_executable_path(argv0);
     if (get_realpath(exec_path)) {
-        debug(2, L"exec_path: '%s', argv[0]: '%s'", exec_path.c_str(), argv0);
+        FLOGF(config, L"exec_path: '%s', argv[0]: '%s'", exec_path.c_str(), argv0);
         // TODO: we should determine program_name from argv0 somewhere in this file
 
 #ifdef CMAKE_BINARY_DIR
         // Detect if we're running right out of the CMAKE build directory
         if (string_prefixes_string(CMAKE_BINARY_DIR, exec_path.c_str())) {
-            debug(2,
+            FLOGF(config,
                   "Running out of build directory, using paths relative to CMAKE_SOURCE_DIR:\n %s",
                   CMAKE_SOURCE_DIR);
 
@@ -163,7 +165,7 @@ static struct config_paths_t determine_config_directory_paths(const char *argv0)
             if (has_suffix(exec_path, installed_suffix, false)) {
                 suffix = installed_suffix;
             } else if (has_suffix(exec_path, just_a_fish, false)) {
-                debug(2, L"'fish' not in a 'bin/', trying paths relative to source tree");
+                FLOGF(config, L"'fish' not in a 'bin/', trying paths relative to source tree");
                 suffix = just_a_fish;
             }
 
@@ -194,14 +196,14 @@ static struct config_paths_t determine_config_directory_paths(const char *argv0)
 
     if (!done) {
         // Fall back to what got compiled in.
-        debug(2, L"Using compiled in paths:");
+        FLOGF(config, L"Using compiled in paths:");
         paths.data = L"" DATADIR "/fish";
         paths.sysconf = L"" SYSCONFDIR "/fish";
         paths.doc = L"" DOCDIR;
         paths.bin = L"" BINDIR;
     }
 
-    debug(2,
+    FLOGF(config,
           L"determine_config_directory_paths() results:\npaths.data: %ls\npaths.sysconf: "
           L"%ls\npaths.doc: %ls\npaths.bin: %ls",
           paths.data.c_str(), paths.sysconf.c_str(), paths.doc.c_str(), paths.bin.c_str());
@@ -209,7 +211,7 @@ static struct config_paths_t determine_config_directory_paths(const char *argv0)
 }
 
 // Source the file config.fish in the given directory.
-static void source_config_in_directory(const wcstring &dir) {
+static void source_config_in_directory(parser_t &parser, const wcstring &dir) {
     // If the config.fish file doesn't exist or isn't readable silently return. Fish versions up
     // thru 2.2.0 would instead try to source the file with stderr redirected to /dev/null to deal
     // with that possibility.
@@ -221,39 +223,36 @@ static void source_config_in_directory(const wcstring &dir) {
     const wcstring escaped_dir = escape_string(dir, ESCAPE_ALL);
     const wcstring escaped_pathname = escaped_dir + L"/config.fish";
     if (waccess(config_pathname, R_OK) != 0) {
-        debug(2, L"not sourcing %ls (not readable or does not exist)", escaped_pathname.c_str());
+        FLOGF(config, L"not sourcing %ls (not readable or does not exist)",
+              escaped_pathname.c_str());
         return;
     }
-    debug(2, L"sourcing %ls", escaped_pathname.c_str());
+    FLOGF(config, L"sourcing %ls", escaped_pathname.c_str());
 
     const wcstring cmd = L"builtin source " + escaped_pathname;
-    parser_t &parser = parser_t::principal_parser();
     set_is_within_fish_initialization(true);
     parser.eval(cmd, io_chain_t());
     set_is_within_fish_initialization(false);
 }
 
 /// Parse init files. exec_path is the path of fish executable as determined by argv[0].
-static int read_init(const struct config_paths_t &paths) {
-    source_config_in_directory(paths.data);
-    source_config_in_directory(paths.sysconf);
+static void read_init(parser_t &parser, const struct config_paths_t &paths) {
+    source_config_in_directory(parser, paths.data);
+    source_config_in_directory(parser, paths.sysconf);
 
     // We need to get the configuration directory before we can source the user configuration file.
     // If path_get_config returns false then we have no configuration directory and no custom config
     // to load.
     wcstring config_dir;
     if (path_get_config(config_dir)) {
-        source_config_in_directory(config_dir);
+        source_config_in_directory(parser, config_dir);
     }
-
-    return 1;
 }
 
-int run_command_list(std::vector<std::string> *cmds, const io_chain_t &io) {
-    parser_t &parser = parser_t::principal_parser();
-
+static int run_command_list(parser_t &parser, std::vector<std::string> *cmds,
+                            const io_chain_t &io) {
     for (const auto &cmd : *cmds) {
-        const wcstring cmd_wcs = str2wcstring(cmd);
+        wcstring cmd_wcs = str2wcstring(cmd);
         parser.eval(cmd_wcs, io);
     }
 
@@ -262,7 +261,7 @@ int run_command_list(std::vector<std::string> *cmds, const io_chain_t &io) {
 
 /// Parse the argument list, return the index of the first non-flag arguments.
 static int fish_parse_opt(int argc, char **argv, fish_cmd_opts_t *opts) {
-    static const char *const short_opts = "+hPilnvc:C:p:d:f:D:";
+    static const char *const short_opts = "+hPilnvc:C:p:d:f:D:o:";
     static const struct option long_opts[] = {
         {"command", required_argument, nullptr, 'c'},
         {"init-command", required_argument, nullptr, 'C'},
@@ -276,6 +275,7 @@ static int fish_parse_opt(int argc, char **argv, fish_cmd_opts_t *opts) {
         {"print-rusage-self", no_argument, nullptr, 1},
         {"print-debug-categories", no_argument, nullptr, 2},
         {"profile", required_argument, nullptr, 'p'},
+        {"profile-startup", required_argument, nullptr, 3},
         {"private", no_argument, nullptr, 'P'},
         {"help", no_argument, nullptr, 'h'},
         {"version", no_argument, nullptr, 'v'},
@@ -285,11 +285,11 @@ static int fish_parse_opt(int argc, char **argv, fish_cmd_opts_t *opts) {
     while ((opt = getopt_long(argc, argv, short_opts, long_opts, nullptr)) != -1) {
         switch (opt) {
             case 'c': {
-                opts->batch_cmds.push_back(optarg);
+                opts->batch_cmds.emplace_back(optarg);
                 break;
             }
             case 'C': {
-                opts->postconfig_cmds.push_back(optarg);
+                opts->postconfig_cmds.emplace_back(optarg);
                 break;
             }
             case 'd': {
@@ -304,6 +304,11 @@ static int fish_parse_opt(int argc, char **argv, fish_cmd_opts_t *opts) {
                 } else {
                     activate_flog_categories_by_pattern(str2wcstring(optarg));
                 }
+                for (auto cat : get_flog_categories()) {
+                    if (cat->enabled) {
+                        printf("Debug enabled for category: %ls\n", cat->name);
+                    }
+                }
                 break;
             }
             case 'o': {
@@ -315,7 +320,7 @@ static int fish_parse_opt(int argc, char **argv, fish_cmd_opts_t *opts) {
                 break;
             }
             case 'h': {
-                opts->batch_cmds.push_back("__fish_print_help fish");
+                opts->batch_cmds.emplace_back("__fish_print_help fish");
                 break;
             }
             case 'i': {
@@ -338,52 +343,45 @@ static int fish_parse_opt(int argc, char **argv, fish_cmd_opts_t *opts) {
                 auto cats = get_flog_categories();
                 // Compute width of longest name.
                 int name_width = 0;
-                for (const auto *cat : cats) {
+                for (auto cat : cats) {
                     name_width = std::max(name_width, static_cast<int>(wcslen(cat->name)));
                 }
                 // A little extra space.
                 name_width += 2;
-                for (const auto *cat : cats) {
+                for (auto cat : cats) {
                     // Negating the name width left-justifies.
                     printf("%*ls %ls\n", -name_width, cat->name, _(cat->description));
                 }
                 exit(0);
-                break;
             }
             case 'p': {
-                s_profiling_output_filename = optarg;
+                // "--profile" - this does not activate profiling right away,
+                // rather it's done after startup is finished.
+                opts->profile_output = optarg;
+                break;
+            }
+            case 3: {
+                // With "--profile-startup" we immediately turn profiling on.
+                opts->profile_startup_output = optarg;
                 g_profiling_active = true;
                 break;
             }
             case 'P': {
-                start_private_mode();
+                opts->enable_private_mode = true;
                 break;
             }
             case 'v': {
                 std::fwprintf(stdout, _(L"%s, version %s\n"), PACKAGE_NAME, get_fish_version());
                 exit(0);
-                break;
             }
             case 'D': {
-                char *end;
-                long tmp;
-
-                errno = 0;
-                tmp = strtol(optarg, &end, 10);
-
-                if (tmp > 0 && tmp <= 128 && !*end && !errno) {
-                    set_debug_stack_frames(static_cast<int>(tmp));
-                } else {
-                    std::fwprintf(stderr, _(L"Invalid value '%s' for debug-stack-frames flag"),
-                                  optarg);
-                    exit(1);
-                }
+                // TODO: Option is currently useless.
+                // Either remove it or make it work with FLOG.
                 break;
             }
             default: {
                 // We assume getopt_long() has already emitted a diagnostic msg.
                 exit(1);
-                break;
             }
         }
     }
@@ -395,7 +393,7 @@ static int fish_parse_opt(int argc, char **argv, fish_cmd_opts_t *opts) {
     // command or file to execute and stdin is a tty. Note that the -i or
     // --interactive options also force interactive mode.
     if (opts->batch_cmds.empty() && optind == argc && isatty(STDIN_FILENO)) {
-        set_interactive_session(session_interactivity_t::implied);
+        set_interactive_session(true);
     }
 
     return optind;
@@ -416,13 +414,26 @@ int main(int argc, char **argv) {
 
     const char *dummy_argv[2] = {"fish", nullptr};
     if (!argv[0]) {
-        argv = (char **)dummy_argv;  //!OCLINT(parameter reassignment)
-        argc = 1;                    //!OCLINT(parameter reassignment)
+        argv = const_cast<char **>(dummy_argv);  //!OCLINT(parameter reassignment)
+        argc = 1;                                //!OCLINT(parameter reassignment)
     }
+
+    // Enable debug categories set in FISH_DEBUG.
+    // This is in *addition* to the ones given via --debug.
+    if (const char *debug_categories = getenv("FISH_DEBUG")) {
+        activate_flog_categories_by_pattern(str2wcstring(debug_categories));
+    }
+
     fish_cmd_opts_t opts{};
     my_optind = fish_parse_opt(argc, argv, &opts);
 
     // Direct any debug output right away.
+    // --debug-output takes precedence, otherwise $FISH_DEBUG_OUTPUT is used.
+    if (opts.debug_output.empty()) {
+        const char *var = getenv("FISH_DEBUG_OUTPUT");
+        if (var) opts.debug_output = var;
+    }
+
     FILE *debug_output = nullptr;
     if (!opts.debug_output.empty()) {
         debug_output = fopen(opts.debug_output.c_str(), "w");
@@ -438,23 +449,29 @@ int main(int argc, char **argv) {
 
     // No-exec is prohibited when in interactive mode.
     if (opts.is_interactive_session && opts.no_exec) {
-        debug(1, _(L"Can not use the no-execute mode when running an interactive session"));
+        FLOGF(warning, _(L"Can not use the no-execute mode when running an interactive session"));
         opts.no_exec = false;
     }
 
     // Apply our options.
     if (opts.is_login) mark_login();
     if (opts.no_exec) mark_no_exec();
-    if (opts.is_interactive_session) set_interactive_session(session_interactivity_t::explicit_);
+    if (opts.is_interactive_session) set_interactive_session(true);
+    if (opts.enable_private_mode) start_private_mode(env_stack_t::globals());
 
     // Only save (and therefore restore) the fg process group if we are interactive. See issues
     // #197 and #1002.
-    if (session_interactivity() != session_interactivity_t::not_interactive) {
+    if (is_interactive_session()) {
         save_term_foreground_process_group();
     }
 
-    const struct config_paths_t paths = determine_config_directory_paths(argv[0]);
-    env_init(&paths);
+    struct config_paths_t paths;
+    // If we're not executing, there's no need to find the config.
+    if (!opts.no_exec) {
+        paths = determine_config_directory_paths(argv[0]);
+        env_init(&paths);
+    }
+
     // Set features early in case other initialization depends on them.
     // Start with the ones set in the environment, then those set on the command line (so the
     // command line takes precedence).
@@ -471,51 +488,73 @@ int main(int argc, char **argv) {
 
     parser_t &parser = parser_t::principal_parser();
 
-    if (read_init(paths)) {
-        // Stomp the exit status of any initialization commands (issue #635).
-        parser.set_last_statuses(statuses_t::just(STATUS_CMD_OK));
+    if (!opts.no_exec) {
+        read_init(parser, paths);
+    }
+    // Stomp the exit status of any initialization commands (issue #635).
+    parser.set_last_statuses(statuses_t::just(STATUS_CMD_OK));
 
-        // Run post-config commands specified as arguments, if any.
-        if (!opts.postconfig_cmds.empty()) {
-            res = run_command_list(&opts.postconfig_cmds, {});
+    // If we're profiling startup to a separate file, write it now.
+    if (!opts.profile_startup_output.empty()
+        && opts.profile_startup_output != opts.profile_output) {
+        parser.emit_profiling(opts.profile_startup_output.c_str());
+
+        // If we are profiling both, ensure the startup data only
+        // ends up in the startup file.
+        parser.clear_profiling();
+    }
+
+    g_profiling_active = !opts.profile_output.empty();
+
+    // Run post-config commands specified as arguments, if any.
+    if (!opts.postconfig_cmds.empty()) {
+        res = run_command_list(parser, &opts.postconfig_cmds, {});
+    }
+
+    if (!opts.batch_cmds.empty()) {
+        // Run the commands specified as arguments, if any.
+        if (get_login()) {
+            // Do something nasty to support OpenSUSE assuming we're bash. This may modify cmds.
+            fish_xdm_login_hack_hack_hack_hack(&opts.batch_cmds, argc - my_optind,
+                                               argv + my_optind);
         }
 
-        if (!opts.batch_cmds.empty()) {
-            // Run the commands specified as arguments, if any.
-            if (get_login()) {
-                // Do something nasty to support OpenSUSE assuming we're bash. This may modify cmds.
-                fish_xdm_login_hack_hack_hack_hack(&opts.batch_cmds, argc - my_optind,
-                                                   argv + my_optind);
-            }
-            res = run_command_list(&opts.batch_cmds, {});
-            reader_set_end_loop(false);
-        } else if (my_optind == argc) {
-            // Implicitly interactive mode.
-            res = reader_read(parser, STDIN_FILENO, {});
+        // Pass additional args as $argv.
+        // Note that we *don't* support setting argv[0]/$0, unlike e.g. bash.
+        wcstring_list_t list;
+        for (char **ptr = argv + my_optind; *ptr; ptr++) {
+            list.push_back(str2wcstring(*ptr));
+        }
+        parser.vars().set(L"argv", ENV_DEFAULT, std::move(list));
+        res = run_command_list(parser, &opts.batch_cmds, {});
+        parser.libdata().exit_current_script = false;
+    } else if (my_optind == argc) {
+        // Implicitly interactive mode.
+        if (opts.no_exec && isatty(STDIN_FILENO)) {
+            FLOGF(error, L"no-execute mode enabled and no script given. Exiting");
+            return EXIT_FAILURE;  // above line should always exit
+        }
+        res = reader_read(parser, STDIN_FILENO, {});
+    } else {
+        const char *file = *(argv + (my_optind++));
+        autoclose_fd_t fd(open_cloexec(file, O_RDONLY));
+        if (!fd.valid()) {
+            perror(file);
         } else {
-            char *file = *(argv + (my_optind++));
-            int fd = open(file, O_RDONLY);
-            if (fd == -1) {
-                perror(file);
-            } else {
-                // OK to not do this atomically since we cannot have gone multithreaded yet.
-                set_cloexec(fd);
+            wcstring_list_t list;
+            for (char **ptr = argv + my_optind; *ptr; ptr++) {
+                list.push_back(str2wcstring(*ptr));
+            }
+            parser.vars().set(L"argv", ENV_DEFAULT, std::move(list));
 
-                wcstring_list_t list;
-                for (char **ptr = argv + my_optind; *ptr; ptr++) {
-                    list.push_back(str2wcstring(*ptr));
-                }
-                parser.vars().set(L"argv", ENV_DEFAULT, std::move(list));
-
-                auto &ld = parser.libdata();
-                wcstring rel_filename = str2wcstring(file);
-                scoped_push<const wchar_t *> filename_push{&ld.current_filename,
-                                                           intern(rel_filename.c_str())};
-                res = reader_read(parser, fd, {});
-                if (res) {
-                    debug(1, _(L"Error while reading file %ls\n"),
-                          ld.current_filename ? ld.current_filename : _(L"Standard input"));
-                }
+            auto &ld = parser.libdata();
+            wcstring rel_filename = str2wcstring(file);
+            scoped_push<const wchar_t *> filename_push{&ld.current_filename,
+                                                       intern(rel_filename.c_str())};
+            res = reader_read(parser, fd.fd(), {});
+            if (res) {
+                FLOGF(warning, _(L"Error while reading file %ls\n"),
+                      ld.current_filename ? ld.current_filename : _(L"Standard input"));
             }
         }
     }
@@ -530,10 +569,10 @@ int main(int argc, char **argv) {
     event_fire_generic(parser, L"fish_exit", &event_args);
 
     restore_term_mode();
-    restore_term_foreground_process_group();
+    restore_term_foreground_process_group_for_exit();
 
-    if (g_profiling_active) {
-        parser.emit_profiling(s_profiling_output_filename);
+    if (!opts.profile_output.empty()) {
+        parser.emit_profiling(opts.profile_output.c_str());
     }
 
     history_save_all();

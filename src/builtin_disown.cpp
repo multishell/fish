@@ -24,8 +24,9 @@ static int disown_job(const wchar_t *cmd, parser_t &parser, io_streams_t &stream
     }
 
     // Stopped disowned jobs must be manually signaled; explain how to do so.
+    auto pgid = j->get_pgid();
     if (j->is_stopped()) {
-        killpg(j->pgid, SIGCONT);
+        if (pgid) killpg(*pgid, SIGCONT);
         const wchar_t *fmt =
             _(L"%ls: job %d ('%ls') was stopped and has been signalled to continue.\n");
         streams.err.append_format(fmt, cmd, j->job_id(), j->command_wcstr());
@@ -35,13 +36,13 @@ static int disown_job(const wchar_t *cmd, parser_t &parser, io_streams_t &stream
     // within the context of a subjob which will cause the parent job to crash in exec_job().
     // Instead, we set a flag and the parser removes the job from the jobs list later.
     j->mut_flags().disown_requested = true;
-    add_disowned_pgid(j->pgid);
+    add_disowned_job(j);
 
     return STATUS_CMD_OK;
 }
 
 /// Builtin for removing jobs from the job list.
-int builtin_disown(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_disown(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     const wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
     help_only_cmd_opts_t opts;

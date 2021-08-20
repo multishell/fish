@@ -71,9 +71,6 @@ struct tok_t {
     // If an error, this is the error code.
     tokenizer_error_t error{tokenizer_error_t::none};
 
-    // Whether the token was preceded by an escaped newline.
-    bool preceding_escaped_nl{false};
-
     // If an error, this is the offset of the error within the token. A value of 0 means it occurred
     // at 'offset'.
     size_t error_offset_within_token{size_t(-1)};
@@ -86,7 +83,7 @@ struct tok_t {
         return offset <= loc && loc - offset <= length;
     }
     /// Gets source for the token, or the empty string if it has no source.
-    wcstring get_source(const wcstring &str) const { return {str, offset, length}; }
+    wcstring get_source(const wcstring &str) const { return wcstring(str, offset, length); }
 };
 
 /// The tokenizer struct.

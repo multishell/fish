@@ -11,6 +11,7 @@
 
 #include "common.h"
 #include "env.h"
+#include "fds.h"
 #include "wutil.h"
 
 /// Callback data, reflecting a change in universal variables.
@@ -65,8 +66,8 @@ class env_universal_t {
     bool remove_internal(const wcstring &key);
 
     // Functions concerned with saving.
-    bool open_and_acquire_lock(const std::string &path, int *out_fd);
-    bool open_temporary_file(const wcstring &directory, wcstring *out_path, int *out_fd);
+    bool open_and_acquire_lock(const std::string &path, autoclose_fd_t *out_fd);
+    autoclose_fd_t open_temporary_file(const wcstring &directory, wcstring *out_path);
     bool write_to_fd(int fd, const wcstring &path);
     bool move_new_vars_file_into_place(const wcstring &src, const wcstring &dst);
 
@@ -159,11 +160,15 @@ class env_universal_t {
 class universal_notifier_t {
    public:
     enum notifier_strategy_t {
-        // Use a value in shared memory. Simple, but requires polling and therefore semi-frequent
-        // wakeups.
+        // Poll on shared memory.
         strategy_shmem_polling,
-        // Strategy that uses notify(3). Simple and efficient, but OS X/macOS only.
+
+        // Mac-specific notify(3) implementation.
         strategy_notifyd,
+
+        // Set up a fifo and then waits for SIGIO to be delivered on it.
+        strategy_sigio,
+
         // Strategy that uses a named pipe. Somewhat complex, but portable and doesn't require
         // polling most of the time.
         strategy_named_pipe,

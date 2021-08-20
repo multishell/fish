@@ -33,15 +33,53 @@
 
 class parser_t;
 
-static void print_colors(io_streams_t &streams) {
-    outputter_t outp;
+static void print_modifiers(outputter_t &outp, bool bold, bool underline, bool italics, bool dim,
+                            bool reverse, rgb_color_t bg) {
+    if (bold && enter_bold_mode) {
+        // These casts are needed to work with different curses implementations.
+        writembs_nofail(outp, tparm(const_cast<char *>(enter_bold_mode)));
+    }
 
+    if (underline && enter_underline_mode) {
+        writembs_nofail(outp, enter_underline_mode);
+    }
+
+    if (italics && enter_italics_mode) {
+        writembs_nofail(outp, enter_italics_mode);
+    }
+
+    if (dim && enter_dim_mode) {
+        writembs_nofail(outp, enter_dim_mode);
+    }
+
+    if (reverse && enter_reverse_mode) {
+        writembs_nofail(outp, enter_reverse_mode);
+    } else if (reverse && enter_standout_mode) {
+        writembs_nofail(outp, enter_standout_mode);
+    }
+    if (!bg.is_none() && bg.is_normal()) {
+        writembs_nofail(outp, tparm(const_cast<char *>(exit_attribute_mode)));
+    }
+}
+
+static void print_colors(io_streams_t &streams, bool bold, bool underline, bool italics, bool dim,
+                         bool reverse, rgb_color_t bg) {
+    outputter_t outp;
     for (const auto &color_name : rgb_color_t::named_color_names()) {
         if (!streams.out_is_redirected && isatty(STDOUT_FILENO)) {
+            print_modifiers(outp, bold, underline, italics, dim, reverse, bg);
             rgb_color_t color = rgb_color_t(color_name);
             outp.set_color(color, rgb_color_t::none());
+            if (!bg.is_none()) {
+                outp.write_color(bg, false /* not is_fg */);
+            }
         }
         outp.writestr(color_name);
+        if (!bg.is_none()) {
+            // If we have a background, stop it after the color
+            // or it goes to the end of the line and looks ugly.
+            writembs_nofail(outp, tparm(const_cast<char *>(exit_attribute_mode)));
+        }
         outp.writech(L'\n');
     }  // conveniently, 'normal' is always the last color so we don't need to reset here
 
@@ -60,20 +98,20 @@ static const struct woption long_options[] = {{L"background", required_argument,
                                               {L"print-colors", no_argument, nullptr, 'c'},
                                               {nullptr, 0, nullptr, 0}};
 
-#if __APPLE__
+#ifdef __APPLE__
 static char sitm_esc[] = "\x1B[3m";
 static char ritm_esc[] = "\x1B[23m";
 static char dim_esc[] = "\x1B[2m";
 #endif
 
 /// set_color builtin.
-int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     // By the time this is called we should have initialized the curses subsystem.
     assert(curses_initialized);
 
 // Hack in missing italics and dim capabilities omitted from MacOS xterm-256color terminfo
 // Helps Terminal.app/iTerm
-#if __APPLE__
+#ifdef __APPLE__
     const auto term_prog = parser.vars().get(L"TERM_PROGRAM");
     if (!term_prog.missing_or_empty() &&
         (term_prog->as_string() == L"Apple_Terminal" || term_prog->as_string() == L"iTerm.app")) {
@@ -87,7 +125,6 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
 #endif
 
     // Variables used for parsing the argument list.
-    wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
 
     // Some code passes variables to set_color that don't exist, like $fish_user_whatever. As a
@@ -97,7 +134,8 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     }
 
     const wchar_t *bgcolor = nullptr;
-    bool bold = false, underline = false, italics = false, dim = false, reverse = false;
+    bool bold = false, underline = false, italics = false, dim = false, reverse = false,
+         print = false;
 
     // Parse options to obtain the requested operation and the modifiers.
     int opt;
@@ -133,11 +171,12 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
                 break;
             }
             case 'c': {
-                print_colors(streams);
-                return STATUS_CMD_OK;
+                print = true;
+                break;
             }
             case ':': {
-                builtin_missing_argument(parser, streams, cmd, argv[w.woptind - 1]);
+                // We don't error here because "-b" is the only option that requires an argument,
+                // and we don't error for missing colors.
                 return STATUS_INVALID_ARGS;
             }
             case '?': {
@@ -145,9 +184,19 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
             }
             default: {
                 DIE("unexpected retval from wgetopt_long");
-                break;
             }
         }
+    }
+
+    const rgb_color_t bg = rgb_color_t(bgcolor ? bgcolor : L"");
+    if (bgcolor && bg.is_none()) {
+        streams.err.append_format(_(L"%ls: Unknown color '%ls'\n"), argv[0], bgcolor);
+        return STATUS_INVALID_ARGS;
+    }
+
+    if (print) {
+        print_colors(streams, bold, underline, italics, dim, reverse, bg);
+        return STATUS_CMD_OK;
     }
 
     // Remaining arguments are foreground color.
@@ -161,22 +210,10 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
         fgcolors.push_back(fg);
     }
 
-    if (fgcolors.empty() && bgcolor == nullptr && !bold && !underline && !italics && !dim &&
-        !reverse) {
-        streams.err.append_format(_(L"%ls: Expected an argument\n"), argv[0]);
-        return STATUS_INVALID_ARGS;
-    }
-
     // #1323: We may have multiple foreground colors. Choose the best one. If we had no foreground
     // color, we'll get none(); if we have at least one we expect not-none.
     const rgb_color_t fg = best_color(fgcolors, output_get_color_support());
     assert(fgcolors.empty() || !fg.is_none());
-
-    const rgb_color_t bg = rgb_color_t(bgcolor ? bgcolor : L"");
-    if (bgcolor && bg.is_none()) {
-        streams.err.append_format(_(L"%ls: Unknown color '%ls'\n"), argv[0], bgcolor);
-        return STATUS_INVALID_ARGS;
-    }
 
     // Test if we have at least basic support for setting fonts, colors and related bits - otherwise
     // just give up...
@@ -185,35 +222,15 @@ int builtin_set_color(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     }
     outputter_t outp;
 
-    if (bold && enter_bold_mode) {
-        writembs_nofail(outp, tparm((char *)enter_bold_mode));
-    }
-
-    if (underline && enter_underline_mode) {
-        writembs_nofail(outp, enter_underline_mode);
-    }
-
-    if (italics && enter_italics_mode) {
-        writembs_nofail(outp, enter_italics_mode);
-    }
-
-    if (dim && enter_dim_mode) {
-        writembs_nofail(outp, enter_dim_mode);
-    }
-
-    if (reverse && enter_reverse_mode) {
-        writembs_nofail(outp, enter_reverse_mode);
-    } else if (reverse && enter_standout_mode) {
-        writembs_nofail(outp, enter_standout_mode);
-    }
+    print_modifiers(outp, bold, underline, italics, dim, reverse, bg);
 
     if (bgcolor != nullptr && bg.is_normal()) {
-        writembs_nofail(outp, tparm((char *)exit_attribute_mode));
+        writembs_nofail(outp, tparm(const_cast<char *>(exit_attribute_mode)));
     }
 
     if (!fg.is_none()) {
         if (fg.is_normal() || fg.is_reset()) {
-            writembs_nofail(outp, tparm((char *)exit_attribute_mode));
+            writembs_nofail(outp, tparm(const_cast<char *>(exit_attribute_mode)));
         } else {
             if (!outp.write_color(fg, true /* is_fg */)) {
                 // We need to do *something* or the lack of any output messes up

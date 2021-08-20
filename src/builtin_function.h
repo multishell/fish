@@ -8,6 +8,11 @@
 class parser_t;
 struct io_streams_t;
 
-int builtin_function(parser_t &parser, io_streams_t &streams, const wcstring_list_t &c_args,
-                     const parsed_source_ref_t &source, tnode_t<grammar::block_statement> body);
+namespace ast {
+struct block_statement_t;
+}
+
+maybe_t<int> builtin_function(parser_t &parser, io_streams_t &streams,
+                              const wcstring_list_t &c_args, const parsed_source_ref_t &source,
+                              const ast::block_statement_t &func_node);
 #endif

@@ -16,8 +16,10 @@
 /// The pwd builtin. Respect -P to resolve symbolic links. Respect -L to not do that (the default).
 static const wchar_t *const short_options = L"LPh";
 static const struct woption long_options[] = {{L"help", no_argument, nullptr, 'h'},
+                                              {L"logical", no_argument, nullptr, 'L'},
+                                              {L"physical", no_argument, nullptr, 'P'},
                                               {nullptr, 0, nullptr, 0}};
-int builtin_pwd(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_pwd(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     UNUSED(parser);
     const wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
@@ -41,7 +43,6 @@ int builtin_pwd(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
             }
             default: {
                 DIE("unexpected retval from wgetopt_long");
-                break;
             }
         }
     }

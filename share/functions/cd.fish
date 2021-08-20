@@ -18,18 +18,12 @@ function cd --description "Change directory"
     # Avoid set completions.
     set -l previous $PWD
 
-    if test "$argv" = "-"
-        if test "$__fish_cd_direction" = "next"
+    if test "$argv" = -
+        if test "$__fish_cd_direction" = next
             nextd
         else
             prevd
         end
-        return $status
-    end
-
-    # allow explicit "cd ." if the mount-point became stale in the meantime
-    if test "$argv" = "."
-        cd "$PWD"
         return $status
     end
 

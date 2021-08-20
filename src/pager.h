@@ -12,25 +12,26 @@
 #include "complete.h"
 #include "reader.h"
 #include "screen.h"
+#include "termsize.h"
 
-#define PAGER_SELECTION_NONE ((size_t)(-1))
+#define PAGER_SELECTION_NONE static_cast<size_t>(-1)
 
 /// Represents rendering from the pager.
 class page_rendering_t {
    public:
-    size_t term_width;
-    size_t term_height;
-    size_t rows;
-    size_t cols;
-    size_t row_start;
-    size_t row_end;
-    size_t selected_completion_idx;
-    screen_data_t screen_data;
+    size_t term_width{size_t(-1)};
+    size_t term_height{size_t(-1)};
+    size_t rows{0};
+    size_t cols{0};
+    size_t row_start{0};
+    size_t row_end{0};
+    size_t selected_completion_idx{size_t(-1)};
+    screen_data_t screen_data{};
 
-    size_t remaining_to_disclose;
+    size_t remaining_to_disclose{0};
 
-    bool search_field_shown;
-    editable_line_t search_field_line;
+    bool search_field_shown{false};
+    editable_line_t search_field_line{};
 
     // Returns a rendering with invalid data, useful to indicate "no rendering".
     page_rendering_t();
@@ -61,17 +62,17 @@ enum class selection_motion_t {
 #define PAGER_UNDISCLOSED_MAX_ROWS 4
 
 class pager_t {
-    size_t available_term_width;
-    size_t available_term_height;
+    size_t available_term_width{0};
+    size_t available_term_height{0};
 
-    size_t selected_completion_idx;
-    size_t suggested_row_start;
+    size_t selected_completion_idx{PAGER_SELECTION_NONE};
+    size_t suggested_row_start{0};
 
     // Fully disclosed means that we show all completions.
-    bool fully_disclosed;
+    bool fully_disclosed{false};
 
     // Whether we show the search field.
-    bool search_field_shown;
+    bool search_field_shown{false};
 
     // Returns the index of the completion that should draw selected, using the given number of
     // columns.
@@ -81,19 +82,15 @@ class pager_t {
     /// Data structure describing one or a group of related completions.
     struct comp_t {
         /// The list of all completion strings this entry applies to.
-        wcstring_list_t comp;
+        wcstring_list_t comp{};
         /// The description.
-        wcstring desc;
+        wcstring desc{};
         /// The representative completion.
-        completion_t representative;
+        completion_t representative{L""};
         /// On-screen width of the completion string.
-        size_t comp_width;
+        size_t comp_width{0};
         /// On-screen width of the description information.
-        size_t desc_width;
-        /// Minimum acceptable width.
-        // size_t min_width;
-
-        comp_t() : comp(), desc(), representative(L""), comp_width(0), desc_width(0) {}
+        size_t desc_width{0};
 
         // Our text looks like this:
         // completion  (description)
@@ -111,7 +108,7 @@ class pager_t {
     };
 
    private:
-    typedef std::vector<comp_t> comp_info_list_t;
+    using comp_info_list_t = std::vector<comp_t>;
 
     // The filtered list of completion infos.
     comp_info_list_t completion_infos;
@@ -146,8 +143,8 @@ class pager_t {
     // Sets the prefix.
     void set_prefix(const wcstring &pref);
 
-    // Sets the terminal width and height.
-    void set_term_size(size_t w, size_t h);
+    // Sets the terminal size.
+    void set_term_size(termsize_t ts);
 
     // Changes the selected completion in the given direction according to the layout of the given
     // rendering. Returns true if the selection changed.
@@ -164,7 +161,10 @@ class pager_t {
     // Produces a rendering of the completions, at the given term size.
     page_rendering_t render() const;
 
-    // Updates the rendering if it's stale.
+    // \return true if the given rendering needs to be updated.
+    bool rendering_needs_update(const page_rendering_t &rendering) const;
+
+    // Updates the rendering.
     void update_rendering(page_rendering_t *rendering) const;
 
     // Indicates if there are no completions, and therefore nothing to render.
@@ -191,8 +191,8 @@ class pager_t {
     // Position of the cursor.
     size_t cursor_position() const;
 
-    // Constructor
     pager_t();
+    ~pager_t();
 };
 
 #endif

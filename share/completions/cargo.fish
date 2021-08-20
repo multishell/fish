@@ -1,52 +1,58 @@
 # Tab completion for cargo (https://github.com/rust-lang/cargo).
-complete -e -c cargo
-
 complete -c cargo -s h -l help
 complete -c cargo -s V -l version -d 'Print version info and exit'
 complete -c cargo -l list -d 'List installed commands'
 complete -c cargo -s v -l verbose -d 'Use verbose output'
 complete -c cargo -s q -l quiet -d 'No output printed to stdout'
 
-set __fish_cargo_subcommands (cargo --list | tail -n +2 | string trim | string replace -r '\s+' '\t')
+set -l __fish_cargo_subcommands (cargo --list 2>&1 | string replace -rf '^\s+([^\s]+)\s+(.*)' '$1\t$2' | string escape)
 
-complete -c cargo -f -c cargo -n '__fish_use_subcommand' -a '$__fish_cargo_subcommands'
-complete -c cargo -x -c cargo -n '__fish_seen_subcommand_from help' -a '$__fish_cargo_subcommands'
+complete -c cargo -f -c cargo -n __fish_use_subcommand -a "$__fish_cargo_subcommands"
+complete -c cargo -x -c cargo -n '__fish_seen_subcommand_from help' -a "$__fish_cargo_subcommands"
 
-for x in bench build clean doc fetch generate-lockfile \
+for x in bench b build clean doc fetch generate-lockfile \
     locate-project package pkgid publish \
-    read-manifest run rustc test update \
+    read-manifest r run rustc t test update \
     verify-project
     complete -c cargo -r -n "__fish_seen_subcommand_from $x" -l manifest-path -d 'path to the manifest to compile'
 end
 
-for x in bench build clean doc rustc test update
+for x in bench b build clean doc rustc t test update
     complete -c cargo -x -n "__fish_seen_subcommand_from $x" -s p -l spec -d 'Package to build'
 end
 
-for x in bench build clean doc run rustc test
+for x in bench b build clean doc r run rustc t test
     complete -c cargo -x -n "__fish_seen_subcommand_from $x" -l target -d 'Build for the target triple'
 end
 
-for x in bench build rustc test
-    complete -c cargo -x -n "__fish_seen_subcommand_from $x" -l bench -d 'Only the specified benchmark'
+for x in bench b build rustc t test
+    complete -c cargo -x -n "__fish_seen_subcommand_from $x" -l bench -a "(cargo bench --bench 2>&1 | string replace -rf '^\s+' '')"
     complete -c cargo -n "__fish_seen_subcommand_from $x" -l lib -d 'Only this package\'s library'
-    complete -c cargo -x -n "__fish_seen_subcommand_from $x" -l test -d 'Only the specified test'
+    complete -c cargo -x -n "__fish_seen_subcommand_from $x" -l test -a "(cargo test --test 2>&1 | string replace -rf '^\s+' '')"
 end
 
-for x in bench build run rustc test
-    complete -c cargo -x -n "__fish_seen_subcommand_from $x" -l bin -d 'Only the specified binary'
-    complete -c cargo -x -n "__fish_seen_subcommand_from $x" -l example -d 'Only the specified example'
+function __list_cargo_examples
+    if not test -d ./examples
+        return
+    end
+
+    find ./examples/ -mindepth 1 -maxdepth 1 -type f -name "*.rs" -or -type d \
+        | string replace -r './examples/(.*?)(?:.rs)?$' '$1'
+end
+for x in bench b build r run rustc t test
+    complete -c cargo -x -n "__fish_seen_subcommand_from $x" -l bin -a "(cargo run --bin 2>&1 | string replace -rf '^\s+' '')"
+    complete -c cargo -x -n "__fish_seen_subcommand_from $x" -l example -a "(__list_cargo_examples)"
 end
 
-for x in build run rustc test
+for x in b build r run rustc t test
     complete -c cargo -n "__fish_seen_subcommand_from $x" -l release -d 'Build artifacts in release mode, with optimizations'
 end
 
-for x in bench test
+for x in bench t test
     complete -c cargo -n "__fish_seen_subcommand_from $x" -l no-run -d 'Compile but do not run'
 end
 
-for x in bench build doc run rustc test
+for x in bench b build doc r run rustc t test
     complete -c cargo -x -n "__fish_seen_subcommand_from $x" -s j -l jobs -d 'Number of jobs to run in parallel'
     complete -c cargo -x -n "__fish_seen_subcommand_from $x" -l features -d 'Space-separated list of features to also build'
     complete -c cargo -n "__fish_seen_subcommand_from $x" -l no-default-features -d 'Do not build the `default` feature'
@@ -89,3 +95,8 @@ complete -c cargo -x -n '__fish_seen_subcommand_from update' -l precise -d 'Upda
 complete -c cargo -x -n '__fish_seen_subcommand_from yank' -l vers -d 'The version to yank or un-yank'
 complete -c cargo -n '__fish_seen_subcommand_from yank' -l undo -d 'Undo a yank, putting a version back into the index'
 
+function __fish_cargo_packages
+    find . -name Cargo.toml | string replace -rf '.*/([^/]+)/?Cargo.toml' '$1'
+end
+complete -c cargo -n '__fish_seen_subcommand_from run test build debug check' -l package \
+    -xa "(__fish_cargo_packages)"

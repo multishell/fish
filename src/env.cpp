@@ -32,6 +32,8 @@
 #include "path.h"
 #include "proc.h"
 #include "reader.h"
+#include "termsize.h"
+#include "wcstringutil.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 /// Some configuration path environment variables.
@@ -46,8 +48,8 @@
 extern char **environ;
 
 /// The character used to delimit path and non-path variables in exporting and in string expansion.
-static const wchar_t PATH_ARRAY_SEP = L':';
-static const wchar_t NONPATH_ARRAY_SEP = L' ';
+static constexpr wchar_t PATH_ARRAY_SEP = L':';
+static constexpr wchar_t NONPATH_ARRAY_SEP = L' ';
 
 bool curses_initialized = false;
 
@@ -80,37 +82,46 @@ struct electric_var_t {
     static const electric_var_t *for_name(const wcstring &name);
 };
 
-static const electric_var_t electric_variables[] = {
+// Keep sorted alphabetically
+static constexpr const electric_var_t electric_variables[] = {
+    {L"FISH_VERSION", electric_var_t::freadonly},
     {L"PWD", electric_var_t::freadonly | electric_var_t::fcomputed | electric_var_t::fexports},
     {L"SHLVL", electric_var_t::freadonly | electric_var_t::fexports},
+    {L"_", electric_var_t::freadonly},
+    {L"fish_kill_signal", electric_var_t::freadonly | electric_var_t::fcomputed},
+    {L"fish_pid", electric_var_t::freadonly},
     {L"history", electric_var_t::freadonly | electric_var_t::fcomputed},
+    {L"hostname", electric_var_t::freadonly},
     {L"pipestatus", electric_var_t::freadonly | electric_var_t::fcomputed},
     {L"status", electric_var_t::freadonly | electric_var_t::fcomputed},
-    {L"version", electric_var_t::freadonly},
-    {L"FISH_VERSION", electric_var_t::freadonly},
-    {L"fish_pid", electric_var_t::freadonly},
-    {L"hostname", electric_var_t::freadonly},
-    {L"_", electric_var_t::freadonly},
-    {L"fish_private_mode", electric_var_t::freadonly},
+    {L"status_generation", electric_var_t::freadonly | electric_var_t::fcomputed},
     {L"umask", electric_var_t::fcomputed},
+    {L"version", electric_var_t::freadonly},
 };
+ASSERT_SORT_ORDER(electric_variables, .name);
 
 const electric_var_t *electric_var_t::for_name(const wcstring &name) {
-    for (const auto &var : electric_variables) {
-        if (name == var.name) {
-            return &var;
-        }
+    constexpr auto electric_var_count = sizeof(electric_variables) / sizeof(electric_variables[0]);
+    constexpr auto begin = &electric_variables[0];
+    constexpr auto end = &electric_variables[0] + electric_var_count;
+
+    electric_var_t search{name.c_str(), 0};
+    auto binsearch = std::lower_bound(begin, end, search,
+                                      [&](const electric_var_t &v1, const electric_var_t &v2) {
+                                          return wcscmp(v1.name, v2.name) < 0;
+                                      });
+    if (binsearch != end && wcscmp(name.c_str(), binsearch->name) == 0) {
+        return &*binsearch;
     }
     return nullptr;
 }
 
 /// Check if a variable may not be set using the set command.
 static bool is_read_only(const wcstring &key) {
-    if (const auto *ev = electric_var_t::for_name(key)) {
+    if (auto ev = electric_var_t::for_name(key)) {
         return ev->readonly();
     }
-    // Hack.
-    return in_private_mode() && key == L"fish_history";
+    return false;
 }
 
 /// Return true if a variable should become a path variable by default. See #436.
@@ -247,7 +258,12 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
             key.assign(key_and_val, 0, eql);
             val.assign(key_and_val, eql + 1, wcstring::npos);
             if (!electric_var_t::for_name(key)) {
-                vars.set(key, ENV_EXPORT | ENV_GLOBAL, {val});
+                // fish_user_paths should not be exported; attempting to re-import it from
+                // a value we previously (due to user error) exported will cause impossibly
+                // difficult to debug PATH problems.
+                if (key != L"fish_user_paths") {
+                    vars.set(key, ENV_EXPORT | ENV_GLOBAL, {val});
+                }
             }
         }
     }
@@ -260,6 +276,52 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
         vars.set_one(FISH_BIN_DIR, ENV_GLOBAL, paths->bin);
     }
 
+    // Some `su`s keep $USER when changing to root.
+    // This leads to issues later on (and e.g. in prompts),
+    // so we work around it by resetting $USER.
+    // TODO: Figure out if that su actually checks if username == "root"(as the man page says) or
+    // UID == 0.
+    uid_t uid = getuid();
+    setup_user(uid == 0);
+
+    // Set up the HOME variable.
+    // Unlike $USER, it doesn't seem that `su`s pass this along
+    // if the target user is root, unless "--preserve-environment" is used.
+    // Since that is an explicit choice, we should allow it to enable e.g.
+    //     env HOME=(mktemp -d) su --preserve-environment fish
+    //
+    // Note: This needs to be *before* path_get_*, because that uses $HOME!
+    if (vars.get(L"HOME").missing_or_empty()) {
+        auto user_var = vars.get(L"USER");
+        if (!user_var.missing_or_empty()) {
+            std::string unam_narrow = wcs2string(user_var->as_string());
+            struct passwd userinfo;
+            struct passwd *result;
+            char buf[8192];
+            int retval = getpwnam_r(unam_narrow.c_str(), &userinfo, buf, sizeof(buf), &result);
+            if (retval || !result) {
+                // Maybe USER is set but it's bogus. Reset USER from the db and try again.
+                setup_user(true);
+                user_var = vars.get(L"USER");
+                if (!user_var.missing_or_empty()) {
+                    unam_narrow = wcs2string(user_var->as_string());
+                    retval = getpwnam_r(unam_narrow.c_str(), &userinfo, buf, sizeof(buf), &result);
+                }
+            }
+            if (!retval && result && userinfo.pw_dir) {
+                const wcstring dir = str2wcstring(userinfo.pw_dir);
+                vars.set_one(L"HOME", ENV_GLOBAL | ENV_EXPORT, dir);
+            } else {
+                // We cannot get $HOME. This triggers warnings for history and config.fish already,
+                // so it isn't necessary to warn here as well.
+                vars.set_empty(L"HOME", ENV_GLOBAL | ENV_EXPORT);
+            }
+        } else {
+            // If $USER is empty as well (which we tried to set above), we can't get $HOME.
+            vars.set_empty(L"HOME", ENV_GLOBAL | ENV_EXPORT);
+        }
+    }
+
     wcstring user_config_dir;
     path_get_config(user_config_dir);
     vars.set_one(FISH_CONFIG_DIR, ENV_GLOBAL, user_config_dir);
@@ -268,16 +330,8 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
     path_get_data(user_data_dir);
     vars.set_one(FISH_USER_DATA_DIR, ENV_GLOBAL, user_data_dir);
 
-    // Set up the USER and PATH variables
+    // Set up a default PATH
     setup_path();
-
-    // Some `su`s keep $USER when changing to root.
-    // This leads to issues later on (and e.g. in prompts),
-    // so we work around it by resetting $USER.
-    // TODO: Figure out if that su actually checks if username == "root"(as the man page says) or
-    // UID == 0.
-    uid_t uid = getuid();
-    setup_user(uid == 0);
 
     // Set up $IFS - this used to be in share/config.fish, but really breaks if it isn't done.
     vars.set_one(L"IFS", ENV_GLOBAL, L"\n \t");
@@ -308,55 +362,27 @@ void env_init(const struct config_paths_t *paths /* or NULL */) {
     }
     vars.set_one(L"SHLVL", ENV_GLOBAL | ENV_EXPORT, nshlvl_str);
 
-    // Set up the HOME variable.
-    // Unlike $USER, it doesn't seem that `su`s pass this along
-    // if the target user is root, unless "--preserve-environment" is used.
-    // Since that is an explicit choice, we should allow it to enable e.g.
-    //     env HOME=(mktemp -d) su --preserve-environment fish
-    if (vars.get(L"HOME").missing_or_empty()) {
-        auto user_var = vars.get(L"USER");
-        if (!user_var.missing_or_empty()) {
-            char *unam_narrow = wcs2str(user_var->as_string());
-            struct passwd userinfo;
-            struct passwd *result;
-            char buf[8192];
-            int retval = getpwnam_r(unam_narrow, &userinfo, buf, sizeof(buf), &result);
-            if (retval || !result) {
-                // Maybe USER is set but it's bogus. Reset USER from the db and try again.
-                setup_user(true);
-                user_var = vars.get(L"USER");
-                if (!user_var.missing_or_empty()) {
-                    unam_narrow = wcs2str(user_var->as_string());
-                    retval = getpwnam_r(unam_narrow, &userinfo, buf, sizeof(buf), &result);
-                }
-            }
-            if (!retval && result && userinfo.pw_dir) {
-                const wcstring dir = str2wcstring(userinfo.pw_dir);
-                vars.set_one(L"HOME", ENV_GLOBAL | ENV_EXPORT, dir);
-            } else {
-                // We cannot get $HOME. This triggers warnings for history and config.fish already,
-                // so it isn't necessary to warn here as well.
-                vars.set_empty(L"HOME", ENV_GLOBAL | ENV_EXPORT);
-            }
-            free(unam_narrow);
-        } else {
-            // If $USER is empty as well (which we tried to set above), we can't get $HOME.
-            vars.set_empty(L"HOME", ENV_GLOBAL | ENV_EXPORT);
-        }
-    }
-
     // initialize the PWD variable if necessary
     // Note we may inherit a virtual PWD that doesn't match what getcwd would return; respect that
     // if and only if it matches getcwd (#5647). Note we treat PWD as read-only so it was not set in
     // vars.
+    //
+    // Also reject all paths that don't start with "/", this includes windows paths like "F:\foo".
+    // (see #7636)
     const char *incoming_pwd_cstr = getenv("PWD");
     wcstring incoming_pwd = incoming_pwd_cstr ? str2wcstring(incoming_pwd_cstr) : wcstring{};
-    if (!incoming_pwd.empty() && paths_are_same_file(incoming_pwd, L".")) {
+    if (!incoming_pwd.empty() && incoming_pwd.front() == L'/' &&  paths_are_same_file(incoming_pwd, L".")) {
         vars.set_one(L"PWD", ENV_EXPORT | ENV_GLOBAL, incoming_pwd);
     } else {
         vars.set_pwd_from_getcwd();
     }
-    vars.set_termsize();  // initialize the terminal size variables
+
+    // Initialize termsize variables.
+    auto termsize = termsize_container_t::shared().initialize(vars);
+    if (vars.get(L"COLUMNS").missing_or_empty())
+        vars.set_one(L"COLUMNS", ENV_GLOBAL, to_string(termsize.width));
+    if (vars.get(L"LINES").missing_or_empty())
+        vars.set_one(L"LINES", ENV_GLOBAL, to_string(termsize.height));
 
     // Set fish_bind_mode to "default".
     vars.set_one(FISH_BIND_MODE_VAR, ENV_GLOBAL, DEFAULT_BIND_MODE);
@@ -621,7 +647,9 @@ std::shared_ptr<const null_terminated_array_t<char>> env_scoped_impl_t::create_e
             assert(var && "Variable should be present in uvars");
             // Note that std::map::insert does NOT overwrite a value already in the map,
             // which we depend on here.
-            vals.insert(std::make_pair(key, *var));
+            // Note: Using std::move around make_pair prevents the compiler from implementing
+            // copy elision.
+            vals.insert(std::make_pair(key, std::move(*var)));
         }
     }
 
@@ -667,9 +695,9 @@ maybe_t<env_var_t> env_scoped_impl_t::try_get_computed(const wcstring &key) cons
             return none();
         }
 
-        history_t *history = reader_get_history();
+        std::shared_ptr<history_t> history = reader_get_history();
         if (!history) {
-            history = &history_t::history_with_name(history_session_id(*this));
+            history = history_t::with_name(history_session_id(*this));
         }
         wcstring_list_t result;
         if (history) history->get_history(result);
@@ -685,6 +713,12 @@ maybe_t<env_var_t> env_scoped_impl_t::try_get_computed(const wcstring &key) cons
     } else if (key == L"status") {
         const auto &js = perproc_data().statuses;
         return env_var_t(L"status", to_string(js.status));
+    } else if (key == L"status_generation") {
+        auto status_generation = reader_status_count();
+        return env_var_t(L"status_generation", to_string(status_generation));
+    } else if (key == L"fish_kill_signal") {
+        const auto &js = perproc_data().statuses;
+        return env_var_t(L"fish_kill_signal", to_string(js.kill_signal));
     } else if (key == L"umask") {
         // note umask() is an absurd API: you call it to set the value and it returns the old
         // value. Thus we have to call it twice, to reset the value. The env_lock protects
@@ -730,7 +764,12 @@ maybe_t<env_var_t> env_scoped_impl_t::try_get_universal(const wcstring &key) con
 maybe_t<env_var_t> env_scoped_impl_t::get(const wcstring &key, env_mode_flags_t mode) const {
     const query_t query(mode);
 
-    maybe_t<env_var_t> result = try_get_computed(key);
+    maybe_t<env_var_t> result;
+    // Computed variables are effectively global and can't be shadowed.
+    if (query.global) {
+        result = try_get_computed(key);
+    }
+
     if (!result && query.local) {
         result = try_get_local(key);
     }
@@ -1184,6 +1223,11 @@ mod_result_t env_stack_impl_t::remove(const wcstring &key, int mode) {
 }
 
 bool env_stack_t::universal_barrier() {
+    // Only perform universal barriers for the principal env stack.
+    // This means that changes from other fish processes will only be visible when the "main thread
+    // runs."
+    if (!is_principal()) return false;
+
     ASSERT_IS_MAIN_THREAD();
     if (!uvars()) return false;
 
@@ -1205,18 +1249,6 @@ int env_stack_t::get_last_status() const { return acquire_impl()->perproc_data()
 
 void env_stack_t::set_last_statuses(statuses_t s) {
     acquire_impl()->perproc_data().statuses = std::move(s);
-}
-
-/// If they don't already exist initialize the `COLUMNS` and `LINES` env vars to reasonable
-/// defaults. They will be updated later by the `get_current_winsize()` function if they need to be
-/// adjusted.
-void env_stack_t::set_termsize() {
-    auto &vars = env_stack_t::globals();
-    auto cols = get(L"COLUMNS");
-    if (cols.missing_or_empty()) vars.set_one(L"COLUMNS", ENV_GLOBAL, DFLT_TERM_COL_STR);
-
-    auto rows = get(L"LINES");
-    if (rows.missing_or_empty()) vars.set_one(L"LINES", ENV_GLOBAL, DFLT_TERM_ROW_STR);
 }
 
 /// Update the PWD variable directory from the result of getcwd().
@@ -1400,8 +1432,7 @@ wcstring env_get_runtime_path() {
 
     // Check that the path is actually usable. Technically this is guaranteed by the fdo spec but in
     // practice it is not always the case: see #1828 and #2222.
-    int mode = R_OK | W_OK | X_OK;
-    if (dir != nullptr && access(dir, mode) == 0 && check_runtime_path(dir) == 0) {
+    if (dir != nullptr && check_runtime_path(dir) == 0) {
         result = str2wcstring(dir);
     } else {
         // Don't rely on $USER being set, as setup_user() has not yet been called.

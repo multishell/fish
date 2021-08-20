@@ -18,7 +18,7 @@ function __fish_print_magento_modules -d "Lists all Magento modules"
     set -l modules (magento module:status)
 
     for i in $test
-        if test -n "$i" -a "$i" != "None"
+        if test -n "$i" -a "$i" != None
             echo $i
         end
     end
@@ -180,7 +180,25 @@ function __fish_print_magento_list_formats -d "Shows all available output format
 end
 
 function __fish_print_magento_commands_list -d "Lists magento commands"
-    set -l commands help list admin:user:create admin:user:unlock app:config:dump cache:clean cache:disable cache:enable cache:flush cache:status catalog:images:resize catalog:product:attributes:cleanup cron:run customer:hash:upgrade deploy:mode:set deploy:mode:show dev:source-theme:deploy dev:tests:run dev:urn-catalog:generate dev:xml:convert i18n:collect-phrases i18n:pack i18n:uninstall indexer:info indexer:reindex indexer:reset indexer:set-mode indexer:show-mode indexer:status info:adminuri info:backups:list info:currency:list info:dependencies:show-framework info:dependencies:show-modules info:dependencies:show-modules-circular info:language:list info:timezone:list maintenance:allow-ips maintenance:disable maintenance:enable maintenance:status module:disable module:enable module:status module:uninstall sampledata:deploy sampledata:remove sampledata:reset setup:backup setup:config:set setup:cron:run setup:db-data:upgrade setup:db-schema:upgrade setup:db:status setup:di:compile setup:install setup:performance:generate-fixtures setup:rollback setup:static-content:deploy setup:store-config:set setup:uninstall setup:upgrade theme:uninstall
+    set -l commands help list admin:user:create admin:user:unlock \
+        app:config:dump cache:clean cache:disable cache:enable cache:flush \
+        cache:status catalog:images:resize catalog:product:attributes:cleanup \
+        cron:run customer:hash:upgrade deploy:mode:set deploy:mode:show \
+        dev:source-theme:deploy dev:tests:run dev:urn-catalog:generate \
+        dev:xml:convert i18n:collect-phrases i18n:pack i18n:uninstall \
+        indexer:info indexer:reindex indexer:reset indexer:set-mode \
+        indexer:show-mode indexer:status info:adminuri info:backups:list \
+        info:currency:list info:dependencies:show-framework \
+        info:dependencies:show-modules info:dependencies:show-modules-circular \
+        info:language:list info:timezone:list maintenance:allow-ips \
+        maintenance:disable maintenance:enable maintenance:status module:disable \
+        module:enable module:status module:uninstall sampledata:deploy \
+        sampledata:remove sampledata:reset setup:backup setup:config:set \
+        setup:cron:run setup:db-data:upgrade setup:db-schema:upgrade \
+        setup:db:status setup:di:compile setup:install \
+        setup:performance:generate-fixtures setup:rollback \
+        setup:static-content:deploy setup:store-config:set \
+        setup:uninstall setup:upgrade theme:uninstall
     for i in $commands
         echo $i
     end
@@ -215,7 +233,7 @@ end
 #########################################################
 
 function __fish_magento_register_command -d "Adds a completion for a specific command"
-    complete -c magento -n "__fish_magento_not_in_command" -a $argv[1] $argv[2..-1]
+    complete -c magento -n __fish_magento_not_in_command -a $argv[1] $argv[2..-1]
 end
 
 #########################################################
@@ -346,11 +364,11 @@ __fish_magento_register_command_option list -f -l format -a "(__fish_print_magen
 #
 # admin:user:create
 #
-__fish_magento_register_command_option admin:user:create -n "__fish_magento_parameter_missing admin-user" -f -a "--admin-user" -d "(Required) Admin user"
-__fish_magento_register_command_option admin:user:create -n "__fish_magento_parameter_missing admin-password" -f -a "--admin-password" -d "(Required) Admin password"
-__fish_magento_register_command_option admin:user:create -n "__fish_magento_parameter_missing admin-email" -f -a "--admin-email" -d "(Required) Admin email"
-__fish_magento_register_command_option admin:user:create -n "__fish_magento_parameter_missing admin-firstname" -f -a "--admin-firstname" -d "(Required) Admin first name"
-__fish_magento_register_command_option admin:user:create -n "__fish_magento_parameter_missing admin-lastname" -f -a "--admin-lastname" -d "(Required) Admin last name"
+__fish_magento_register_command_option admin:user:create -n "__fish_magento_parameter_missing admin-user" -f -a --admin-user -d "(Required) Admin user"
+__fish_magento_register_command_option admin:user:create -n "__fish_magento_parameter_missing admin-password" -f -a --admin-password -d "(Required) Admin password"
+__fish_magento_register_command_option admin:user:create -n "__fish_magento_parameter_missing admin-email" -f -a --admin-email -d "(Required) Admin email"
+__fish_magento_register_command_option admin:user:create -n "__fish_magento_parameter_missing admin-firstname" -f -a --admin-firstname -d "(Required) Admin first name"
+__fish_magento_register_command_option admin:user:create -n "__fish_magento_parameter_missing admin-lastname" -f -a --admin-lastname -d "(Required) Admin last name"
 __fish_magento_register_command_option admin:user:create -f -r -l admin-user -d "(Required) Admin user"
 __fish_magento_register_command_option admin:user:create -f -r -l admin-password -d "(Required) Admin password"
 __fish_magento_register_command_option admin:user:create -f -r -l admin-email -d "(Required) Admin email"
@@ -524,11 +542,11 @@ __fish_magento_register_command_option setup:config:set -f -l http-cache-hosts -
 #
 # setup:install
 #
-__fish_magento_register_command_option setup:install -n "__fish_magento_parameter_missing admin-user" -f -a "--admin-user" -d "(Required) Admin user"
-__fish_magento_register_command_option setup:install -n "__fish_magento_parameter_missing admin-password" -f -a "--admin-password" -d "(Required) Admin password"
-__fish_magento_register_command_option setup:install -n "__fish_magento_parameter_missing admin-email" -f -a "--admin-email" -d "(Required) Admin email"
-__fish_magento_register_command_option setup:install -n "__fish_magento_parameter_missing admin-firstname" -f -a "--admin-firstname" -d "(Required) Admin first name"
-__fish_magento_register_command_option setup:install -n "__fish_magento_parameter_missing admin-lastname" -f -a "--admin-lastname" -d "(Required) Admin last name"
+__fish_magento_register_command_option setup:install -n "__fish_magento_parameter_missing admin-user" -f -a --admin-user -d "(Required) Admin user"
+__fish_magento_register_command_option setup:install -n "__fish_magento_parameter_missing admin-password" -f -a --admin-password -d "(Required) Admin password"
+__fish_magento_register_command_option setup:install -n "__fish_magento_parameter_missing admin-email" -f -a --admin-email -d "(Required) Admin email"
+__fish_magento_register_command_option setup:install -n "__fish_magento_parameter_missing admin-firstname" -f -a --admin-firstname -d "(Required) Admin first name"
+__fish_magento_register_command_option setup:install -n "__fish_magento_parameter_missing admin-lastname" -f -a --admin-lastname -d "(Required) Admin last name"
 __fish_magento_register_command_option setup:install -f -l backend-frontname -d "Backend frontname (will be autogenerated if missing)"
 __fish_magento_register_command_option setup:install -f -l key -d "Encryption key"
 __fish_magento_register_command_option setup:install -f -l session-save -d "Session save handler"

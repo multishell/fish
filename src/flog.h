@@ -11,7 +11,6 @@
 #include <utility>
 
 #include "global_safety.h"
-#include "wcstringutil.h"
 
 using wcstring = std::wstring;
 using wcstring_list_t = std::vector<wcstring>;
@@ -51,11 +50,22 @@ class category_list_t {
 
     category_t debug{L"debug", L"Debugging aid (on by default)", true};
 
+    category_t warning{L"warning", L"Warnings (on by default)", true};
+    category_t warning_path{
+        L"warning-path", L"Warnings about unusable paths for config/history (on by default)", true};
+
+    category_t config{L"config", L"Finding and reading configuration"};
+
+    category_t event{L"event", L"Firing events"};
+
     category_t exec_job_status{L"exec-job-status", L"Jobs changing status"};
 
     category_t exec_job_exec{L"exec-job-exec", L"Jobs being executed"};
 
     category_t exec_fork{L"exec-fork", L"Calls to fork()"};
+
+    category_t output_invalid{L"output-invalid", L"Trying to print invalid output"};
+    category_t ast_construction{L"ast-construction", L"Parsing fish AST"};
 
     category_t proc_job_run{L"proc-job-run", L"Jobs getting started or continued"};
 
@@ -67,19 +77,35 @@ class category_list_t {
                                   L"Reaping internal (non-forked) processes"};
 
     category_t proc_reap_external{L"proc-reap-external", L"Reaping external (forked) processes"};
+    category_t proc_pgroup{L"proc-pgroup", L"Process groups"};
 
     category_t env_locale{L"env-locale", L"Changes to locale variables"};
 
     category_t env_export{L"env-export", L"Changes to exported variables"};
 
+    category_t env_dispatch{L"env-dispatch", L"Reacting to variables"};
+
+    category_t uvar_file{L"uvar-file", L"Writing/reading the universal variable store"};
+
     category_t topic_monitor{L"topic-monitor", L"Internal details of the topic monitor"};
     category_t char_encoding{L"char-encoding", L"Character encoding issues"};
 
     category_t history{L"history", L"Command history events"};
+    category_t history_file{L"history-file", L"Reading/Writing the history file"};
 
     category_t profile_history{L"profile-history", L"History performance measurements"};
 
     category_t iothread{L"iothread", L"Background IO thread events"};
+    category_t fd_monitor{L"fd-monitor", L"FD monitor events"};
+
+    category_t term_support{L"term-support", L"Terminal feature detection"};
+
+    category_t reader{L"reader", L"The interactive reader/input system"};
+    category_t reader_render{L"reader-render", L"Rendering the command line"};
+    category_t complete{L"complete", L"The completion system"};
+    category_t path{L"path", L"Searching/using paths"};
+
+    category_t screen{L"screen", L"Screen repaints"};
 };
 
 /// The class responsible for logging.
@@ -91,14 +117,20 @@ class logger_t {
     void log1(const char *);
     void log1(wchar_t);
     void log1(char);
+    void log1(int64_t);
+    void log1(uint64_t);
 
     void log1(const wcstring &s) { log1(s.c_str()); }
     void log1(const std::string &s) { log1(s.c_str()); }
 
     template <typename T,
               typename Enabler = typename std::enable_if<std::is_integral<T>::value>::type>
-    void log1(const T &v) {
-        log1(to_string(v));
+    void log1(T v) {
+        if (std::is_signed<T>::value) {
+            log1(static_cast<int64_t>(v));
+        } else {
+            log1(static_cast<uint64_t>(v));
+        }
     }
 
     template <typename T>
@@ -107,7 +139,7 @@ class logger_t {
     }
 
     template <typename T, typename... Ts>
-    void log_args_impl(const T &arg, const Ts &... rest) {
+    void log_args_impl(const T &arg, const Ts &...rest) {
         log1(arg);
         log1(' ');
         log_args_impl<Ts...>(rest...);
@@ -119,7 +151,7 @@ class logger_t {
     logger_t();
 
     template <typename... Args>
-    void log_args(const category_t &cat, const Args &... args) {
+    void log_args(const category_t &cat, const Args &...args) {
         log1(cat.name);
         log1(": ");
         log_args_impl(args...);
@@ -152,11 +184,14 @@ std::vector<const flog_details::category_t *> get_flog_categories();
 void log_extra_to_flog_file(const wcstring &s);
 
 /// Output to the fish log a sequence of arguments, separated by spaces, and ending with a newline.
+/// We save and restore errno because we don't want this to affect other code.
 #define FLOG(wht, ...)                                                        \
     do {                                                                      \
         if (flog_details::category_list_t::g_instance->wht.enabled) {         \
+            auto old_errno = errno;                                           \
             flog_details::g_logger.acquire()->log_args(                       \
                 flog_details::category_list_t::g_instance->wht, __VA_ARGS__); \
+            errno = old_errno;                                                \
         }                                                                     \
     } while (0)
 
@@ -164,9 +199,13 @@ void log_extra_to_flog_file(const wcstring &s);
 #define FLOGF(wht, ...)                                                       \
     do {                                                                      \
         if (flog_details::category_list_t::g_instance->wht.enabled) {         \
+            auto old_errno = errno;                                           \
             flog_details::g_logger.acquire()->log_fmt(                        \
                 flog_details::category_list_t::g_instance->wht, __VA_ARGS__); \
+            errno = old_errno;                                                \
         }                                                                     \
     } while (0)
 
 #endif
+
+#define should_flog(wht) (flog_details::category_list_t::g_instance->wht.enabled)

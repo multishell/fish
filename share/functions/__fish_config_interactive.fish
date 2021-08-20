@@ -19,20 +19,6 @@ function __fish_config_interactive -d "Initializations that should be performed 
     set -g __fish_config_interactive_done
     set -g __fish_active_key_bindings
 
-    if not set -q fish_greeting
-        set -l line1 (_ 'Welcome to fish, the friendly interactive shell')
-        set -l line2 ''
-        if test $__fish_initialized -lt 2300
-            set line2 \n(_ 'Type `help` for instructions on how to use fish')
-        end
-        set -U fish_greeting "$line1$line2"
-    end
-
-    if set -q fish_private_mode; and string length -q -- $fish_greeting
-        set -l line (_ "fish is running in private mode, history will not be persisted.")
-        set -g fish_greeting $fish_greeting.\n$line
-    end
-
     # usage: __init_uvar VARIABLE VALUES...
     function __init_uvar -d "Sets a universal variable if it's not already set"
         if not set --query $argv[1]
@@ -65,9 +51,6 @@ function __fish_config_interactive -d "Initializations that should be performed 
         __init_uvar fish_color_cwd green
         __init_uvar fish_color_cwd_root red
 
-        # Background color for matching quotes and parenthesis
-        __init_uvar fish_color_match --background=brblue
-
         # Background color for search matches
         __init_uvar fish_color_search_match bryellow --background=brblack
 
@@ -95,7 +78,10 @@ function __fish_config_interactive -d "Initializations that should be performed 
     #
     # Don't do this if we're being invoked as part of running unit tests.
     if not set -q FISH_UNIT_TESTS_RUNNING
-        if not test -d $__fish_user_data_dir/generated_completions
+        # Check if our manpage completion script exists because some distros split it out.
+        # (#7183)
+        set -l script $__fish_data_dir/tools/create_manpage_completions.py
+        if not test -d $__fish_user_data_dir/generated_completions; and test -e "$script"
             # Generating completions from man pages needs python (see issue #3588).
 
             # We cannot simply do `fish_update_completions &` because it is a function.
@@ -104,32 +90,23 @@ function __fish_config_interactive -d "Initializations that should be performed 
             # Hence we'll call python directly.
             # c_m_p.py should work with any python version.
             set -l update_args -B $__fish_data_dir/tools/create_manpage_completions.py --manpath --cleanup-in '~/.config/fish/completions' --cleanup-in '~/.config/fish/generated_completions'
-            for py in python{3,2,}
-                if command -sq $py
-                    set -l c $py $update_args
-                    # Run python directly in the background and swallow all output
-                    $c (: fish_update_completions: generating completions from man pages) >/dev/null 2>&1 &
-                    # Then disown the job so that it continues to run in case of an early exit (#6269)
-                    disown 2>&1 >/dev/null
-                    break
-                end
+            if set -l python (__fish_anypython)
+                # Run python directly in the background and swallow all output
+                $python $update_args >/dev/null 2>&1 &
+                # Then disown the job so that it continues to run in case of an early exit (#6269)
+                disown >/dev/null 2>&1
             end
         end
     end
 
     #
     # Print a greeting.
-    # fish_greeting can be a function (preferred) or a variable.
+    # The default just prints a variable of the same name.
     #
+    # NOTE: This status check is necessary to not print the greeting when `read`ing in scripts. See #7080.
     if status --is-interactive
-        if functions -q fish_greeting
-            fish_greeting
-        else
-            # The greeting used to be skipped when fish_greeting was empty (not just undefined)
-            # Keep it that way to not print superfluous newlines on old configuration
-            test -n "$fish_greeting"
-            and echo $fish_greeting
-        end
+        and functions -q fish_greeting
+        fish_greeting
     end
 
     #
@@ -138,12 +115,11 @@ function __fish_config_interactive -d "Initializations that should be performed 
     # autoloaded.
     #
     set -l varargs --on-variable fish_key_bindings
-    for var in user host cwd{,_root} status
+    for var in user host{,_remote} cwd{,_root} status error
         set -a varargs --on-variable fish_color_$var
     end
     function __fish_repaint $varargs -d "Event handler, repaints the prompt when fish_color_cwd* changes"
         if status --is-interactive
-            set -e __fish_prompt_cwd
             commandline -f repaint 2>/dev/null
         end
     end
@@ -171,7 +147,7 @@ function __fish_config_interactive -d "Initializations that should be performed 
     #
     # Only a few builtins take filenames; initialize the rest with no file completions
     #
-    complete -c(builtin -n | string match -rv '(source|cd|exec|realpath|set|\\[|test|for)') --no-files
+    complete -c(builtin -n | string match -rv '(\.|:|source|cd|contains|count|echo|exec|printf|random|realpath|set|\\[|test|for)') --no-files
 
     # Reload key bindings when binding variable change
     function __fish_reload_key_bindings -d "Reload key bindings when binding variable change" --on-variable fish_key_bindings
@@ -227,10 +203,12 @@ function __fish_config_interactive -d "Initializations that should be performed 
     # Load key bindings
     __fish_reload_key_bindings
 
+    # Enable bracketed paste exception when running unit tests so we don't have to add
+    # the sequences to bind.expect
     if not set -q FISH_UNIT_TESTS_RUNNING
         # Enable bracketed paste before every prompt (see __fish_shared_bindings for the bindings).
-        # Disable it for unit tests so we don't have to add the sequences to bind.expect
-        function __fish_enable_bracketed_paste --on-event fish_prompt
+        # Enable bracketed paste when the read builtin is used.
+        function __fish_enable_bracketed_paste --on-event fish_prompt --on-event fish_read
             printf "\e[?2004h"
         end
 
@@ -263,13 +241,37 @@ function __fish_config_interactive -d "Initializations that should be performed 
         # __fish_enable_focus
     end
 
+    # Detect whether the terminal reflows on its own
+    # If it does we shouldn't do it.
+    # Allow $fish_handle_reflow to override it.
+    if not set -q fish_handle_reflow
+        # VTE reflows the text itself, so us doing it inevitably races against it.
+        # Guidance from the VTE developers is to let them repaint.
+        if set -q VTE_VERSION
+            # Same for alacritty
+            or string match -q -- 'alacritty*' $TERM
+            set -g fish_handle_reflow 0
+        else if set -q KONSOLE_VERSION
+            and test "$KONSOLE_VERSION" -ge 210400 2>/dev/null
+            # Konsole since version 21.04(.00)
+            # Note that this is optional, but since we have no way of detecting it
+            # we go with the default, which is true.
+            set -g fish_handle_reflow 0
+        else
+            set -g fish_handle_reflow 1
+        end
+    end
+
     function __fish_winch_handler --on-signal WINCH -d "Repaint screen when window changes size"
-        commandline -f repaint >/dev/null 2>/dev/null
+        if test "$fish_handle_reflow" = 1 2>/dev/null
+            commandline -f repaint >/dev/null 2>/dev/null
+        end
     end
 
     # Notify terminals when $PWD changes (issue #906).
-    # VTE based terminals, Terminal.app, and iTerm.app (TODO) support this.
-    if test 0"$VTE_VERSION" -ge 3405 -o "$TERM_PROGRAM" = "Apple_Terminal" -a (string match -r '\d+' 0"$TERM_PROGRAM_VERSION") -ge 309
+    # VTE based terminals, Terminal.app, iTerm.app (TODO), and foot support this.
+    if not set -q FISH_UNIT_TESTS_RUNNING
+        and test 0"$VTE_VERSION" -ge 3405 -o "$TERM_PROGRAM" = Apple_Terminal -a (string match -r '\d+' 0"$TERM_PROGRAM_VERSION") -ge 309 -o "$TERM_PROGRAM" = WezTerm -o "$TERM" = foot
         function __update_cwd_osc --on-variable PWD --description 'Notify capable terminals when $PWD changes'
             if status --is-command-substitution || set -q INSIDE_EMACS
                 return
@@ -277,65 +279,6 @@ function __fish_config_interactive -d "Initializations that should be performed 
             printf \e\]7\;file://%s%s\a $hostname (string escape --style=url $PWD)
         end
         __update_cwd_osc # Run once because we might have already inherited a PWD from an old tab
-    end
-
-    ### Command-not-found handlers
-    # This can be overridden by defining a new __fish_command_not_found_handler function
-    if not type -q __fish_command_not_found_handler
-        # Read the OS/Distro from /etc/os-release.
-        # This has a "ID=" line that defines the exact distribution,
-        # and an "ID_LIKE=" line that defines what it is derived from or otherwise like.
-        # For our purposes, we use both.
-        set -l os
-        if test -r /etc/os-release
-            set os (string match -r '^ID(?:_LIKE)?\s*=.*' < /etc/os-release | \
-            string replace -r '^ID(?:_LIKE)?\s*=(.*)' '$1' | string trim -c '\'"' | string split " ")
-        end
-
-        # First check if we are on OpenSUSE since SUSE's handler has no options
-        # but the same name and path as Ubuntu's.
-        if contains -- suse $os || contains -- sles $os && type -q command-not-found
-            function __fish_command_not_found_handler --on-event fish_command_not_found
-                /usr/bin/command-not-found $argv[1]
-            end
-            # Check for Fedora's handler
-        else if test -f /usr/libexec/pk-command-not-found
-            function __fish_command_not_found_handler --on-event fish_command_not_found
-                /usr/libexec/pk-command-not-found $argv[1]
-            end
-            # Check in /usr/lib, this is where modern Ubuntus place this command
-        else if test -f /usr/lib/command-not-found
-            function __fish_command_not_found_handler --on-event fish_command_not_found
-                /usr/lib/command-not-found -- $argv[1]
-            end
-            # Check for NixOS handler
-        else if test -f /run/current-system/sw/bin/command-not-found
-            function __fish_command_not_found_handler --on-event fish_command_not_found
-                /run/current-system/sw/bin/command-not-found $argv
-            end
-            # Ubuntu Feisty places this command in the regular path instead
-        else if type -q command-not-found
-            function __fish_command_not_found_handler --on-event fish_command_not_found
-                command-not-found -- $argv[1]
-            end
-            # pkgfile is an optional, but official, package on Arch Linux
-            # it ships with example handlers for bash and zsh, so we'll follow that format
-        else if type -p -q pkgfile
-            function __fish_command_not_found_handler --on-event fish_command_not_found
-                set -l __packages (pkgfile --binaries --verbose -- $argv[1] 2>/dev/null)
-                if test $status -eq 0
-                    printf "%s may be found in the following packages:\n" "$argv[1]"
-                    printf "  %s\n" $__packages
-                else
-                    __fish_default_command_not_found_handler $argv[1]
-                end
-            end
-            # Use standard fish command not found handler otherwise
-        else
-            function __fish_command_not_found_handler --on-event fish_command_not_found
-                __fish_default_command_not_found_handler $argv[1]
-            end
-        end
     end
 
     # Bump this whenever some code below needs to run once when upgrading to a new version.

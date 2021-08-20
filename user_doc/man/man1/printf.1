@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "PRINTF" "1" "Apr 29, 2020" "3.1" "fish-shell"
+.TH "PRINTF" "1" "Mar 01, 2021" "3.2" "fish-shell"
 .SH NAME
 printf \- display text according to a format string
 .
@@ -43,26 +43,27 @@ printf FORMAT [ARGUMENT ...]
 .UNINDENT
 .SH DESCRIPTION
 .sp
-printf formats the string FORMAT with ARGUMENT, and displays the result.
+printf uses the format string FORMAT to print the ARGUMENT arguments. This means that it takes format specifiers in the format string and replaces each with an argument.
 .sp
-The string FORMAT should contain format specifiers, each of which are replaced with successive arguments according to the specifier. Specifiers are detailed below, and are taken from the C library function \fBprintf(3)\fP\&.
+The \fBformat\fP argument is re\-used as many times as necessary to convert all of the given arguments. So \fBprintf %s\en flounder catfish clownfish shark\fP will print four lines.
 .sp
 Unlike echo, \fBprintf\fP does not append a new line unless it is specified as part of the string.
 .sp
-Valid format specifiers are:
+It doesn\(aqt support any options, so there is no need for a \fB\-\-\fP separator, which makes it easier to use for arbitrary input than \fBecho\fP\&. [1]
+.SH FORMAT SPECIFIERS
+.sp
+Valid format specifiers are taken from the C library function \fBprintf(3)\fP:
 .INDENT 0.0
 .IP \(bu 2
-\fB%d\fP: Argument will be used as decimal integer (signed or unsigned)
-.IP \(bu 2
-\fB%i\fP: Argument will be used as a signed integer
+\fB%d\fP or \fB%i\fP: Argument will be used as decimal integer (signed or unsigned)
 .IP \(bu 2
 \fB%o\fP: An octal unsigned integer
 .IP \(bu 2
-\fB%u\fP: An unsigned decimal integer
+\fB%u\fP: An unsigned decimal integer \- this means negative numbers will wrap around
 .IP \(bu 2
 \fB%x\fP or \fB%X\fP: An unsigned hexadecimal integer
 .IP \(bu 2
-\fB%f\fP, \fB%g\fP or \fB%G\fP: A floating\-point number
+\fB%f\fP, \fB%g\fP or \fB%G\fP: A floating\-point number. \fB%f\fP defaults to 6 places after the decimal point (which is locale\-dependent \- e.g. in de_DE it will be a \fB,\fP). \fB%g\fP and \fB%G\fP will trim trailing zeroes and switch to scientific notation (like \fB%e\fP) if the numbers get small or large enough.
 .IP \(bu 2
 \fB%e\fP or \fB%E\fP: A floating\-point number in scientific (XXXeYY) notation
 .IP \(bu 2
@@ -73,35 +74,58 @@ Valid format specifiers are:
 .sp
 \fB%%\fP signifies a literal "%".
 .sp
-Note that conversion may fail, e.g. "102.234" will not losslessly convert to an integer, causing printf to print an error.
+Conversion can fail, e.g. "102.234" can\(aqt losslessly convert to an integer, causing printf to print an error. If you are okay with losing information, silence errors with \fB2>/dev/null\fP\&.
+.sp
+A number between the \fB%\fP and the format letter specifies the width. The result will be left\-padded with spaces.
+.SH BACKSLASH ESCAPES
 .sp
 printf also knows a number of backslash escapes:
-\- \fB\e"\fP double quote
-\- \fB\e\e\fP backslash
-\- \fB\ea\fP alert (bell)
-\- \fB\eb\fP backspace
-\- \fB\ec\fP produce no further output
-\- \fB\ee\fP escape
-\- \fB\ef\fP form feed
-\- \fB\en\fP new line
-\- \fB\er\fP carriage return
-\- \fB\et\fP horizontal tab
-\- \fB\ev\fP vertical tab
-\- \fB\eooo\fP octal number (ooo is 1 to 3 digits)
-\- \fB\exhh\fP hexadecimal number (hhh is 1 to 2 digits)
-\- \fB\euhhhh\fP 16\-bit Unicode character (hhhh is 4 digits)
-\- \fB\eUhhhhhhhh\fP 32\-bit Unicode character (hhhhhhhh is 8 digits)
+.INDENT 0.0
+.IP \(bu 2
+\fB\e"\fP double quote
+.IP \(bu 2
+\fB\e\e\fP backslash
+.IP \(bu 2
+\fB\ea\fP alert (bell)
+.IP \(bu 2
+\fB\eb\fP backspace
+.IP \(bu 2
+\fB\ec\fP produce no further output
+.IP \(bu 2
+\fB\ee\fP escape
+.IP \(bu 2
+\fB\ef\fP form feed
+.IP \(bu 2
+\fB\en\fP new line
+.IP \(bu 2
+\fB\er\fP carriage return
+.IP \(bu 2
+\fB\et\fP horizontal tab
+.IP \(bu 2
+\fB\ev\fP vertical tab
+.IP \(bu 2
+\fB\eooo\fP octal number (ooo is 1 to 3 digits)
+.IP \(bu 2
+\fB\exhh\fP hexadecimal number (hhh is 1 to 2 digits)
+.IP \(bu 2
+\fB\euhhhh\fP 16\-bit Unicode character (hhhh is 4 digits)
+.IP \(bu 2
+\fB\eUhhhhhhhh\fP 32\-bit Unicode character (hhhhhhhh is 8 digits)
+.UNINDENT
+.SH ERRORS AND RETURN STATUS
 .sp
-The \fBformat\fP argument is re\-used as many times as necessary to convert all of the given arguments. If a format specifier is not appropriate for the given argument, an error is printed. For example, \fBprintf \(aq%d\(aq "102.234"\fP produces an error, as "102.234" cannot be formatted as an integer.
+If the given argument doesn\(aqt work for the given format (like when you try to convert a number like 3.141592 to an integer), printf prints an error, to stderr. printf will then also return non\-zero, but will still try to print as much as it can.
 .sp
-This file has been imported from the printf in GNU Coreutils version 6.9. If you would like to use a newer version of printf, for example the one shipped with your OS, try \fBcommand printf\fP\&.
+It will also return non\-zero if no argument at all was given, in which case it will print nothing.
+.sp
+This printf has been imported from the printf in GNU Coreutils version 6.9. If you would like to use a newer version of printf, for example the one shipped with your OS, try \fBcommand printf\fP\&.
 .SH EXAMPLE
 .INDENT 0.0
 .INDENT 3.5
 .sp
 .nf
 .ft C
-printf \(aq%s\e\et%s\e\en\(aq flounder fish
+printf \(aq%s\et%s\en\(aq flounder fish
 .ft P
 .fi
 .UNINDENT
@@ -119,8 +143,16 @@ printf \(aq%s: %d\(aq "Number of bananas in my pocket" 42
 .UNINDENT
 .UNINDENT
 .sp
-Will print "Number of bananas in my pocket: 42", _without_ a newline.
+Will print "Number of bananas in my pocket: 42", \fIwithout\fP a newline.
+.SH SEE ALSO
+.INDENT 0.0
+.IP \(bu 2
+the echo command, for simpler output
+.UNINDENT
+.SH FOOTNOTES
+.IP [1] 5
+(in fact while fish\(aqs \fBecho\fP supports \fB\-\-\fP, POSIX forbids it, so other implementations can\(aqt be used if the input contains anything starting with \fB\-\fP)
 .SH COPYRIGHT
-2019, fish-shell developers
+2020, fish-shell developers
 .\" Generated by docutils manpage writer.
 .

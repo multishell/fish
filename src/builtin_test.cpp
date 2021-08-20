@@ -101,17 +101,21 @@ class number_t {
         return (this->delta > rhs.delta) - (this->delta < rhs.delta);
     }
 
-    // Return true if the number is a tty()/
-    bool isatty() const {
+    // Return true if the number is a tty().
+    bool isatty(const io_streams_t *streams) const {
         if (delta != 0.0 || base > INT_MAX || base < INT_MIN) return false;
-        return ::isatty(static_cast<int>(base));
+        int bint = static_cast<int>(base);
+        if (bint == 0) return ::isatty(streams->stdin_fd);
+        if (bint == 1) return !streams->out_is_redirected && ::isatty(STDOUT_FILENO);
+        if (bint == 2) return !streams->err_is_redirected && ::isatty(STDERR_FILENO);
+        return ::isatty(bint);
     }
 };
 
 static bool binary_primary_evaluate(test_expressions::token_t token, const wcstring &left,
                                     const wcstring &right, wcstring_list_t &errors);
 static bool unary_primary_evaluate(test_expressions::token_t token, const wcstring &arg,
-                                   wcstring_list_t &errors);
+                                   io_streams_t *streams, wcstring_list_t &errors);
 
 enum { UNARY_PRIMARY = 1 << 0, BINARY_PRIMARY = 1 << 1 };
 
@@ -182,9 +186,10 @@ class test_parser {
    private:
     wcstring_list_t strings;
     wcstring_list_t errors;
+    int error_idx;
 
-    unique_ptr<expression> error(const wchar_t *fmt, ...);
-    void add_error(const wchar_t *fmt, ...);
+    unique_ptr<expression> error(unsigned int idx, const wchar_t *fmt, ...);
+    void add_error(unsigned int idx, const wchar_t *fmt, ...);
 
     const wcstring &arg(unsigned int idx) { return strings.at(idx); }
 
@@ -226,41 +231,41 @@ class expression {
     virtual ~expression() = default;
 
     /// Evaluate returns true if the expression is true (i.e. STATUS_CMD_OK).
-    virtual bool evaluate(wcstring_list_t &errors) = 0;
+    virtual bool evaluate(io_streams_t *streams, wcstring_list_t &errors) = 0;
 };
 
 /// Single argument like -n foo or "just a string".
-class unary_primary : public expression {
+class unary_primary final : public expression {
    public:
     wcstring arg;
     unary_primary(token_t tok, range_t where, wcstring what)
         : expression(tok, where), arg(std::move(what)) {}
-    bool evaluate(wcstring_list_t &errors) override;
+    bool evaluate(io_streams_t *streams, wcstring_list_t &errors) override;
 };
 
 /// Two argument primary like foo != bar.
-class binary_primary : public expression {
+class binary_primary final : public expression {
    public:
     wcstring arg_left;
     wcstring arg_right;
 
     binary_primary(token_t tok, range_t where, wcstring left, wcstring right)
         : expression(tok, where), arg_left(std::move(left)), arg_right(std::move(right)) {}
-    bool evaluate(wcstring_list_t &errors) override;
+    bool evaluate(io_streams_t *streams, wcstring_list_t &errors) override;
 };
 
 /// Unary operator like bang.
-class unary_operator : public expression {
+class unary_operator final : public expression {
    public:
     unique_ptr<expression> subject;
     unary_operator(token_t tok, range_t where, unique_ptr<expression> exp)
         : expression(tok, where), subject(move(exp)) {}
-    bool evaluate(wcstring_list_t &errors) override;
+    bool evaluate(io_streams_t *streams, wcstring_list_t &errors) override;
 };
 
 /// Combining expression. Contains a list of AND or OR expressions. It takes more than two so that
 /// we don't have to worry about precedence in the parser.
-class combining_expression : public expression {
+class combining_expression final : public expression {
    public:
     const std::vector<unique_ptr<expression>> subjects;
     const std::vector<token_t> combiners;
@@ -274,39 +279,45 @@ class combining_expression : public expression {
 
     ~combining_expression() override = default;
 
-    bool evaluate(wcstring_list_t &errors) override;
+    bool evaluate(io_streams_t *streams, wcstring_list_t &errors) override;
 };
 
 /// Parenthetical expression.
-class parenthetical_expression : public expression {
+class parenthetical_expression final : public expression {
    public:
     unique_ptr<expression> contents;
     parenthetical_expression(token_t tok, range_t where, unique_ptr<expression> expr)
         : expression(tok, where), contents(move(expr)) {}
 
-    bool evaluate(wcstring_list_t &errors) override;
+    bool evaluate(io_streams_t *streams, wcstring_list_t &errors) override;
 };
 
-void test_parser::add_error(const wchar_t *fmt, ...) {
+void test_parser::add_error(unsigned int idx, const wchar_t *fmt, ...) {
     assert(fmt != nullptr);
     va_list va;
     va_start(va, fmt);
     this->errors.push_back(vformat_string(fmt, va));
     va_end(va);
+    if (this->errors.size() == 1) {
+        this->error_idx = idx;
+    }
 }
 
-unique_ptr<expression> test_parser::error(const wchar_t *fmt, ...) {
+unique_ptr<expression> test_parser::error(unsigned int idx, const wchar_t *fmt, ...) {
     assert(fmt != nullptr);
     va_list va;
     va_start(va, fmt);
     this->errors.push_back(vformat_string(fmt, va));
     va_end(va);
+    if (this->errors.size() == 1) {
+        this->error_idx = idx;
+    }
     return nullptr;
 }
 
 unique_ptr<expression> test_parser::parse_unary_expression(unsigned int start, unsigned int end) {
     if (start >= end) {
-        return error(L"Missing argument at index %u", start);
+        return error(start, L"Missing argument at index %u", start + 1);
     }
     token_t tok = token_for_string(arg(start))->tok;
     if (tok == test_bang) {
@@ -338,7 +349,8 @@ unique_ptr<expression> test_parser::parse_combining_expression(unsigned int star
                 /* Not a combiner, we're done */
                 this->errors.insert(
                     this->errors.begin(),
-                    format_string(L"Expected a combining operator like '-a' at index %u", idx));
+                    format_string(L"Expected a combining operator like '-a' at index %u", idx + 1));
+                error_idx = idx;
                 break;
             }
             combiners.push_back(combiner);
@@ -348,7 +360,7 @@ unique_ptr<expression> test_parser::parse_combining_expression(unsigned int star
         // Parse another expression.
         unique_ptr<expression> expr = parse_unary_expression(idx, end);
         if (!expr) {
-            add_error(L"Missing argument at index %u", idx);
+            add_error(idx, L"Missing argument at index %u", idx + 1);
             if (!first) {
                 // Clean up the dangling combiner, since it never got its right hand expression.
                 combiners.pop_back();
@@ -374,10 +386,10 @@ unique_ptr<expression> test_parser::parse_combining_expression(unsigned int star
 unique_ptr<expression> test_parser::parse_unary_primary(unsigned int start, unsigned int end) {
     // We need two arguments.
     if (start >= end) {
-        return error(L"Missing argument at index %u", start);
+        return error(start, L"Missing argument at index %u", start + 1);
     }
     if (start + 1 >= end) {
-        return error(L"Missing argument at index %u", start + 1);
+        return error(start + 1, L"Missing argument at index %u", start + 2);
     }
 
     // All our unary primaries are prefix, so the operator is at start.
@@ -393,12 +405,12 @@ unique_ptr<expression> test_parser::parse_just_a_string(unsigned int start, unsi
 
     // We need one argument.
     if (start >= end) {
-        return error(L"Missing argument at index %u", start);
+        return error(start, L"Missing argument at index %u", start + 1);
     }
 
     const token_info_t *info = token_for_string(arg(start));
     if (info->tok != test_unknown) {
-        return error(L"Unexpected argument type at index %u", start);
+        return error(start, L"Unexpected argument type at index %u", start + 1);
     }
 
     // This is hackish; a nicer way to implement this would be with a "just a string" expression
@@ -410,7 +422,7 @@ unique_ptr<expression> test_parser::parse_binary_primary(unsigned int start, uns
     // We need three arguments.
     for (unsigned int idx = start; idx < start + 3; idx++) {
         if (idx >= end) {
-            return error(L"Missing argument at index %u", idx);
+            return error(idx, L"Missing argument at index %u", idx + 1);
         }
     }
 
@@ -438,11 +450,11 @@ unique_ptr<expression> test_parser::parse_parenthentical(unsigned int start, uns
     unsigned close_index = subexpr->range.end;
     assert(close_index <= end);
     if (close_index == end) {
-        return error(L"Missing close paren at index %u", close_index);
+        return error(close_index, L"Missing close paren at index %u", close_index + 1);
     }
     const token_info_t *close_paren = token_for_string(arg(close_index));
     if (close_paren->tok != test_paren_close) {
-        return error(L"Expected close paren at index %u", close_index);
+        return error(close_index, L"Expected close paren at index %u", close_index + 1);
     }
 
     // Success.
@@ -452,7 +464,7 @@ unique_ptr<expression> test_parser::parse_parenthentical(unsigned int start, uns
 
 unique_ptr<expression> test_parser::parse_primary(unsigned int start, unsigned int end) {
     if (start >= end) {
-        return error(L"Missing argument at index %u", start);
+        return error(start, L"Missing argument at index %u", start + 1);
     }
 
     unique_ptr<expression> expr = nullptr;
@@ -510,17 +522,16 @@ unique_ptr<expression> test_parser::parse_4_arg_expression(unsigned int start, u
 
 unique_ptr<expression> test_parser::parse_expression(unsigned int start, unsigned int end) {
     if (start >= end) {
-        return error(L"Missing argument at index %u", start);
+        return error(start, L"Missing argument at index %u", start + 1);
     }
 
     unsigned int argc = end - start;
     switch (argc) {
         case 0: {
             DIE("argc should not be zero");  // should have been caught by the above test
-            break;
         }
         case 1: {
-            return error(L"Missing argument at index %u", start + 1);
+            return error(start + 1, L"Missing argument at index %u", start + 2);
         }
         case 2: {
             return parse_unary_expression(start, end);
@@ -549,10 +560,26 @@ unique_ptr<expression> test_parser::parse_args(const wcstring_list_t &args, wcst
     // Handle errors.
     // For now we only show the first error.
     if (!parser.errors.empty()) {
+        int narg = 0;
+        int len_to_err = 0;
+        wcstring commandline;
+        for (const wcstring &arg : args) {
+            if (narg > 0) {
+                commandline.append(L" ");
+            }
+            commandline.append(arg);
+            narg++;
+            if (narg == parser.error_idx) {
+                len_to_err = fish_wcswidth(commandline.c_str(), commandline.length());
+            }
+        }
         err.append(program_name);
         err.append(L": ");
         err.append(parser.errors.at(0));
         err.push_back(L'\n');
+        err.append(commandline);
+        err.push_back(L'\n');
+        err.append(format_string(L"%*ls%ls\n", len_to_err + 1, L" ", L"^"));
     }
 
     if (result) {
@@ -562,7 +589,7 @@ unique_ptr<expression> test_parser::parse_args(const wcstring_list_t &args, wcst
         if (result->range.end < args.size()) {
             if (err.empty()) {
                 append_format(err, L"%ls: unexpected argument at index %lu: '%ls'\n", program_name,
-                              static_cast<unsigned long>(result->range.end),
+                              static_cast<unsigned long>(result->range.end) + 1,
                               args.at(result->range.end).c_str());
             }
             result.reset(nullptr);
@@ -572,31 +599,31 @@ unique_ptr<expression> test_parser::parse_args(const wcstring_list_t &args, wcst
     return result;
 }
 
-bool unary_primary::evaluate(wcstring_list_t &errors) {
-    return unary_primary_evaluate(token, arg, errors);
+bool unary_primary::evaluate(io_streams_t *streams, wcstring_list_t &errors) {
+    return unary_primary_evaluate(token, arg, streams, errors);
 }
 
-bool binary_primary::evaluate(wcstring_list_t &errors) {
+bool binary_primary::evaluate(io_streams_t *, wcstring_list_t &errors) {
     return binary_primary_evaluate(token, arg_left, arg_right, errors);
 }
 
-bool unary_operator::evaluate(wcstring_list_t &errors) {
+bool unary_operator::evaluate(io_streams_t *streams, wcstring_list_t &errors) {
     if (token == test_bang) {
         assert(subject.get());
-        return !subject->evaluate(errors);
+        return !subject->evaluate(streams, errors);
     }
 
     errors.push_back(format_string(L"Unknown token type in %s", __func__));
     return false;
 }
 
-bool combining_expression::evaluate(wcstring_list_t &errors) {
+bool combining_expression::evaluate(io_streams_t *streams, wcstring_list_t &errors) {
     if (token == test_combine_and || token == test_combine_or) {
         assert(!subjects.empty());  //!OCLINT(multiple unary operator)
         assert(combiners.size() + 1 == subjects.size());
 
         // One-element case.
-        if (subjects.size() == 1) return subjects.at(0)->evaluate(errors);
+        if (subjects.size() == 1) return subjects.front()->evaluate(streams, errors);
 
         // Evaluate our lists, remembering that AND has higher precedence than OR. We can
         // visualize this as a sequence of OR expressions of AND expressions.
@@ -612,7 +639,7 @@ bool combining_expression::evaluate(wcstring_list_t &errors) {
             bool and_result = true;
             for (; idx < max; idx++) {
                 // Evaluate it, short-circuiting.
-                and_result = and_result && subjects.at(idx)->evaluate(errors);
+                and_result = and_result && subjects.at(idx)->evaluate(streams, errors);
 
                 // If the combiner at this index (which corresponding to how we combine with the
                 // next subject) is not AND, then exit the loop.
@@ -632,14 +659,15 @@ bool combining_expression::evaluate(wcstring_list_t &errors) {
     return false;
 }
 
-bool parenthetical_expression::evaluate(wcstring_list_t &errors) {
-    return contents->evaluate(errors);
+bool parenthetical_expression::evaluate(io_streams_t *streams, wcstring_list_t &errors) {
+    return contents->evaluate(streams, errors);
 }
 
 // Parse a double from arg. Return true on success, false on failure.
 static bool parse_double(const wchar_t *arg, double *out_res) {
     // Consume leading spaces.
     while (arg && *arg != L'\0' && iswspace(*arg)) arg++;
+    if (!arg) return false;
     errno = 0;
     wchar_t *end = nullptr;
     *out_res = fish_wcstod(arg, &end);
@@ -670,7 +698,8 @@ static bool parse_number(const wcstring &arg, number_t *number, wcstring_list_t 
         // Break the floating point value into base and delta. Ensure that base is <= the floating
         // point value.
         //
-        // Note that a non-finite number like infinity or NaN doesn't work for us, so we checked above.
+        // Note that a non-finite number like infinity or NaN doesn't work for us, so we checked
+        // above.
         double intpart = std::floor(floating);
         double delta = floating - intpart;
         *number = number_t{static_cast<long long>(intpart), delta};
@@ -737,7 +766,7 @@ static bool binary_primary_evaluate(test_expressions::token_t token, const wcstr
 }
 
 static bool unary_primary_evaluate(test_expressions::token_t token, const wcstring &arg,
-                                   wcstring_list_t &errors) {
+                                   io_streams_t *streams, wcstring_list_t &errors) {
     using namespace test_expressions;
     struct stat buf;
     switch (token) {
@@ -787,7 +816,7 @@ static bool unary_primary_evaluate(test_expressions::token_t token, const wcstri
         }
         case test_filedesc_t: {  // "-t", whether the fd is associated with a terminal
             number_t num;
-            return parse_number(arg, &num, errors) && num.isatty();
+            return parse_number(arg, &num, errors) && num.isatty(streams);
         }
         case test_fileperm_r: {  // "-r", read permission
             return !waccess(arg, R_OK);
@@ -821,7 +850,7 @@ static bool unary_primary_evaluate(test_expressions::token_t token, const wcstri
 /// supports a more limited range of functionality.
 ///
 /// Return status is the final shell status, i.e. 0 for true, 1 for false and 2 for error.
-int builtin_test(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_test(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     UNUSED(parser);
     using namespace test_expressions;
 
@@ -863,12 +892,12 @@ int builtin_test(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     unique_ptr<expression> expr = test_parser::parse_args(args, err, program_name);
     if (!expr) {
         streams.err.append(err);
-        builtin_print_error_trailer(parser, streams.err, program_name);
+        streams.err.append(parser.current_line());
         return STATUS_CMD_ERROR;
     }
 
     wcstring_list_t eval_errors;
-    bool result = expr->evaluate(eval_errors);
+    bool result = expr->evaluate(&streams, eval_errors);
     if (!eval_errors.empty()) {
         if (!should_suppress_stderr_for_tests()) {
             for (const auto &eval_error : eval_errors) {

@@ -7,7 +7,7 @@
 # Retrieve the likely compile-time PREFIX for openocd based off of where the binary
 # is located. e.g. if openocd is /usr/local/bin/openocd return /usr/local
 function __fish_openocd_prefix
-    string replace "/bin/openocd" "" (which openocd)
+    string replace /bin/openocd "" (command -s openocd)
 end
 
 # The results of this function are as if __fish_complete_suffix were called
@@ -19,7 +19,7 @@ end
 complete -c openocd -f # at no point does openocd take arbitrary arguments
 complete -c openocd -s h -l help -d "display help"
 complete -c openocd -s v -l version -d "display version info"
-complete -c openocd -s f -l file -xa '(__fish_complete_openocd_path .cfg)'
+complete -c openocd -s f -l file -k -xa '(__fish_complete_openocd_path .cfg)'
 complete -c openocd -s d -l debug -d "run under debug level 3"
 complete -c openocd -s d -l debug -d "run under debug level n" -xa '(seq 1 9)'
 complete -c openocd -s l -l log_output -d "redirect output to file" -r

@@ -80,27 +80,27 @@ complete -c pandoc -r -l citation-abbreviations
 
 # options that take files filtered by extension
 
-complete -c pandoc -r -f -l print-highlight-style -a "(__fish_complete_suffix 'theme' )"
-complete -c pandoc -r -f -l highlight_style -a "(__fish_complete_suffix 'theme' )"
-complete -c pandoc -r -f -l csl -a "(__fish_complete_suffix 'csl'   )"
-complete -c pandoc -r -f -l reference-file -a "(__fish_complete_suffix 'odt') (__fish_complete_suffix 'docx')"
-complete -c pandoc -r -f -l bibliography -a "(__fish_complete_suffix 'bib')"
-complete -c pandoc -r -f -l bibliography -a "(__fish_complete_suffix 'bibtex')"
-complete -c pandoc -r -f -l bibliography -a "(__fish_complete_suffix 'copac')"
-complete -c pandoc -r -f -l bibliography -a "(__fish_complete_suffix 'json')"
-complete -c pandoc -r -f -l bibliography -a "(__fish_complete_suffix 'yaml')"
-complete -c pandoc -r -f -l bibliography -a "(__fish_complete_suffix 'enl')"
-complete -c pandoc -r -f -l bibliography -a "(__fish_complete_suffix 'xml')"
-complete -c pandoc -r -f -l bibliography -a "(__fish_complete_suffix 'wos')"
-complete -c pandoc -r -f -l bibliography -a "(__fish_complete_suffix 'medline')"
-complete -c pandoc -r -f -l bibliography -a "(__fish_complete_suffix 'mods')"
-complete -c pandoc -r -f -l bibliography -a "(__fish_complete_suffix 'ria')"
-complete -c pandoc -r -f -l lua-filter -a "(__fish_complete_suffix 'lua')"
+complete -c pandoc -r -f -l print-highlight-style -k -a "(__fish_complete_suffix 'theme' )"
+complete -c pandoc -r -f -l highlight_style -k -a "(__fish_complete_suffix 'theme' )"
+complete -c pandoc -r -f -l csl -k -a "(__fish_complete_suffix 'csl'   )"
+complete -c pandoc -r -f -l reference-file -k -a "(__fish_complete_suffix 'odt') (__fish_complete_suffix 'docx')"
+complete -c pandoc -r -f -l bibliography -k -a "(__fish_complete_suffix 'bib')"
+complete -c pandoc -r -f -l bibliography -k -a "(__fish_complete_suffix 'bibtex')"
+complete -c pandoc -r -f -l bibliography -k -a "(__fish_complete_suffix 'copac')"
+complete -c pandoc -r -f -l bibliography -k -a "(__fish_complete_suffix 'json')"
+complete -c pandoc -r -f -l bibliography -k -a "(__fish_complete_suffix 'yaml')"
+complete -c pandoc -r -f -l bibliography -k -a "(__fish_complete_suffix 'enl')"
+complete -c pandoc -r -f -l bibliography -k -a "(__fish_complete_suffix 'xml')"
+complete -c pandoc -r -f -l bibliography -k -a "(__fish_complete_suffix 'wos')"
+complete -c pandoc -r -f -l bibliography -k -a "(__fish_complete_suffix 'medline')"
+complete -c pandoc -r -f -l bibliography -k -a "(__fish_complete_suffix 'mods')"
+complete -c pandoc -r -f -l bibliography -k -a "(__fish_complete_suffix 'ria')"
+complete -c pandoc -r -f -l lua-filter -k -a "(__fish_complete_suffix 'lua')"
 
 # options that take files in DATADIR
-complete -c pandoc -r -s F -l filter -a "(find $datadir/filters/** | string replace -- '$datadir/filters/' '')"
-complete -c pandoc -r -l template -a "(find $datadir/templates/** | string replace -- '$datadir/templates/' '')"
-complete -c pandoc -r -f -l lua-filter -a "(find $datadir/** | string match -r '.lua\$' | string replace -- '$datadir/' '')"
+complete -c pandoc -r -s F -l filter -a "(find $datadir/filters -type f 2>/dev/null | string replace -- '$datadir/filters/' '')"
+complete -c pandoc -r -l template -a "(find $datadir/templates -type f 2>/dev/null | string replace -- '$datadir/templates/' '')"
+complete -c pandoc -r -f -l lua-filter -a "(find $datadir -type f 2>/dev/null | string match -r '.lua\$' | string replace -- '$datadir/' '')"
 
 # options that require arguments which cannot be autocompleted
 complete -c pandoc -x -l indented-code-classes
@@ -131,4 +131,3 @@ complete -c pandoc -x -l reference-location -a "block section document"
 complete -c pandoc -x -l top-level-division -a "default section chapter part"
 complete -c pandoc -x -l email-obfuscation -a "none javascript references"
 complete -c pandoc -x -l pdf-engine -a "$pdfengines"
-

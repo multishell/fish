@@ -24,6 +24,7 @@
 #include "env.h"
 #include "env_universal_common.h"
 #include "fallback.h"  // IWYU pragma: keep
+#include "flog.h"
 #include "global_safety.h"
 #include "input_common.h"
 #include "iothread.h"
@@ -45,12 +46,12 @@ void input_common_init(interrupt_func_t func) { interrupt_handler = func; }
 char_event_t input_event_queue_t::readb() {
     for (;;) {
         fd_set fdset;
-        int fd_max = 0;
+        int fd_max = in_;
         int ioport = iothread_port();
         int res;
 
         FD_ZERO(&fdset);
-        FD_SET(0, &fdset);
+        FD_SET(in_, &fdset);
         if (ioport > 0) {
             FD_SET(ioport, &fdset);
             fd_max = std::max(fd_max, ioport);
@@ -78,6 +79,10 @@ char_event_t input_event_queue_t::readb() {
         res = select(fd_max + 1, &fdset, nullptr, nullptr, usecs_delay > 0 ? &tv : nullptr);
         if (res == -1) {
             if (errno == EINTR || errno == EAGAIN) {
+                // Some uvar notifiers rely on signals - see #7671.
+                if (notifier.poll()) {
+                    env_universal_barrier();
+                }
                 if (interrupt_handler) {
                     if (auto interrupt_evt = interrupt_handler()) {
                         return *interrupt_evt;
@@ -105,9 +110,9 @@ char_event_t input_event_queue_t::readb() {
                 }
             }
 
-            if (FD_ISSET(STDIN_FILENO, &fdset)) {
+            if (FD_ISSET(in_, &fdset)) {
                 unsigned char arr[1];
-                if (read_blocked(0, arr, 1) != 1) {
+                if (read_blocked(in_, arr, 1) != 1) {
                     // The teminal has been closed.
                     return char_event_type_t::eof;
                 }
@@ -119,7 +124,7 @@ char_event_t input_event_queue_t::readb() {
             // Check for iothread completions only if there is no data to be read from the stdin.
             // This gives priority to the foreground.
             if (ioport > 0 && FD_ISSET(ioport, &fdset)) {
-                iothread_service_completion();
+                iothread_service_main();
                 if (auto mc = pop_discard_timeouts()) {
                     return *mc;
                 }
@@ -188,7 +193,7 @@ char_event_t input_event_queue_t::readch() {
         switch (sz) {
             case static_cast<size_t>(-1): {
                 std::memset(&state, '\0', sizeof(state));
-                debug(2, L"Illegal input");
+                FLOG(reader, L"Illegal input");
                 return char_event_type_t::check_exit;
             }
             case static_cast<size_t>(-2): {
@@ -211,7 +216,7 @@ char_event_t input_event_queue_t::readch_timed(bool dequeue_timeouts) {
     } else {
         fd_set fds;
         FD_ZERO(&fds);
-        FD_SET(STDIN_FILENO, &fds);
+        FD_SET(in_, &fds);
         struct timeval tm = {wait_on_escape_ms / 1000, 1000 * (wait_on_escape_ms % 1000)};
         if (select(1, &fds, nullptr, nullptr, &tm) > 0) {
             result = readch();

@@ -1,19 +1,3 @@
-# macOS 10.15 "Catalina" has some major issues.
-# The whatis database is non-existent, so apropos tries (and fails) to create it every time,
-# which takes about half a second.
-#
-# So we disable this entirely in that case.
-if test (uname) = Darwin
-    set -l darwin_version (uname -r | string split .)
-    # macOS 15 is Darwin 19, this is an issue at least up to 10.15.3.
-    # If this is fixed in later versions uncomment the second check.
-    if test "$darwin_version[1]" = 19 # -a "$darwin_version[2]" -le 3
-        function __fish_complete_man
-        end
-        # (remember: exit when `source`ing only exits the file, not the shell)
-        exit
-    end
-end
 
 function __fish_complete_man
     # Try to guess what section to search in. If we don't know, we
@@ -35,7 +19,7 @@ function __fish_complete_man
 
     set -l exclude_fish_commands
     # Only include fish commands when section is empty or 1
-    if test -z "$section" -o "$section" = "1"
+    if test -z "$section" -o "$section" = 1
         set -e exclude_fish_commands
     end
 
@@ -48,7 +32,7 @@ function __fish_complete_man
 
     if test -n "$token"
         # Do the actual search
-        apropos $token 2>/dev/null | awk '
+        __fish_apropos $token 2>/dev/null | awk '
                 BEGIN { FS="[\t ]- "; OFS="\t"; }
                 # BSD/Darwin
                 /^[^( \t]+\('$section'\)/ {
@@ -96,4 +80,3 @@ function __fish_complete_man
     end
     return 0
 end
-

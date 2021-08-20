@@ -32,7 +32,7 @@ static const wcstring var_name_prefix = L"_flag_";
 #define BUILTIN_ERR_INVALID_OPT_SPEC _(L"%ls: Invalid option spec '%ls' at char '%lc'\n")
 
 struct option_spec_t {
-    const wchar_t short_flag;
+    wchar_t short_flag;
     wcstring long_flag;
     wcstring validation_command;
     wcstring_list_t vals;
@@ -40,7 +40,7 @@ struct option_spec_t {
     int num_allowed{0};
     int num_seen{0};
 
-    option_spec_t(wchar_t s) : short_flag(s) {}
+    explicit option_spec_t(wchar_t s) : short_flag(s) {}
 };
 using option_spec_ref_t = std::unique_ptr<option_spec_t>;
 
@@ -51,7 +51,7 @@ struct argparse_cmd_opts_t {
     size_t min_args = 0;
     size_t max_args = SIZE_MAX;
     wchar_t implicit_int_flag = L'\0';
-    wcstring name = L"";
+    wcstring name;
     wcstring_list_t raw_exclusive_flags;
     wcstring_list_t argv;
     std::unordered_map<wchar_t, option_spec_ref_t> options;
@@ -208,14 +208,14 @@ static bool parse_flag_modifiers(const argparse_cmd_opts_t &opts, const option_s
 /// Parse the text following the short flag letter.
 static bool parse_option_spec_sep(argparse_cmd_opts_t &opts, const option_spec_ref_t &opt_spec,
                                   const wcstring &option_spec, const wchar_t **opt_spec_str,
-                                  io_streams_t &streams) {
+                                  wchar_t &counter, io_streams_t &streams) {
     const wchar_t *s = *opt_spec_str;
     if (*(s - 1) == L'#') {
         if (*s != L'-') {
-            streams.err.append_format(
-                _(L"%ls: Short flag '#' must be followed by '-' and a long name\n"),
-                opts.name.c_str());
-            return false;
+            // Long-only!
+            s--;
+            opt_spec->short_flag = counter;
+            counter++;
         }
         if (opts.implicit_int_flag) {
             streams.err.append_format(_(L"%ls: Implicit int flag '%lc' already defined\n"),
@@ -250,9 +250,17 @@ static bool parse_option_spec_sep(argparse_cmd_opts_t &opts, const option_spec_r
         opt_spec->num_allowed = 1;  // mandatory arg and can appear only once
         s++;  // the struct is initialized assuming short_flag_valid should be true
     } else {
-        // Long flag name not allowed if second char isn't '/', '-' or '#' so just check for
-        // behavior modifier chars.
-        if (!parse_flag_modifiers(opts, opt_spec, option_spec, &s, streams)) return false;
+        if (*s != L'!' && *s != L'?' && *s != L'=') {
+            // No short flag separator and no other modifiers, so this is a long only option.
+            // Since getopt needs a wchar, we have a counter that we count up.
+            opt_spec->short_flag_valid = false;
+            s--;
+            opt_spec->short_flag = counter;
+            counter++;
+        } else {
+            // Try to parse any other flag modifiers
+            if (!parse_flag_modifiers(opts, opt_spec, option_spec, &s, streams)) return false;
+        }
     }
 
     *opt_spec_str = s;
@@ -261,10 +269,12 @@ static bool parse_option_spec_sep(argparse_cmd_opts_t &opts, const option_spec_r
 
 /// This parses an option spec string into a struct option_spec.
 static bool parse_option_spec(argparse_cmd_opts_t &opts,  //!OCLINT(high npath complexity)
-                              const wcstring &option_spec, io_streams_t &streams) {
+                              const wcstring &option_spec, wchar_t &counter,
+                              io_streams_t &streams) {
     if (option_spec.empty()) {
-        streams.err.append_format(_(L"%ls: An option spec must have a short flag letter\n"),
-                                  opts.name.c_str());
+        streams.err.append_format(
+            _(L"%ls: An option spec must have at least a short or a long flag\n"),
+            opts.name.c_str());
         return false;
     }
 
@@ -278,7 +288,7 @@ static bool parse_option_spec(argparse_cmd_opts_t &opts,  //!OCLINT(high npath c
     std::unique_ptr<option_spec_t> opt_spec(new option_spec_t{*s++});
 
     // Try parsing stuff after the short flag.
-    if (*s && !parse_option_spec_sep(opts, opt_spec, option_spec, &s, streams)) {
+    if (*s && !parse_option_spec_sep(opts, opt_spec, option_spec, &s, counter, streams)) {
         return false;
     }
 
@@ -315,20 +325,30 @@ static int collect_option_specs(argparse_cmd_opts_t &opts, int *optind, int argc
                                 io_streams_t &streams) {
     wchar_t *cmd = argv[0];
 
+    // A counter to give short chars to long-only options because getopt needs that.
+    // Luckily we have wgetopt so we can use wchars - this is one of the private use areas so we
+    // have 6400 options available.
+    wchar_t counter = static_cast<wchar_t>(0xE000);
+
     while (true) {
         if (std::wcscmp(L"--", argv[*optind]) == 0) {
             ++*optind;
             break;
         }
 
-        if (!parse_option_spec(opts, argv[*optind], streams)) {
+        if (!parse_option_spec(opts, argv[*optind], counter, streams)) {
             return STATUS_CMD_ERROR;
         }
-
         if (++*optind == argc) {
             streams.err.append_format(_(L"%ls: Missing -- separator\n"), cmd);
             return STATUS_INVALID_ARGS;
         }
+    }
+
+    // Check for counter overreach once at the end because this is very unlikely to ever be reached.
+    if (counter > static_cast<wchar_t>(0xF8FF)) {
+        streams.err.append_format(_(L"%ls: Too many long-only options\n"), cmd);
+        return STATUS_INVALID_ARGS;
     }
 
     if (opts.options.empty()) {
@@ -398,7 +418,6 @@ static int parse_cmd_opts(argparse_cmd_opts_t &opts, int *optind,  //!OCLINT(hig
             }
             default: {
                 DIE("unexpected retval from wgetopt_long");
-                break;
             }
         }
     }
@@ -457,13 +476,14 @@ static int validate_arg(parser_t &parser, const argparse_cmd_opts_t &opts, optio
     auto &vars = parser.vars();
 
     vars.push(true);
-    vars.set_one(L"_argparse_cmd", ENV_LOCAL, opts.name);
+    vars.set_one(L"_argparse_cmd", ENV_LOCAL | ENV_EXPORT, opts.name);
     if (is_long_flag) {
-        vars.set_one(var_name_prefix + L"name", ENV_LOCAL, opt_spec->long_flag);
+        vars.set_one(var_name_prefix + L"name", ENV_LOCAL | ENV_EXPORT, opt_spec->long_flag);
     } else {
-        vars.set_one(var_name_prefix + L"name", ENV_LOCAL, wcstring(1, opt_spec->short_flag));
+        vars.set_one(var_name_prefix + L"name", ENV_LOCAL | ENV_EXPORT,
+                     wcstring(1, opt_spec->short_flag));
     }
-    vars.set_one(var_name_prefix + L"value", ENV_LOCAL, woptarg);
+    vars.set_one(var_name_prefix + L"value", ENV_LOCAL | ENV_EXPORT, woptarg);
 
     int retval = exec_subshell(opt_spec->validation_command, parser, cmd_output, false);
     for (const auto &output : cmd_output) {
@@ -563,12 +583,6 @@ static int argparse_parse_flags(parser_t &parser, argparse_cmd_opts_t &opts,
                                                          streams);
             } else if (!opts.ignore_unknown) {
                 streams.err.append_format(BUILTIN_ERR_UNKNOWN, cmd, argv[w.woptind - 1]);
-                // We don't use builtin_print_error_trailer as that
-                // says to use the cmd help,
-                // which doesn't work if it's a command that does not belong to fish.
-                //
-                // Plus this particular error is not an error in argparse usage.
-                streams.err.append(parser.current_line());
                 retval = STATUS_INVALID_ARGS;
             } else {
                 // Any unrecognized option is put back if ignore_unknown is used.
@@ -643,7 +657,7 @@ static int argparse_parse_args(argparse_cmd_opts_t &opts, const wcstring_list_t 
     return STATUS_CMD_OK;
 }
 
-static int check_min_max_args_constraints(const argparse_cmd_opts_t &opts, parser_t &parser,
+static int check_min_max_args_constraints(const argparse_cmd_opts_t &opts, const parser_t &parser,
                                           io_streams_t &streams) {
     UNUSED(parser);
     const wchar_t *cmd = opts.name.c_str();
@@ -690,14 +704,20 @@ static void set_argparse_result_vars(env_stack_t &vars, const argparse_cmd_opts_
 /// an external command also means its output has to be in a form that can be eval'd. Because our
 /// version is a builtin it can directly set variables local to the current scope (e.g., a
 /// function). It doesn't need to write anything to stdout that then needs to be eval'd.
-int builtin_argparse(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_argparse(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     const wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
     argparse_cmd_opts_t opts;
 
     int optind;
     int retval = parse_cmd_opts(opts, &optind, argc, argv, parser, streams);
-    if (retval != STATUS_CMD_OK) return retval;
+    if (retval != STATUS_CMD_OK) {
+        // This is an error in argparse usage, so we append the error trailer with a stack trace.
+        // The other errors are an error in using *the command* that is using argparse,
+        // so our help doesn't apply.
+        builtin_print_error_trailer(parser, streams.err, cmd);
+        return retval;
+    }
 
     if (opts.print_help) {
         builtin_print_help(parser, streams, cmd);

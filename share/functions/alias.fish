@@ -1,5 +1,5 @@
 function alias --description 'Creates a function wrapping a command'
-    set -l options 'h/help' 's/save'
+    set -l options h/help s/save
     argparse -n alias --max-args=2 $options -- $argv
     or return
 
@@ -11,13 +11,11 @@ function alias --description 'Creates a function wrapping a command'
     set -l name
     set -l body
     set -l prefix
-    set -l first_word
-    set -l wrapped_cmd
 
     if not set -q argv[1]
         # Print the known aliases.
         for func in (functions -n)
-            set -l output (functions $func | string match -r -- "^function .* --description 'alias (.*)'")
+            set -l output (functions $func | string match -r -- "^function .* --description (?:'alias (.*)'|alias\\\\ (.*))\$")
             if set -q output[2]
                 set output (string replace -r -- '^'$func'[= ]' '' $output[2])
                 echo alias $func (string escape -- $output[1])
@@ -45,7 +43,9 @@ function alias --description 'Creates a function wrapping a command'
     end
 
     # Extract the first command from the body.
-    printf '%s\n' $body | read -lt first_word body
+    printf '%s\n' $body | read -l --list words
+    set -l first_word $words[1]
+    set -l last_word $words[-1]
 
     # Prevent the alias from immediately running into an infinite recursion if
     # $body starts with the same command as $name.
@@ -57,10 +57,18 @@ function alias --description 'Creates a function wrapping a command'
         end
     end
     set -l cmd_string (string escape -- "alias $argv")
-    set wrapped_cmd (string join ' ' -- $first_word $body | string escape)
-    echo "function $name --wraps $wrapped_cmd --description $cmd_string; $prefix $first_word $body \$argv; end" | source
+
+    # Do not define wrapper completion if we have "alias foo 'foo xyz'" or "alias foo 'sudo foo'"
+    # This is to prevent completions from recursively calling themselves (#7389).
+    # The latter will have rare false positives but it's more important to
+    # prevent recursion for this high-level command.
+    set -l wraps
+    if test $first_word != $name; and test $last_word != $name
+        set wraps --wraps (string escape -- $body)
+    end
+
+    echo "function $name $wraps --description $cmd_string; $prefix $body \$argv; end" | source
     if set -q _flag_save
         funcsave $name
     end
-    #echo "function $name --wraps $wrapped_cmd --description $cmd_string; $prefix $first_word $body \$argv; end"
 end

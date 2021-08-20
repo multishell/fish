@@ -1,5 +1,4 @@
 # RUN: env XDG_CONFIG_HOME="$(mktemp -d)" FISH=%fish %fish %s
-
 # Environment variable tests
 
 # Test if variables can be properly set
@@ -271,6 +270,30 @@ __fish_test_shadow
 env | string match '__fish_test_env17=*'
 # CHECK: __fish_test_env17=UNSHADOWED
 
+# Test that set var (command substitution) works with if/while.
+
+if set fish_test_18 (false)
+    echo Test 18 fail
+else
+    echo Test 18 pass
+end
+# CHECK: Test 18 pass
+
+if not set fish_test_18 (true)
+    echo Test 18 fail
+else
+    echo Test 18 pass
+end
+# CHECK: Test 18 pass
+
+set __fish_test_18_status pass
+while set fish_test_18 (false); or not set fish_test_18 (true)
+    set __fish_test_18_status fail
+    break
+end
+echo Test 18 $__fish_test_18_status
+# CHECK: Test 18 pass
+
 # Test that local exported variables are copied to functions (#1091)
 function __fish_test_local_export
     echo $var
@@ -471,7 +494,6 @@ while set -q EDITOR
     set -e EDITOR
 end
 set -Ux EDITOR emacs -nw
-# CHECK: $EDITOR: not set in global scope
 # CHECK: $EDITOR: set in universal scope, exported, with 2 elements
 $FISH -c 'set -S EDITOR' | string match -r -e 'global|universal'
 
@@ -480,11 +502,191 @@ $FISH -c 'set -S EDITOR' | string match -r -e 'global|universal'
 # CHECK: $EDITOR: set in universal scope, exported, with 2 elements
 sh -c "EDITOR='vim -g' $FISH -c "'\'set -S EDITOR\'' | string match -r -e 'global|universal'
 
+# Verify behavior of `set --show` given an invalid var name
+set --show 'argle bargle'
+#CHECKERR: $argle bargle: invalid var name
+
+# Verify behavior of `set --show`
+set semiempty ''
+set --show semiempty
+#CHECK: $semiempty: set in global scope, unexported, with 1 elements
+#CHECK: $semiempty[1]: ||
+
+set -U var1 hello
+set --show var1
+#CHECK: $var1: set in universal scope, unexported, with 1 elements
+#CHECK: $var1[1]: |hello|
+
+set -l var1
+set -g var1 goodbye "and don't come back"
+set --show var1
+#CHECK: $var1: set in local scope, unexported, with 0 elements
+#CHECK: $var1: set in global scope, unexported, with 2 elements
+#CHECK: $var1[1]: |goodbye|
+#CHECK: $var1[2]: |and don\'t come back|
+#CHECK: $var1: set in universal scope, unexported, with 1 elements
+#CHECK: $var1[1]: |hello|
+
+set -g var2
+set --show _unset_var var2
+#CHECK: $var2: set in global scope, unexported, with 0 elements
+
+# Appending works
+set -g var3a a b c
+set -a var3a
+set -a var3a d
+set -a var3a e f
+set --show var3a
+#CHECK: $var3a: set in global scope, unexported, with 6 elements
+#CHECK: $var3a[1]: |a|
+#CHECK: $var3a[2]: |b|
+#CHECK: $var3a[3]: |c|
+#CHECK: $var3a[4]: |d|
+#CHECK: $var3a[5]: |e|
+#CHECK: $var3a[6]: |f|
+set -g var3b
+set -a var3b
+set --show var3b
+#CHECK: $var3b: set in global scope, unexported, with 0 elements
+set -g var3c
+set -a var3c 'one string'
+set --show var3c
+#CHECK: $var3c: set in global scope, unexported, with 1 elements
+#CHECK: $var3c[1]: |one string|
+
+# Prepending works
+set -g var4a a b c
+set -p var4a
+set -p var4a d
+set -p var4a e f
+set --show var4a
+#CHECK: $var4a: set in global scope, unexported, with 6 elements
+#CHECK: $var4a[1]: |e|
+#CHECK: $var4a[2]: |f|
+#CHECK: $var4a[3]: |d|
+#CHECK: $var4a[4]: |a|
+#CHECK: $var4a[5]: |b|
+#CHECK: $var4a[6]: |c|
+set -g var4b
+set -p var4b
+set --show var4b
+#CHECK: $var4b: set in global scope, unexported, with 0 elements
+set -g var4c
+set -p var4c 'one string'
+set --show var4c
+#CHECK: $var4c: set in global scope, unexported, with 1 elements
+#CHECK: $var4c[1]: |one string|
+
+# Appending and prepending at same time works
+set -g var5 abc def
+set -a -p var5 0 x 0
+set --show var5
+#CHECK: $var5: set in global scope, unexported, with 8 elements
+#CHECK: $var5[1]: |0|
+#CHECK: $var5[2]: |x|
+#CHECK: $var5[3]: |0|
+#CHECK: $var5[4]: |abc|
+#CHECK: $var5[5]: |def|
+#CHECK: $var5[6]: |0|
+#CHECK: $var5[7]: |x|
+#CHECK: $var5[8]: |0|
+
+# Setting local scope when no local scope of the var uses the closest scope
+set -g var6 ghi jkl
+begin
+    set -l -a var6 mno
+    set --show var6
+end
+#CHECK: $var6: set in local scope, unexported, with 3 elements
+#CHECK: $var6[1]: |ghi|
+#CHECK: $var6[2]: |jkl|
+#CHECK: $var6[3]: |mno|
+#CHECK: $var6: set in global scope, unexported, with 2 elements
+#CHECK: $var6[1]: |ghi|
+#CHECK: $var6[2]: |jkl|
+
+# Exporting works
+set -x TESTVAR0
+set -x TESTVAR1 a
+set -x TESTVAR2 a b
+env | grep TESTVAR | sort | cat -v
+#CHECK: TESTVAR0=
+#CHECK: TESTVAR1=a
+#CHECK: TESTVAR2=a b
+
+# if/for/while scope
+function test_ifforwhile_scope
+    if set -l ifvar1 (true && echo val1)
+    end
+    if set -l ifvar2 (echo val2 && false)
+    end
+    if false
+    else if set -l ifvar3 (echo val3 && false)
+    end
+    while set -l whilevar1 (echo val3 ; false)
+    end
+    set --show ifvar1 ifvar2 ifvar3 whilevar1
+end
+test_ifforwhile_scope
+#CHECK: $ifvar1: set in local scope, unexported, with 1 elements
+#CHECK: $ifvar1[1]: |val1|
+#CHECK: $ifvar2: set in local scope, unexported, with 1 elements
+#CHECK: $ifvar2[1]: |val2|
+#CHECK: $ifvar3: set in local scope, unexported, with 1 elements
+#CHECK: $ifvar3[1]: |val3|
+#CHECK: $whilevar1: set in local scope, unexported, with 1 elements
+#CHECK: $whilevar1[1]: |val3|
+
+# $status should always be read-only, setting it makes no sense because it's immediately overwritten.
+set -g status 5
+#CHECKERR: set: Tried to change the read-only variable 'status'
+
 while set -e __fish_test_universal_exported_var
 end
 set -xU __fish_test_universal_exported_var 1
 $FISH -c 'set __fish_test_universal_exported_var 2'
 env | string match -e __fish_test_universal_exported_var
 #CHECK: __fish_test_universal_exported_var=2
+
+# Test that computed variables are global.
+# If they can be set they can only be set in global scope,
+# so they should only be shown in global scope.
+set -S status
+#CHECK: $status: set in global scope, unexported, with 1 elements
+#CHECK: $status[1]: |0|
+
+set -ql history
+echo $status
+#CHECK: 1
+
+set --path newvariable foo
+set -S newvariable
+#CHECK: $newvariable: set in global scope, unexported, a path variable with 1 elements
+#CHECK: $newvariable[1]: |foo|
+
+set foo foo
+set bar bar
+set -e baz
+
+set -e foo baz bar
+echo $status
+#CHECK: 4
+set -S foo baz bar
+
+set foo 1 2 3
+set bar 1 2 3
+
+set -e foo[1] bar[2]
+echo $foo
+#CHECK: 2 3
+echo $bar
+#CHECK: 1 3
+
+
+# Test that `set -q` does not return 0 if there are 256 missing variables
+
+set -lq a(seq 1 256)
+echo $status
+#CHECK: 255
 
 true

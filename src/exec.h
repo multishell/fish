@@ -7,34 +7,38 @@
 #include <vector>
 
 #include "common.h"
-
-/// Pipe redirection error message.
-#define PIPE_ERROR _(L"An error occurred while setting up pipe")
+#include "proc.h"
 
 /// Execute the processes specified by \p j in the parser \p.
-class job_t;
-struct job_lineage_t;
-class parser_t;
-bool exec_job(parser_t &parser, const std::shared_ptr<job_t> &j, const job_lineage_t &lineage);
+/// On a true return, the job was successfully launched and the parser will take responsibility for
+/// cleaning it up. On a false return, the job could not be launched and the caller must clean it
+/// up.
+__warn_unused bool exec_job(parser_t &parser, const std::shared_ptr<job_t> &j,
+                            const io_chain_t &block_io);
 
-/// Evaluate the expression cmd in a subshell, add the outputs into the list l. On return, the
-/// status flag as returned bu \c proc_gfet_last_status will not be changed.
+/// Evaluate a command.
 ///
 /// \param cmd the command to execute
-/// \param outputs The list to insert output into.
-/// \param parent_pgid if set, the pgid for any spawned jobs
+/// \param parser the parser with which to execute code
+/// \param outputs the list to insert output into.
+/// \param apply_exit_status if set, update $status within the parser, otherwise do not.
 ///
-/// \return the status of the last job to exit, or -1 if en error was encountered.
+/// \return a value appropriate for populating $status.
+int exec_subshell(const wcstring &cmd, parser_t &parser, bool apply_exit_status);
 int exec_subshell(const wcstring &cmd, parser_t &parser, wcstring_list_t &outputs,
-                  bool apply_exit_status, bool is_subcmd = false,
-                  maybe_t<pid_t> parent_pgid = none());
-int exec_subshell(const wcstring &cmd, parser_t &parser, bool apply_exit_status,
-                  bool is_subcmd = false);
+                  bool apply_exit_status);
+
+/// Like exec_subshell, but only returns expansion-breaking errors. That is, a zero return means
+/// "success" (even though the command may have failed), a non-zero return means that we should
+/// halt expansion. If the \p pgid is supplied, then any spawned external commands should join that
+/// pgroup.
+int exec_subshell_for_expand(const wcstring &cmd, parser_t &parser,
+                             const job_group_ref_t &job_group, wcstring_list_t &outputs);
 
 /// Loops over close until the syscall was run without being interrupted.
 void exec_close(int fd);
 
-/// Gets the interpreter for a given command.
-char *get_interpreter(const char *command, char *interpreter, size_t buff_size);
+/// Add signals that should be masked for external processes in this job.
+bool blocked_signals_for_job(const job_t &job, sigset_t *sigmask);
 
 #endif

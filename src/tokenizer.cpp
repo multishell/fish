@@ -316,10 +316,10 @@ maybe_t<pipe_or_redir_t> pipe_or_redir_t::from_string(const wchar_t *buff) {
         cmd >? file      noclobber redirection
         cmd >>? file     appending noclobber redirection
         cmd 2> file      file redirection with explicit fd
-        cmd >&2 file     fd redirection with no explicit src fd (stdout is used)
-        cmd 1>&2 file    fd redirection with an explicit src fd
-        cmd <&2 file     fd redirection with no explicit src fd (stdin is used)
-        cmd 3<&0 file    fd redirection with an explicit src fd
+        cmd >&2          fd redirection with no explicit src fd (stdout is used)
+        cmd 1>&2         fd redirection with an explicit src fd
+        cmd <&2          fd redirection with no explicit src fd (stdin is used)
+        cmd 3<&0         fd redirection with an explicit src fd
         cmd &> file      redirection with stderr merge
         cmd ^ file       caret (stderr) redirection, perhaps disabled via feature flags
         cmd ^^ file      caret (stderr) redirection, perhaps disabled via feature flags
@@ -375,7 +375,8 @@ maybe_t<pipe_or_redir_t> pipe_or_redir_t::from_string(const wchar_t *buff) {
                                    : STDOUT_FILENO;              // like >|
             } else if (try_consume(L'&')) {
                 // This is a redirection to an fd.
-                // Note that we allow ">>&", but it's still just writing to the fd - "appending" to it doesn't make sense.
+                // Note that we allow ">>&", but it's still just writing to the fd - "appending" to
+                // it doesn't make sense.
                 result.mode = redirection_mode_t::fd;
                 result.fd = has_fd ? parse_fd(fd_start, fd_end)  // like 1>&2
                                    : STDOUT_FILENO;              // like >&2
@@ -383,7 +384,8 @@ maybe_t<pipe_or_redir_t> pipe_or_redir_t::from_string(const wchar_t *buff) {
                 // This is a redirection to a file.
                 result.fd = has_fd ? parse_fd(fd_start, fd_end)  // like 1> file.txt
                                    : STDOUT_FILENO;              // like > file.txt
-                if (result.mode != redirection_mode_t::append) result.mode = redirection_mode_t::overwrite;
+                if (result.mode != redirection_mode_t::append)
+                    result.mode = redirection_mode_t::overwrite;
                 // Note 'echo abc >>? file' is valid: it means append and noclobber.
                 // But here "noclobber" means the file must not exist, so appending
                 // can be ignored.
@@ -496,12 +498,10 @@ maybe_t<tok_t> tokenizer_t::next() {
 
     // Consume non-newline whitespace. If we get an escaped newline, mark it and continue past
     // it.
-    bool preceding_escaped_nl = false;
     for (;;) {
         if (this->token_cursor[0] == L'\\' && this->token_cursor[1] == L'\n') {
             this->token_cursor += 2;
             this->continue_line_after_comment = true;
-            preceding_escaped_nl = true;
         } else if (iswspace_not_nl(this->token_cursor[0])) {
             this->token_cursor++;
         } else {
@@ -525,7 +525,6 @@ maybe_t<tok_t> tokenizer_t::next() {
             tok_t result(token_type_t::comment);
             result.offset = comment_start - this->start;
             result.length = comment_len;
-            result.preceding_escaped_nl = preceding_escaped_nl;
             return result;
         }
         while (iswspace_not_nl(this->token_cursor[0])) this->token_cursor++;
@@ -649,7 +648,6 @@ maybe_t<tok_t> tokenizer_t::next() {
         }
     }
     assert(result.has_value() && "Should have a token");
-    result->preceding_escaped_nl = preceding_escaped_nl;
     return result;
 }
 
@@ -689,8 +687,11 @@ bool move_word_state_machine_t::consume_char_punctuation(wchar_t c) {
                 consumed = true;
                 if (iswspace(c)) {
                     state = s_whitespace;
+                } else if (iswalnum(c)) {
+                    state = s_alphanumeric;
                 } else {
-                    // Don't allow switching type (ws->nonws) after non-whitespace.
+                    // Don't allow switching type (ws->nonws) after non-whitespace and
+                    // non-alphanumeric.
                     state = s_rest;
                 }
                 break;
@@ -809,6 +810,7 @@ bool move_word_state_machine_t::consume_char_path_components(wchar_t c) {
 }
 
 bool move_word_state_machine_t::consume_char_whitespace(wchar_t c) {
+    // Consume a "word" of printable characters plus any leading whitespace.
     enum { s_always_one = 0, s_blank, s_graph, s_end };
 
     bool consumed = false;
@@ -816,11 +818,17 @@ bool move_word_state_machine_t::consume_char_whitespace(wchar_t c) {
         switch (state) {
             case s_always_one: {
                 consumed = true;  // always consume the first character
-                state = s_blank;
+                // If it's not whitespace, only consume those from here.
+                if (!iswspace(c)) {
+                    state = s_graph;
+                } else {
+                    // If it's whitespace, keep consuming whitespace until the graphs.
+                    state = s_blank;
+                }
                 break;
             }
             case s_blank: {
-                if (iswblank(c)) {
+                if (iswspace(c)) {
                     consumed = true;  // consumed whitespace
                 } else {
                     state = s_graph;
@@ -828,7 +836,7 @@ bool move_word_state_machine_t::consume_char_whitespace(wchar_t c) {
                 break;
             }
             case s_graph: {
-                if (iswgraph(c)) {
+                if (!iswspace(c)) {
                     consumed = true;  // consumed printable non-space
                 } else {
                     state = s_end;

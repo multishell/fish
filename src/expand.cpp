@@ -16,8 +16,9 @@
 #ifdef SunOS
 #include <procfs.h>
 #endif
-#if __APPLE__
-#include <sys/time.h> // Required to build with old SDK versions
+#ifdef __APPLE__
+#include <sys/time.h>  // Required to build with old SDK versions
+// proc.h needs to be included *after* time.h, this comment stops clang-format from reordering.
 #include <sys/proc.h>
 #else
 #include <dirent.h>
@@ -118,6 +119,20 @@ static void append_cmdsub_error(parse_error_list_t *errors, size_t source_start,
     errors->push_back(error);
 }
 
+/// Append an overflow error, when expansion produces too much data.
+static expand_result_t append_overflow_error(parse_error_list_t *errors,
+                                             size_t source_start = SOURCE_LOCATION_UNKNOWN) {
+    if (errors) {
+        parse_error_t error;
+        error.source_start = source_start;
+        error.source_length = 0;
+        error.code = parse_error_generic;
+        error.text = _(L"Expansion produced too many results");
+        errors->push_back(std::move(error));
+    }
+    return expand_result_t::make_error(STATUS_EXPAND_ERROR);
+}
+
 /// Test if the specified string does not contain character which can not be used inside a quoted
 /// string.
 static bool is_quotable(const wcstring &str) {
@@ -126,9 +141,8 @@ static bool is_quotable(const wcstring &str) {
 
 wcstring expand_escape_variable(const env_var_t &var) {
     wcstring buff;
-    wcstring_list_t lst;
+    const wcstring_list_t &lst = var.as_list();
 
-    var.to_list(lst);
     for (size_t j = 0; j < lst.size(); j++) {
         const wcstring &el = lst.at(j);
         if (j) buff.append(L"  ");
@@ -190,13 +204,21 @@ static size_t parse_slice(const wchar_t *in, wchar_t **end_ptr, std::vector<long
         }
 
         const wchar_t *end;
-        long tmp = fish_wcstol(&in[pos], &end);
-        // We don't test `*end` as is typically done because we expect it to not be the null char.
-        // Ignore the case of errno==-1 because it means the end char wasn't the null char.
-        if (errno > 0) {
-            return pos;
+        long tmp;
+        if (idx.empty() && in[pos] == L'.' && in[pos + 1] == L'.') {
+            // If we are at the first index expression, a missing start-index means the range starts
+            // at the first item.
+            tmp = 1;  // first index
+            end = &in[pos];
+        } else {
+            tmp = fish_wcstol(&in[pos], &end);
+            if (errno > 0) {
+                // We don't test `*end` as is typically done because we expect it to not be the null
+                // char. Ignore the case of errno==-1 because it means the end char wasn't the null
+                // char.
+                return pos;
+            }
         }
-        // debug( 0, L"Push idx %d", tmp );
 
         long i1 = tmp > -1 ? tmp : size + tmp + 1;
         pos = end - in;
@@ -204,15 +226,23 @@ static size_t parse_slice(const wchar_t *in, wchar_t **end_ptr, std::vector<long
         if (in[pos] == L'.' && in[pos + 1] == L'.') {
             pos += 2;
             while (in[pos] == INTERNAL_SEPARATOR) pos++;
+            while (iswspace(in[pos])) pos++;  // Allow the space in "[.. ]".
 
-            long tmp1 = fish_wcstol(&in[pos], &end);
-            // Ignore the case of errno==-1 because it means the end char wasn't the null char.
-            if (errno > 0) {
-                return pos;
+            long tmp1;
+            // If we are at the last index range expression  then a missing end-index means the
+            // range spans until the last item.
+            if (in[pos] == L']') {
+                tmp1 = -1;  // last index
+                end = &in[pos];
+            } else {
+                tmp1 = fish_wcstol(&in[pos], &end);
+                // Ignore the case of errno==-1 because it means the end char wasn't the null char.
+                if (errno > 0) {
+                    return pos;
+                }
             }
             pos = end - in;
 
-            // debug( 0, L"Push range %d %d", tmp, tmp1 );
             long i2 = tmp1 > -1 ? tmp1 : size + tmp1 + 1;
             // Skip sequences that are entirely outside.
             // This means "17..18" expands to nothing if there are less than 17 elements.
@@ -231,7 +261,6 @@ static size_t parse_slice(const wchar_t *in, wchar_t **end_ptr, std::vector<long
                 i1 = i1 < size ? i1 : size;
                 i2 = i2 < size ? i2 : size;
             }
-            // debug( 0, L"Push range idx %d %d", i1, i2 );
             for (long jjj = i1; jjj * direction <= i2 * direction; jjj += direction) {
                 // FLOGF(error, L"Expand range [subst]: %i\n", jjj);
                 idx.push_back(jjj);
@@ -239,7 +268,6 @@ static size_t parse_slice(const wchar_t *in, wchar_t **end_ptr, std::vector<long
             continue;
         }
 
-        // debug( 0, L"Push idx %d", tmp );
         literal_zero_index = literal_zero_index && tmp == 0;
         idx.push_back(i1);
     }
@@ -258,27 +286,26 @@ static size_t parse_slice(const wchar_t *in, wchar_t **end_ptr, std::vector<long
 /// Expand all environment variables in the string *ptr.
 ///
 /// This function is slow, fragile and complicated. There are lots of little corner cases, like
-/// $$foo should do a double expansion, $foo$bar should not double expand bar, etc. Also, it's easy
-/// to accidentally leak memory on array out of bounds errors an various other situations. All in
-/// all, this function should be rewritten, split out into multiple logical units and carefully
-/// tested. After that, it can probably be optimized to do fewer memory allocations, fewer string
-/// scans and overall just less work. But until that happens, don't edit it unless you know exactly
-/// what you are doing, and do proper testing afterwards.
+/// $$foo should do a double expansion, $foo$bar should not double expand bar, etc.
 ///
 /// This function operates on strings backwards, starting at last_idx.
 ///
 /// Note: last_idx is considered to be where it previously finished procesisng. This means it
 /// actually starts operating on last_idx-1. As such, to process a string fully, pass string.size()
 /// as last_idx instead of string.size()-1.
-static bool expand_variables(wcstring instr, completion_list_t *out, size_t last_idx,
-                             const environment_t &vars, parse_error_list_t *errors) {
+///
+/// \return the result of expansion.
+static expand_result_t expand_variables(wcstring instr, completion_receiver_t *out, size_t last_idx,
+                                        const environment_t &vars, parse_error_list_t *errors) {
     const size_t insize = instr.size();
 
     // last_idx may be 1 past the end of the string, but no further.
     assert(last_idx <= insize && "Invalid last_idx");
     if (last_idx == 0) {
-        append_completion(out, std::move(instr));
-        return true;
+        if (!out->add(std::move(instr))) {
+            return append_overflow_error(errors);
+        }
+        return expand_result_t::ok;
     }
 
     // Locate the last VARIABLE_EXPAND or VARIABLE_EXPAND_SINGLE
@@ -293,8 +320,10 @@ static bool expand_variables(wcstring instr, completion_list_t *out, size_t last
     }
     if (varexp_char_idx >= instr.size()) {
         // No variable expand char, we're done.
-        append_completion(out, std::move(instr));
-        return true;
+        if (!out->add(std::move(instr))) {
+            return append_overflow_error(errors);
+        }
+        return expand_result_t::ok;
     }
 
     // Get the variable name.
@@ -318,7 +347,7 @@ static bool expand_variables(wcstring instr, completion_list_t *out, size_t last
             parse_util_expand_variable_error(instr, 0 /* global_token_pos */, varexp_char_idx,
                                              errors);
         }
-        return false;
+        return expand_result_t::make_error(STATUS_EXPAND_ERROR);
     }
 
     // Get the variable name as a string, then try to get the variable from env.
@@ -326,13 +355,13 @@ static bool expand_variables(wcstring instr, completion_list_t *out, size_t last
     // Do a dirty hack to make sliced history fast (#4650). We expand from either a variable, or a
     // history_t. Note that "history" is read only in env.cpp so it's safe to special-case it in
     // this way (it cannot be shadowed, etc).
-    history_t *history = nullptr;
+    std::shared_ptr<history_t> history{};
     maybe_t<env_var_t> var{};
     if (var_name == L"history") {
         // Note reader_get_history may return null, if we are running non-interactively (e.g. from
         // web_config).
         if (is_main_thread()) {
-            history = &history_t::history_with_name(history_session_id(env_stack_t::principal()));
+            history = history_t::with_name(history_session_id(env_stack_t::principal()));
         }
     } else if (var_name != wcstring{VARIABLE_EXPAND_EMPTY}) {
         var = vars.get(var_name);
@@ -365,7 +394,7 @@ static bool expand_variables(wcstring instr, completion_list_t *out, size_t last
             } else {
                 append_syntax_error(errors, slice_start + bad_pos, L"Invalid index value");
             }
-            return false;
+            return expand_result_t::make_error(STATUS_EXPAND_ERROR);
         }
         var_name_and_slice_stop = (slice_end - in);
     }
@@ -374,7 +403,7 @@ static bool expand_variables(wcstring instr, completion_list_t *out, size_t last
         // Expanding a non-existent variable.
         if (!is_single) {
             // Normal expansions of missing variables successfully expand to nothing.
-            return true;
+            return expand_result_t::ok;
         } else {
             // Expansion to single argument.
             // Replace the variable name and slice with VARIABLE_EXPAND_EMPTY.
@@ -443,9 +472,11 @@ static bool expand_variables(wcstring instr, completion_list_t *out, size_t last
         return expand_variables(std::move(res), out, varexp_char_idx, vars, errors);
     } else {
         // Normal cartesian-product expansion.
-        for (const wcstring &item : var_item_list) {
+        for (wcstring &item : var_item_list) {
             if (varexp_char_idx == 0 && var_name_and_slice_stop == insize) {
-                append_completion(out, item);
+                if (!out->add(std::move(item))) {
+                    return append_overflow_error(errors);
+                }
             } else {
                 wcstring new_in(instr, 0, varexp_char_idx);
                 if (!new_in.empty()) {
@@ -457,18 +488,19 @@ static bool expand_variables(wcstring instr, completion_list_t *out, size_t last
                 }
                 new_in.append(item);
                 new_in.append(instr, var_name_and_slice_stop, wcstring::npos);
-                if (!expand_variables(std::move(new_in), out, varexp_char_idx, vars, errors)) {
-                    return false;
+                auto res = expand_variables(std::move(new_in), out, varexp_char_idx, vars, errors);
+                if (res.result != expand_result_t::ok) {
+                    return res;
                 }
             }
         }
     }
-    return true;
+    return expand_result_t::ok;
 }
 
-/// Perform brace expansion.
-static expand_result_t expand_braces(const wcstring &instr, expand_flags_t flags,
-                                     completion_list_t *out, parse_error_list_t *errors) {
+/// Perform brace expansion, placing the expanded strings into \p out.
+static expand_result_t expand_braces(wcstring &&instr, expand_flags_t flags,
+                                     completion_receiver_t *out, parse_error_list_t *errors) {
     bool syntax_error = false;
     int brace_count = 0;
 
@@ -524,17 +556,19 @@ static expand_result_t expand_braces(const wcstring &instr, expand_flags_t flags
             }
 
             // Note: this code looks very fishy, apparently it has never worked.
-            return expand_braces(mod, expand_flag::skip_cmdsubst, out, errors);
+            return expand_braces(std::move(mod), expand_flag::skip_cmdsubst, out, errors);
         }
     }
 
     if (syntax_error) {
         append_syntax_error(errors, SOURCE_LOCATION_UNKNOWN, _(L"Mismatched braces"));
-        return expand_result_t::error;
+        return expand_result_t::make_error(STATUS_EXPAND_ERROR);
     }
 
     if (brace_begin == nullptr) {
-        append_completion(out, instr);
+        if (!out->add(std::move(instr))) {
+            return expand_result_t::error;
+        }
         return expand_result_t::ok;
     }
 
@@ -559,7 +593,7 @@ static expand_result_t expand_braces(const wcstring &instr, expand_flags_t flags
             whole_item.append(in, length_preceding_braces);
             whole_item.append(item.begin(), item.end());
             whole_item.append(brace_end + 1);
-            expand_braces(whole_item, flags, out, errors);
+            expand_braces(std::move(whole_item), flags, out, errors);
 
             item_begin = pos + 1;
             if (pos == brace_end) break;
@@ -576,118 +610,113 @@ static expand_result_t expand_braces(const wcstring &instr, expand_flags_t flags
     return expand_result_t::ok;
 }
 
-/// Perform cmdsubst expansion.
-static bool expand_cmdsubst(wcstring input, const operation_context_t &ctx,
-                            completion_list_t *out_list, parse_error_list_t *errors) {
+/// Expand a command substitution \p input, executing on \p ctx, and inserting the results into
+/// \p out_list, or any errors into \p errors. \return an expand result.
+static expand_result_t expand_cmdsubst(wcstring input, const operation_context_t &ctx,
+                                       completion_receiver_t *out, parse_error_list_t *errors) {
     assert(ctx.parser && "Cannot expand without a parser");
-    wchar_t *paren_begin = nullptr, *paren_end = nullptr;
-    wchar_t *tail_begin = nullptr;
-    size_t i, j;
+    size_t cursor = 0;
+    size_t paren_begin = 0;
+    size_t paren_end = 0;
+    wcstring subcmd;
 
-    const wchar_t *const in = input.c_str();
-
-    switch (parse_util_locate_cmdsubst(in, &paren_begin, &paren_end, false)) {
+    switch (parse_util_locate_cmdsubst_range(input, &cursor, &subcmd, &paren_begin, &paren_end,
+                                             false)) {
         case -1: {
             append_syntax_error(errors, SOURCE_LOCATION_UNKNOWN, L"Mismatched parenthesis");
-            return false;
+            return expand_result_t::make_error(STATUS_EXPAND_ERROR);
         }
         case 0: {
-            append_completion(out_list, std::move(input));
-            return true;
+            if (!out->add(std::move(input))) {
+                return append_overflow_error(errors);
+            }
+            return expand_result_t::ok;
         }
         case 1: {
             break;
         }
         default: {
             DIE("unhandled parse_ret value");
-            break;
         }
     }
 
     wcstring_list_t sub_res;
-    const wcstring subcmd(paren_begin + 1, paren_end - paren_begin - 1);
-    if (exec_subshell(subcmd, *ctx.parser, sub_res, true /* apply_exit_status */,
-                      true /* is_subcmd */, ctx.parent_pgid) == -1) {
-        append_cmdsub_error(errors, SOURCE_LOCATION_UNKNOWN,
-                            L"Unknown error while evaluating command substitution");
-        return false;
+    int subshell_status = exec_subshell_for_expand(subcmd, *ctx.parser, ctx.job_group, sub_res);
+    if (subshell_status != 0) {
+        // TODO: Ad-hoc switch, how can we enumerate the possible errors more safely?
+        const wchar_t *err;
+        switch (subshell_status) {
+            case STATUS_READ_TOO_MUCH:
+                err = L"Too much data emitted by command substitution so it was discarded";
+                break;
+            case STATUS_CMD_ERROR:
+                err = L"Too many active file descriptors";
+                break;
+            default:
+                err = L"Unknown error while evaluating command substitution";
+                break;
+        }
+        append_cmdsub_error(errors, paren_begin, _(err));
+        return expand_result_t::make_error(subshell_status);
     }
 
-    if (ctx.parser->get_last_status() == STATUS_READ_TOO_MUCH) {
-        append_cmdsub_error(
-            errors, in - paren_begin,
-            _(L"Too much data emitted by command substitution so it was discarded\n"));
-        return false;
-    }
-
-    tail_begin = paren_end + 1;
-    if (*tail_begin == L'[') {
+    // Expand slices like (cat /var/words)[1]
+    size_t tail_begin = paren_end + 1;
+    if (tail_begin < input.size() && input.at(tail_begin) == L'[') {
+        const wchar_t *in = input.c_str();
         std::vector<long> slice_idx;
-        const wchar_t *const slice_begin = tail_begin;
-        wchar_t *slice_end;
-        size_t bad_pos;
-
-        bad_pos = parse_slice(slice_begin, &slice_end, slice_idx, sub_res.size());
+        const wchar_t *const slice_begin = in + tail_begin;
+        wchar_t *slice_end = nullptr;
+        size_t bad_pos = parse_slice(slice_begin, &slice_end, slice_idx, sub_res.size());
         if (bad_pos != 0) {
-            append_syntax_error(errors, slice_begin - in + bad_pos, L"Invalid index value");
-            return false;
+            if (slice_begin[bad_pos] == L'0') {
+                append_syntax_error(errors, slice_begin - in + bad_pos,
+                                    L"array indices start at 1, not 0.");
+            } else {
+                append_syntax_error(errors, slice_begin - in + bad_pos, L"Invalid index value");
+            }
+            return expand_result_t::make_error(STATUS_EXPAND_ERROR);
         }
 
         wcstring_list_t sub_res2;
-        tail_begin = slice_end;
-        for (i = 0; i < slice_idx.size(); i++) {
-            long idx = slice_idx.at(i);
+        tail_begin = slice_end - in;
+        for (long idx : slice_idx) {
             if (static_cast<size_t>(idx) > sub_res.size() || idx < 1) {
                 continue;
             }
-            idx = idx - 1;
-
-            sub_res2.push_back(sub_res.at(idx));
-            // debug( 0, L"Pushing item '%ls' with index %d onto sliced result", al_get(
-            // sub_res, idx ), idx );
-            // sub_res[idx] = 0; // ??
+            // -1 to convert from 1-based slice index to C++ 0-based vector index.
+            sub_res2.push_back(sub_res.at(idx - 1));
         }
         sub_res = std::move(sub_res2);
     }
 
     // Recursively call ourselves to expand any remaining command substitutions. The result of this
     // recursive call using the tail of the string is inserted into the tail_expand array list
-    completion_list_t tail_expand;
-    expand_cmdsubst(tail_begin, ctx, &tail_expand, errors);  // TODO: offset error locations
+    completion_receiver_t tail_expand_recv = out->subreceiver();
+    expand_cmdsubst(input.substr(tail_begin), ctx, &tail_expand_recv,
+                    errors);  // TODO: offset error locations
+    completion_list_t tail_expand = tail_expand_recv.take();
 
     // Combine the result of the current command substitution with the result of the recursive tail
     // expansion.
-    for (i = 0; i < sub_res.size(); i++) {
-        const wcstring &sub_item = sub_res.at(i);
-        const wcstring sub_item2 = escape_string(sub_item, 1);
-
-        wcstring whole_item;
-
-        for (j = 0; j < tail_expand.size(); j++) {
-            whole_item.clear();
-            const wcstring &tail_item = tail_expand.at(j).completion;
-
-            // sb_append_substring( &whole_item, in, len1 );
-            whole_item.append(in, paren_begin - in);
-
-            // sb_append_char( &whole_item, INTERNAL_SEPARATOR );
+    for (const wcstring &sub_item : sub_res) {
+        wcstring sub_item2 = escape_string(sub_item, ESCAPE_ALL);
+        for (const completion_t &tail_item : tail_expand) {
+            wcstring whole_item;
+            whole_item.reserve(paren_begin + 1 + sub_item2.size() + 1 +
+                               tail_item.completion.size());
+            whole_item.append(input, 0, paren_begin);
             whole_item.push_back(INTERNAL_SEPARATOR);
-
-            // sb_append_substring( &whole_item, sub_item2, item_len );
             whole_item.append(sub_item2);
-
-            // sb_append_char( &whole_item, INTERNAL_SEPARATOR );
             whole_item.push_back(INTERNAL_SEPARATOR);
-
-            // sb_append( &whole_item, tail_item );
-            whole_item.append(tail_item);
-
-            // al_push( out, whole_item.buff );
-            append_completion(out_list, std::move(whole_item));
+            whole_item.append(tail_item.completion);
+            if (!out->add(std::move(whole_item))) {
+                return append_overflow_error(errors);
+            }
         }
     }
 
-    return ctx.parser->get_last_status() != STATUS_READ_TOO_MUCH;
+    return expand_result_t::ok;
 }
 
 // Given that input[0] is HOME_DIRECTORY or tilde (ugh), return the user's name. Return the empty
@@ -865,47 +894,46 @@ class expander_t {
     /// An expansion stage is a member function pointer.
     /// It accepts the input string (transferring ownership) and returns the list of output
     /// completions by reference. It may return an error, which halts expansion.
-    using stage_t = expand_result_t (expander_t::*)(wcstring, completion_list_t *);
+    using stage_t = expand_result_t (expander_t::*)(wcstring, completion_receiver_t *);
 
-    expand_result_t stage_cmdsubst(wcstring input, completion_list_t *out);
-    expand_result_t stage_variables(wcstring input, completion_list_t *out);
-    expand_result_t stage_braces(wcstring input, completion_list_t *out);
-    expand_result_t stage_home_and_self(wcstring input, completion_list_t *out);
-    expand_result_t stage_wildcards(wcstring path_to_expand, completion_list_t *out);
+    expand_result_t stage_cmdsubst(wcstring input, completion_receiver_t *out);
+    expand_result_t stage_variables(wcstring input, completion_receiver_t *out);
+    expand_result_t stage_braces(wcstring input, completion_receiver_t *out);
+    expand_result_t stage_home_and_self(wcstring input, completion_receiver_t *out);
+    expand_result_t stage_wildcards(wcstring path_to_expand, completion_receiver_t *out);
 
     expander_t(const operation_context_t &ctx, expand_flags_t flags, parse_error_list_t *errors)
         : ctx(ctx), flags(flags), errors(errors) {}
 
    public:
-    static expand_result_t expand_string(wcstring input, completion_list_t *out_completions,
+    static expand_result_t expand_string(wcstring input, completion_receiver_t *out_completions,
                                          expand_flags_t flags, const operation_context_t &ctx,
                                          parse_error_list_t *errors);
 };
 
-expand_result_t expander_t::stage_cmdsubst(wcstring input, completion_list_t *out) {
+expand_result_t expander_t::stage_cmdsubst(wcstring input, completion_receiver_t *out) {
     if (flags & expand_flag::skip_cmdsubst) {
         size_t cur = 0, start = 0, end;
         switch (parse_util_locate_cmdsubst_range(input, &cur, nullptr, &start, &end, true)) {
             case 0:
-                append_completion(out, std::move(input));
-                break;
+                if (!out->add(std::move(input))) {
+                    return append_overflow_error(errors);
+                }
+                return expand_result_t::ok;
             case 1:
                 append_cmdsub_error(errors, start, L"Command substitutions not allowed");
                 /* intentionally falls through */
             case -1:
             default:
-                return expand_result_t::error;
+                return expand_result_t::make_error(STATUS_EXPAND_ERROR);
         }
     } else {
         assert(ctx.parser && "Must have a parser to expand command substitutions");
-        bool cmdsubst_ok = expand_cmdsubst(std::move(input), ctx, out, errors);
-        if (!cmdsubst_ok) return expand_result_t::error;
+        return expand_cmdsubst(std::move(input), ctx, out, errors);
     }
-
-    return expand_result_t::ok;
 }
 
-expand_result_t expander_t::stage_variables(wcstring input, completion_list_t *out) {
+expand_result_t expander_t::stage_variables(wcstring input, completion_receiver_t *out) {
     // We accept incomplete strings here, since complete uses expand_string to expand incomplete
     // strings from the commandline.
     wcstring next;
@@ -917,30 +945,32 @@ expand_result_t expander_t::stage_variables(wcstring input, completion_list_t *o
                 i = L'$';
             }
         }
-        append_completion(out, std::move(next));
+        if (!out->add(std::move(next))) {
+            return append_overflow_error(errors);
+        }
+        return expand_result_t::ok;
     } else {
         size_t size = next.size();
-        if (!expand_variables(std::move(next), out, size, ctx.vars, errors)) {
-            return expand_result_t::error;
-        }
+        return expand_variables(std::move(next), out, size, ctx.vars, errors);
     }
-    return expand_result_t::ok;
 }
 
-expand_result_t expander_t::stage_braces(wcstring input, completion_list_t *out) {
-    return expand_braces(input, flags, out, errors);
+expand_result_t expander_t::stage_braces(wcstring input, completion_receiver_t *out) {
+    return expand_braces(std::move(input), flags, out, errors);
 }
 
-expand_result_t expander_t::stage_home_and_self(wcstring input, completion_list_t *out) {
+expand_result_t expander_t::stage_home_and_self(wcstring input, completion_receiver_t *out) {
     if (!(flags & expand_flag::skip_home_directories)) {
         expand_home_directory(input, ctx.vars);
     }
     expand_percent_self(input);
-    append_completion(out, std::move(input));
+    if (!out->add(std::move(input))) {
+        return append_overflow_error(errors);
+    }
     return expand_result_t::ok;
 }
 
-expand_result_t expander_t::stage_wildcards(wcstring path_to_expand, completion_list_t *out) {
+expand_result_t expander_t::stage_wildcards(wcstring path_to_expand, completion_receiver_t *out) {
     expand_result_t result = expand_result_t::ok;
 
     remove_internal_separator(&path_to_expand, flags & expand_flag::skip_wildcards);
@@ -1004,47 +1034,54 @@ expand_result_t expander_t::stage_wildcards(wcstring path_to_expand, completion_
         }
 
         result = expand_result_t::wildcard_no_match;
-        completion_list_t expanded;
+        completion_receiver_t expanded_recv = out->subreceiver();
         for (const auto &effective_working_dir : effective_working_dirs) {
-            wildcard_expand_result_t expand_res = wildcard_expand_string(
-                path_to_expand, effective_working_dir, flags, ctx.cancel_checker, &expanded);
+            wildcard_result_t expand_res = wildcard_expand_string(
+                path_to_expand, effective_working_dir, flags, ctx.cancel_checker, &expanded_recv);
             switch (expand_res) {
-                case wildcard_expand_result_t::match:
+                case wildcard_result_t::match:
                     result = expand_result_t::ok;
                     break;
-                case wildcard_expand_result_t::no_match:
+                case wildcard_result_t::no_match:
                     break;
-                case wildcard_expand_result_t::cancel:
-                    result = expand_result_t::error;
-                    break;
+                case wildcard_result_t::overflow:
+                    return append_overflow_error(errors);
+                case wildcard_result_t::cancel:
+                    return expand_result_t::cancel;
             }
         }
 
+        completion_list_t expanded = expanded_recv.take();
         std::sort(expanded.begin(), expanded.end(),
                   [&](const completion_t &a, const completion_t &b) {
                       return wcsfilecmp_glob(a.completion.c_str(), b.completion.c_str()) < 0;
                   });
-
-        std::move(expanded.begin(), expanded.end(), std::back_inserter(*out));
+        if (!out->add_list(std::move(expanded))) {
+            result = expand_result_t::error;
+        }
     } else {
         // Can't fully justify this check. I think it's that SKIP_WILDCARDS is used when completing
         // to mean don't do file expansions, so if we're not doing file expansions, just drop this
         // completion on the floor.
         if (!(flags & expand_flag::for_completions)) {
-            append_completion(out, std::move(path_to_expand));
+            if (!out->add(std::move(path_to_expand))) {
+                return append_overflow_error(errors);
+            }
         }
     }
     return result;
 }
 
-expand_result_t expander_t::expand_string(wcstring input, completion_list_t *out_completions,
+expand_result_t expander_t::expand_string(wcstring input, completion_receiver_t *out_completions,
                                           expand_flags_t flags, const operation_context_t &ctx,
                                           parse_error_list_t *errors) {
     assert(((flags & expand_flag::skip_cmdsubst) || ctx.parser) &&
            "Must have a parser if not skipping command substitutions");
     // Early out. If we're not completing, and there's no magic in the input, we're done.
     if (!(flags & expand_flag::for_completions) && expand_is_clean(input)) {
-        append_completion(out_completions, std::move(input));
+        if (!out_completions->add(std::move(input))) {
+            return append_overflow_error(errors);
+        }
         return expand_result_t::ok;
     }
 
@@ -1056,12 +1093,17 @@ expand_result_t expander_t::expand_string(wcstring input, completion_list_t *out
                               &expander_t::stage_wildcards};
 
     // Load up our single initial completion.
-    completion_list_t completions, output_storage;
+    completion_list_t completions;
     append_completion(&completions, input);
 
+    completion_receiver_t output_storage = out_completions->subreceiver();
     expand_result_t total_result = expand_result_t::ok;
     for (stage_t stage : stages) {
         for (completion_t &comp : completions) {
+            if (ctx.check_cancel()) {
+                total_result = expand_result_t::cancel;
+                break;
+            }
             expand_result_t this_result =
                 (expand.*stage)(std::move(comp.completion), &output_storage);
             total_result = this_result;
@@ -1071,7 +1113,7 @@ expand_result_t expander_t::expand_string(wcstring input, completion_list_t *out
         }
 
         // Output becomes our next stage's input.
-        completions.swap(output_storage);
+        output_storage.swap(completions);
         output_storage.clear();
         if (total_result == expand_result_t::error) {
             break;
@@ -1088,20 +1130,29 @@ expand_result_t expander_t::expand_string(wcstring input, completion_list_t *out
         total_result = expand_result_t::ok;
     }
 
-    if (total_result != expand_result_t::error) {
+    if (total_result == expand_result_t::ok) {
         // Hack to un-expand tildes (see #647).
         if (!(flags & expand_flag::skip_home_directories)) {
             unexpand_tildes(input, ctx.vars, &completions);
         }
-        out_completions->insert(out_completions->end(),
-                                std::make_move_iterator(completions.begin()),
-                                std::make_move_iterator(completions.end()));
+        if (!out_completions->add_list(std::move(completions))) {
+            total_result = append_overflow_error(errors);
+        }
     }
     return total_result;
 }
 }  // namespace
 
 expand_result_t expand_string(wcstring input, completion_list_t *out_completions,
+                              expand_flags_t flags, const operation_context_t &ctx,
+                              parse_error_list_t *errors) {
+    completion_receiver_t recv(std::move(*out_completions), ctx.expansion_limit);
+    auto res = expand_string(std::move(input), &recv, flags, ctx, errors);
+    *out_completions = recv.take();
+    return res;
+}
+
+expand_result_t expand_string(wcstring input, completion_receiver_t *out_completions,
                               expand_flags_t flags, const operation_context_t &ctx,
                               parse_error_list_t *errors) {
     return expander_t::expand_string(std::move(input), out_completions, flags, ctx, errors);
@@ -1115,8 +1166,7 @@ bool expand_one(wcstring &string, expand_flags_t flags, const operation_context_
         return true;
     }
 
-    if (expand_string(std::move(string), &completions, flags | expand_flag::no_descriptions, ctx,
-                      errors) != expand_result_t::error &&
+    if (expand_string(std::move(string), &completions, flags, ctx, errors) == expand_result_t::ok &&
         completions.size() == 1) {
         string = std::move(completions.at(0).completion);
         return true;
@@ -1126,18 +1176,20 @@ bool expand_one(wcstring &string, expand_flags_t flags, const operation_context_
 
 expand_result_t expand_to_command_and_args(const wcstring &instr, const operation_context_t &ctx,
                                            wcstring *out_cmd, wcstring_list_t *out_args,
-                                           parse_error_list_t *errors) {
+                                           parse_error_list_t *errors, bool skip_wildcards) {
     // Fast path.
     if (expand_is_clean(instr)) {
         *out_cmd = instr;
         return expand_result_t::ok;
     }
 
+    expand_flags_t eflags{expand_flag::skip_cmdsubst};
+    if (skip_wildcards) {
+        eflags.set(expand_flag::skip_wildcards);
+    }
+
     completion_list_t completions;
-    expand_result_t expand_err = expand_string(
-        instr, &completions,
-        {expand_flag::skip_cmdsubst, expand_flag::no_descriptions, expand_flag::skip_jobs}, ctx,
-        errors);
+    expand_result_t expand_err = expand_string(instr, &completions, eflags, ctx, errors);
     if (expand_err == expand_result_t::ok) {
         // The first completion is the command, any remaning are arguments.
         bool first = true;

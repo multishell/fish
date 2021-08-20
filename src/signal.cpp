@@ -16,6 +16,7 @@
 #include "proc.h"
 #include "reader.h"
 #include "signal.h"
+#include "termsize.h"
 #include "topic_monitor.h"
 #include "wutil.h"  // IWYU pragma: keep
 
@@ -144,9 +145,9 @@ static const struct lookup_entry signal_table[] = {
 
 /// Test if \c name is a string describing the signal named \c canonical.
 static int match_signal_name(const wchar_t *canonical, const wchar_t *name) {
-    if (wcsncasecmp(name, L"sig", 3) == 0) name += 3;
+    if (wcsncasecmp(name, L"sig", const_strlen("sig")) == 0) name += 3;
 
-    return wcscasecmp(canonical + 3, name) == 0;
+    return wcscasecmp(canonical + const_strlen("sig"), name) == 0;
 }
 
 int wcs2sig(const wchar_t *str) {
@@ -186,10 +187,10 @@ static const pid_t s_main_pid = getpid();
 
 /// It's possible that we receive a signal after we have forked, but before we have reset the signal
 /// handlers (or even run the pthread_atfork calls). In that event we will do something dumb like
-/// swallow SIGINT. Ensure that doesn't happen. Check if we are the main fish process; if not reset
+/// swallow SIGINT. Ensure that doesn't happen. Check if we are the main fish process; if not, reset
 /// and re-raise the signal. \return whether we re-raised the signal.
 static bool reraise_if_forked_child(int sig) {
-    // Don't use is_forked_child, that relies on atfork handlers which maybe have not run yet.
+    // Don't use is_forked_child: it relies on atfork handlers which may have not yet run.
     if (getpid() == s_main_pid) {
         return false;
     }
@@ -198,14 +199,31 @@ static bool reraise_if_forked_child(int sig) {
     return true;
 }
 
+/// The cancellation signal we have received.
+/// Of course this is modified from a signal handler.
+static volatile relaxed_atomic_t<sig_atomic_t> s_cancellation_signal{0};
+
+void signal_clear_cancel() { s_cancellation_signal = 0; }
+
+int signal_check_cancel() { return s_cancellation_signal; }
+
+/// Number of SIGIO events.
+static volatile relaxed_atomic_t<uint32_t> s_sigio_count{0};
+
+uint32_t signal_get_sigio_count() { return s_sigio_count; }
+
 /// The single signal handler. By centralizing signal handling we ensure that we can never install
 /// the "wrong" signal handler (see #5969).
 static void fish_signal_handler(int sig, siginfo_t *info, void *context) {
     UNUSED(info);
     UNUSED(context);
 
+    // Ensure we preserve errno.
+    const int saved_errno = errno;
+
     // Check if we are a forked child.
     if (reraise_if_forked_child(sig)) {
+        errno = saved_errno;
         return;
     }
 
@@ -219,8 +237,8 @@ static void fish_signal_handler(int sig, siginfo_t *info, void *context) {
     switch (sig) {
 #ifdef SIGWINCH
         case SIGWINCH:
-            /// Respond to a winch signal by checking the terminal size.
-            common_handle_winch(sig);
+            /// Respond to a winch signal by telling the termsize container.
+            termsize_container_t::handle_winch();
             break;
 #endif
 
@@ -228,14 +246,14 @@ static void fish_signal_handler(int sig, siginfo_t *info, void *context) {
             /// Respond to a hup signal by exiting, unless it is caught by a shellscript function,
             /// in which case we do nothing.
             if (!observed) {
-                reader_force_exit();
+                reader_sighup();
             }
             topic_monitor_t::principal().post(topic_t::sighupint);
             break;
 
         case SIGTERM:
             /// Handle sigterm. The only thing we do is restore the front process ID, then die.
-            restore_term_foreground_process_group();
+            restore_term_foreground_process_group_for_exit();
             signal(SIGTERM, SIG_DFL);
             raise(SIGTERM);
             break;
@@ -243,6 +261,7 @@ static void fish_signal_handler(int sig, siginfo_t *info, void *context) {
         case SIGINT:
             /// Interactive mode ^C handler. Respond to int signal by setting interrupted-flag and
             /// stopping all loops and conditionals.
+            s_cancellation_signal = SIGINT;
             reader_handle_sigint();
             topic_monitor_t::principal().post(topic_t::sighupint);
             break;
@@ -256,7 +275,17 @@ static void fish_signal_handler(int sig, siginfo_t *info, void *context) {
             // We have a sigalarm handler that does nothing. This is used in the signal torture
             // test, to verify that we behave correctly when receiving lots of irrelevant signals.
             break;
+
+#if defined(SIGIO)
+        case SIGIO:
+            // An async FD became readable/writable/etc.
+            // Don't try to look at si_code, it is not set under BSD.
+            // Don't use ++ to avoid a CAS.
+            s_sigio_count = s_sigio_count + 1;
+            break;
+#endif
     }
+    errno = saved_errno;
 }
 
 void signal_reset_handlers() {
@@ -337,8 +366,12 @@ void signal_set_handlers(bool interactive) {
     act.sa_flags = SA_SIGINFO;
     sigaction(SIGINT, &act, nullptr);
 
-    // Whether or not we're interactive we want SIGCHLD to not interrupt restartable syscalls.
+    // Apply our SIGIO handler.
+    act.sa_sigaction = &fish_signal_handler;
     act.sa_flags = SA_SIGINFO;
+    sigaction(SIGIO, &act, nullptr);
+
+    // Whether or not we're interactive we want SIGCHLD to not interrupt restartable syscalls.
     act.sa_sigaction = &fish_signal_handler;
     act.sa_flags = SA_SIGINFO | SA_RESTART;
     if (sigaction(SIGCHLD, &act, nullptr)) {
@@ -394,22 +427,22 @@ void signal_unblock_all() {
     sigprocmask(SIG_SETMASK, &iset, nullptr);
 }
 
-sigint_checker_t::sigint_checker_t() {
+sigchecker_t::sigchecker_t(topic_t signal) : topic_(signal) {
     // Call check() to update our generation.
     check();
 }
 
-bool sigint_checker_t::check() {
+bool sigchecker_t::check() {
     auto &tm = topic_monitor_t::principal();
-    generation_t gen = tm.generation_for_topic(topic_t::sighupint);
+    generation_t gen = tm.generation_for_topic(topic_);
     bool changed = this->gen_ != gen;
     this->gen_ = gen;
     return changed;
 }
 
-void sigint_checker_t::wait() {
+void sigchecker_t::wait() const {
     auto &tm = topic_monitor_t::principal();
-    generation_list_t gens{};
-    gens[topic_t::sighupint] = this->gen_;
-    tm.check(&gens, {topic_t::sighupint}, true /* wait */);
+    generation_list_t gens = generation_list_t::invalids();
+    gens.at(topic_) = this->gen_;
+    tm.check(&gens, true /* wait */);
 }

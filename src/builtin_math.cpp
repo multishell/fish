@@ -29,13 +29,16 @@ static constexpr double kMaximumContiguousInteger =
 
 struct math_cmd_opts_t {
     bool print_help = false;
+    bool have_scale = false;
     int scale = kDefaultScale;
+    int base = 10;
 };
 
 // This command is atypical in using the "+" (REQUIRE_ORDER) option for flag parsing.
 // This is needed because of the minus, `-`, operator in math expressions.
-static const wchar_t *const short_options = L"+:hs:";
+static const wchar_t *const short_options = L"+:hs:b:";
 static const struct woption long_options[] = {{L"scale", required_argument, nullptr, 's'},
+                                              {L"base", required_argument, nullptr, 'b'},
                                               {L"help", no_argument, nullptr, 'h'},
                                               {nullptr, 0, nullptr, 0}};
 
@@ -47,6 +50,7 @@ static int parse_cmd_opts(math_cmd_opts_t &opts, int *optind,  //!OCLINT(high nc
     while ((opt = w.wgetopt_long(argc, argv, short_options, long_options, nullptr)) != -1) {
         switch (opt) {
             case 's': {
+                opts.have_scale = true;
                 // "max" is the special value that tells us to pick the maximum scale.
                 if (std::wcscmp(w.woptarg, L"max") == 0) {
                     opts.scale = 15;
@@ -55,6 +59,21 @@ static int parse_cmd_opts(math_cmd_opts_t &opts, int *optind,  //!OCLINT(high nc
                     if (errno || opts.scale < 0 || opts.scale > 15) {
                         streams.err.append_format(_(L"%ls: '%ls' is not a valid scale value\n"),
                                                   cmd, w.woptarg);
+                        return STATUS_INVALID_ARGS;
+                    }
+                }
+                break;
+            }
+            case 'b': {
+                if (std::wcscmp(w.woptarg, L"hex") == 0) {
+                    opts.base = 16;
+                } else if (std::wcscmp(w.woptarg, L"octal") == 0) {
+                    opts.base = 8;
+                } else {
+                    opts.base = fish_wcstoi(w.woptarg);
+                    if (errno || (opts.base != 8 && opts.base != 16)) {
+                        streams.err.append_format(_(L"%ls: '%ls' is not a valid base value\n"), cmd,
+                                                  w.woptarg);
                         return STATUS_INVALID_ARGS;
                     }
                 }
@@ -76,9 +95,13 @@ static int parse_cmd_opts(math_cmd_opts_t &opts, int *optind,  //!OCLINT(high nc
             }
             default: {
                 DIE("unexpected retval from wgetopt_long");
-                break;
             }
         }
+    }
+    if (opts.have_scale && opts.scale != 0 && opts.base != 10) {
+        streams.err.append_format(
+            _(L"%ls: Bases other than 10 can only do scale=0 output currently\n"), cmd, w.woptarg);
+        return STATUS_INVALID_ARGS;
     }
 
     *optind = w.woptind;
@@ -97,7 +120,10 @@ static const wchar_t *math_get_arg_stdin(wcstring *storage, const io_streams_t &
         char ch = '\0';
         long rc = read_blocked(streams.stdin_fd, &ch, 1);
 
-        if (rc < 0) return nullptr;  // failure
+        if (rc < 0) {  // error
+            wperror(L"read");
+            return nullptr;
+        }
 
         if (rc == 0) {  // EOF
             if (arg.empty()) return nullptr;
@@ -123,19 +149,21 @@ static const wchar_t *math_get_arg_argv(int *argidx, wchar_t **argv) {
 static const wchar_t *math_get_arg(int *argidx, wchar_t **argv, wcstring *storage,
                                    const io_streams_t &streams) {
     if (math_args_from_stdin(streams)) {
+        assert(streams.stdin_fd >= 0 &&
+               "stdin should not be closed since it is directly redirected");
         return math_get_arg_stdin(storage, streams);
     }
     return math_get_arg_argv(argidx, argv);
 }
 
-static const wchar_t *math_describe_error(te_error_t &error) {
+static const wchar_t *math_describe_error(const te_error_t &error) {
     if (error.position == 0) return L"NO ERROR?!?";
 
     switch (error.type) {
         case TE_ERROR_NONE:
             DIE("Error has no position");
-        case TE_ERROR_UNKNOWN_VARIABLE:
-            return _(L"Unknown variable");
+        case TE_ERROR_UNKNOWN_FUNCTION:
+            return _(L"Unknown function");
         case TE_ERROR_MISSING_CLOSING_PAREN:
             return _(L"Missing closing parenthesis");
         case TE_ERROR_MISSING_OPENING_PAREN:
@@ -159,6 +187,14 @@ static const wchar_t *math_describe_error(te_error_t &error) {
 
 /// Return a formatted version of the value \p v respecting the given \p opts.
 static wcstring format_double(double v, const math_cmd_opts_t &opts) {
+    if (opts.base == 16) {
+        v = trunc(v);
+        return format_string(L"0x%x", (long)v);
+    } else if (opts.base == 8) {
+        v = trunc(v);
+        return format_string(L"0%o", (long)v);
+    }
+
     // As a special-case, a scale of 0 means to truncate to an integer
     // instead of rounding.
     if (opts.scale == 0) {
@@ -186,35 +222,38 @@ static wcstring format_double(double v, const math_cmd_opts_t &opts) {
 }
 
 /// Evaluate math expressions.
-static int evaluate_expression(const wchar_t *cmd, parser_t &parser, io_streams_t &streams,
-                               math_cmd_opts_t &opts, wcstring &expression) {
+static int evaluate_expression(const wchar_t *cmd, const parser_t &parser, io_streams_t &streams,
+                               const math_cmd_opts_t &opts, wcstring &expression) {
     UNUSED(parser);
 
     int retval = STATUS_CMD_OK;
     te_error_t error;
-    std::string narrow_str = wcs2string(expression);
     // Switch locale while computing stuff.
     // This means that the "." is always the radix character,
     // so numbers work the same across locales.
+    //
+    // TODO: Technically this is only needed for *output* currently,
+    // because we already use wcstod_l while computing,
+    // but we can't have math print numbers that it won't then also read.
     char *saved_locale = strdup(setlocale(LC_NUMERIC, nullptr));
     setlocale(LC_NUMERIC, "C");
-    double v = te_interp(narrow_str.c_str(), &error);
+    double v = te_interp(expression.c_str(), &error);
 
     if (error.position == 0) {
         // Check some runtime errors after the fact.
         // TODO: Really, this should be done in tinyexpr
         // (e.g. infinite is the result of "x / 0"),
         // but that's much more work.
-        const char *error_message = nullptr;
+        const wchar_t *error_message = nullptr;
         if (std::isinf(v)) {
-            error_message = "Result is infinite";
+            error_message = L"Result is infinite";
         } else if (std::isnan(v)) {
-            error_message = "Result is not a number";
+            error_message = L"Result is not a number";
         } else if (std::abs(v) >= kMaximumContiguousInteger) {
-            error_message = "Result magnitude is too large";
+            error_message = L"Result magnitude is too large";
         }
         if (error_message) {
-            streams.err.append_format(L"%ls: Error: %s\n", cmd, error_message);
+            streams.err.append_format(L"%ls: Error: %ls\n", cmd, error_message);
             streams.err.append_format(L"'%ls'\n", expression.c_str());
             retval = STATUS_CMD_ERROR;
         } else {
@@ -233,7 +272,7 @@ static int evaluate_expression(const wchar_t *cmd, parser_t &parser, io_streams_
 }
 
 /// The math builtin evaluates math expressions.
-int builtin_math(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_math(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
     math_cmd_opts_t opts;

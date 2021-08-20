@@ -48,4 +48,100 @@ echo -n 2>$tmpdir/file.txt
 test -f $tmpdir/file.txt && echo "File exists" || echo "File does not exist"
 #CHECK: File exists
 
+function foo
+    if set -q argv[1]
+        foo >$argv[1]
+    end
+    echo foo
+end
+
+foo $tmpdir/bar
+# CHECK: foo
+cat $tmpdir/bar
+# CHECK: foo
+
 rm -Rf $tmpdir
+
+# Verify that we can turn stderr into stdout and then pipe it
+# Note that the order here has historically been unspecified - 'errput' could conceivably appear before 'output'.
+begin
+    echo output
+    echo errput 1>&2
+end 2>&1 | sort | tee ../test/temp/tee_test.txt
+cat ../test/temp/tee_test.txt
+#CHECK: errput
+#CHECK: output
+#CHECK: errput
+#CHECK: output
+
+# Test that trailing ^ doesn't trigger redirection, see #1873
+echo caret_no_redirect 12345^
+#CHECK: caret_no_redirect 12345^
+
+# Verify that we can pipe something other than stdout
+# The first line should be printed, since we output to stdout but pipe stderr to /dev/null
+# The second line should not be printed, since we output to stderr and pipe it to /dev/null
+begin
+    echo is_stdout
+end 2>| cat >/dev/null
+begin
+    echo is_stderr 1>&2
+end 2>| cat >/dev/null
+#CHECK: is_stdout
+
+# Verify builtin behavior with closed stdin.
+# count silently ignores closed stdin, others may print an error.
+true <&-
+echo $status
+#CHECK: 0
+test -t 0 <&-
+echo $status
+#CHECK: 1
+read abc <&-
+#CHECKERR: read: stdin is closed
+
+# This one should output nothing.
+echo derp >&-
+
+# Verify that builtins, blocks, and functions may not write to arbitrary fds.
+echo derp >&12
+#CHECKERR: {{.*}} Redirection to fd 12 is only valid for external commands
+#CHECKERR: echo derp >&12
+#CHECKERR:           ^
+
+begin
+    echo derp
+end <&42
+#CHECKERR: {{.*}} Redirection to fd 42 is only valid for external commands
+#CHECKERR: end <&42
+#CHECKERR:     ^
+
+outnerr 2>&7
+#CHECKERR: {{.*}} Redirection to fd 7 is only valid for external commands
+#CHECKERR: outnerr 2>&7
+#CHECKERR:          ^
+
+# Redirection to 0, 1, 2 is allowed. We don't test 0 since writing to stdin is weird and unpredictable.
+echo hooray1 >&1
+echo hooray2 >&2
+#CHECK: hooray1
+#CHECKERR: hooray2
+
+# "Verify that pipes don't conflict with fd redirections"
+# This code is very similar to eval. We go over a bunch of fds
+# to make it likely that we will nominally conflict with a pipe
+# fish is supposed to detect this case and dup the pipe to something else
+echo "/bin/echo pipe 3 <&3 3<&-" | source 3<&0
+echo "/bin/echo pipe 4 <&4 4<&-" | source 4<&0
+echo "/bin/echo pipe 5 <&5 5<&-" | source 5<&0
+echo "/bin/echo pipe 6 <&6 6<&-" | source 6<&0
+echo "/bin/echo pipe 7 <&7 7<&-" | source 7<&0
+echo "/bin/echo pipe 8 <&8 8<&-" | source 8<&0
+echo "/bin/echo pipe 9 <&9 9<&-" | source 9<&0
+#CHECK: pipe 3
+#CHECK: pipe 4
+#CHECK: pipe 5
+#CHECK: pipe 6
+#CHECK: pipe 7
+#CHECK: pipe 8
+#CHECK: pipe 9

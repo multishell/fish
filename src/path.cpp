@@ -21,6 +21,7 @@
 #include "expand.h"
 #include "fallback.h"  // IWYU pragma: keep
 #include "flog.h"
+#include "wcstringutil.h"
 #include "wutil.h"  // IWYU pragma: keep
 
 /// Unexpected error in path_get_path().
@@ -35,8 +36,6 @@ const wcstring_list_t dflt_pathsv({L"/bin", L"/usr/bin", PREFIX L"/bin"});
 
 static bool path_get_path_core(const wcstring &cmd, wcstring *out_path,
                                const maybe_t<env_var_t> &bin_path_var) {
-    debug(5, L"path_get_path( '%ls' )", cmd.c_str());
-
     // If the command has a slash, it must be an absolute or relative path and thus we don't bother
     // looking for a matching command.
     if (cmd.find(L'/') != wcstring::npos) {
@@ -107,7 +106,7 @@ static bool path_get_path_core(const wcstring &cmd, wcstring *out_path,
                     break;
                 }
                 default: {
-                    debug(1, MISSING_COMMAND_ERR_MSG, next_path.c_str());
+                    FLOGF(warning, MISSING_COMMAND_ERR_MSG, next_path.c_str());
                     wperror(L"access");
                     break;
                 }
@@ -123,35 +122,38 @@ bool path_get_path(const wcstring &cmd, wcstring *out_path, const environment_t 
     return path_get_path_core(cmd, out_path, vars.get(L"PATH"));
 }
 
+bool path_is_executable(const std::string &path) {
+    if (access(path.c_str(), X_OK)) return false;
+    struct stat buff;
+    if (stat(path.c_str(), &buff) == -1) {
+        if (errno != EACCES) wperror(L" stat");
+        return false;
+    }
+    if (!S_ISREG(buff.st_mode)) return false;
+    return true;
+}
+
 wcstring_list_t path_get_paths(const wcstring &cmd, const environment_t &vars) {
-    debug(3, L"path_get_paths('%ls')", cmd.c_str());
+    FLOGF(path, L"path_get_paths('%ls')", cmd.c_str());
     wcstring_list_t paths;
 
     // If the command has a slash, it must be an absolute or relative path and thus we don't bother
     // looking for matching commands in the PATH var.
     if (cmd.find(L'/') != wcstring::npos) {
-        struct stat buff;
-        if (wstat(cmd, &buff)) return paths;
-        if (!S_ISREG(buff.st_mode)) return paths;
-        if (waccess(cmd, X_OK)) return paths;
-        paths.push_back(cmd);
+        std::string narrow = wcs2string(cmd);
+        if (path_is_executable(narrow)) paths.push_back(cmd);
         return paths;
     }
 
     auto path_var = vars.get(L"PATH");
-    wcstring_list_t pathsv;
-    if (path_var) path_var->to_list(pathsv);
+    if (!path_var) return paths;
+
+    const wcstring_list_t &pathsv = path_var->as_list();
     for (auto path : pathsv) {
         if (path.empty()) continue;
         append_path_component(path, cmd);
-        if (waccess(path, X_OK) == 0) {
-            struct stat buff;
-            if (wstat(path, &buff) == -1) {
-                if (errno != EACCES) wperror(L"stat");
-                continue;
-            }
-            if (S_ISREG(buff.st_mode)) paths.push_back(path);
-        }
+        std::string narrow = wcs2string(path);
+        if (path_is_executable(narrow)) paths.push_back(path);
     }
 
     return paths;
@@ -274,17 +276,42 @@ static void maybe_issue_path_warning(const wcstring &which_dir, const wcstring &
 
     FLOG(error, custom_error_msg.c_str());
     if (path.empty()) {
-        FLOGF(error, _(L"Unable to locate the %ls directory."), which_dir.c_str());
-        FLOGF(error, _(L"Please set the %ls or HOME environment variable before starting fish."),
+        FLOGF(warning_path, _(L"Unable to locate the %ls directory."), which_dir.c_str());
+        FLOGF(warning_path,
+              _(L"Please set the %ls or HOME environment variable before starting fish."),
               xdg_var.c_str());
     } else {
         const wchar_t *env_var = using_xdg ? xdg_var.c_str() : L"HOME";
-        FLOGF(error, _(L"Unable to locate %ls directory derived from $%ls: '%ls'."),
+        FLOGF(warning_path, _(L"Unable to locate %ls directory derived from $%ls: '%ls'."),
               which_dir.c_str(), env_var, path.c_str());
-        FLOGF(error, _(L"The error was '%s'."), std::strerror(saved_errno));
-        FLOGF(error, _(L"Please set $%ls to a directory where you have write access."), env_var);
+        FLOGF(warning_path, _(L"The error was '%s'."), std::strerror(saved_errno));
+        FLOGF(warning_path, _(L"Please set $%ls to a directory where you have write access."),
+              env_var);
     }
     ignore_result(write(STDERR_FILENO, "\n", 1));
+}
+
+/// Make sure the specified directory exists. If needed, try to create it and any currently not
+/// existing parent directories, like mkdir -p,.
+///
+/// \return 0 if, at the time of function return the directory exists, -1 otherwise.
+static int create_directory(const wcstring &d) {
+    bool ok = false;
+    struct stat buf;
+    int stat_res = 0;
+
+    while ((stat_res = wstat(d, &buf)) != 0) {
+        if (errno != EAGAIN) break;
+    }
+
+    if (stat_res == 0) {
+        if (S_ISDIR(buf.st_mode)) ok = true;
+    } else if (errno == ENOENT) {
+        wcstring dir = wdirname(d);
+        if (!create_directory(dir) && !wmkdir(d, 0700)) ok = true;
+    }
+
+    return ok ? 0 : -1;
 }
 
 /// The following type wraps up a user's "base" directories, corresponding (conceptually if not

@@ -32,21 +32,32 @@ static int cpu_use(const job_t *j) {
 
     for (const process_ptr_t &p : j->processes) {
         struct timeval t;
-        int jiffies;
+        unsigned long jiffies;
         gettimeofday(&t, nullptr);
         jiffies = proc_get_jiffies(p.get());
 
         double t1 = 1000000.0 * p->last_time.tv_sec + p->last_time.tv_usec;
         double t2 = 1000000.0 * t.tv_sec + t.tv_usec;
 
+        // Check for a race condition that can cause negative CPU usage to be reported (#7066)
+        unsigned long cached_last_jiffies = p->last_jiffies;
+        if (t2 < t1 || jiffies < cached_last_jiffies) {
+            continue;
+        }
+
         // std::fwprintf( stderr, L"t1 %f t2 %f p1 %d p2 %d\n", t1, t2, jiffies, p->last_jiffies );
-        u += (static_cast<double>(jiffies - p->last_jiffies)) / (t2 - t1);
+        u += (static_cast<double>(jiffies - cached_last_jiffies)) / (t2 - t1);
     }
     return u * 1000000;
 }
 
 /// Print information about the specified job.
 static void builtin_jobs_print(const job_t *j, int mode, int header, io_streams_t &streams) {
+    int pgid = INVALID_PID;
+    if (auto job_pgid = j->get_pgid()) {
+        pgid = *job_pgid;
+    }
+
     switch (mode) {
         case JOBS_PRINT_NOTHING: {
             break;
@@ -61,7 +72,7 @@ static void builtin_jobs_print(const job_t *j, int mode, int header, io_streams_
                 streams.out.append(_(L"State\tCommand\n"));
             }
 
-            streams.out.append_format(L"%d\t%d\t", j->job_id(), j->pgid);
+            streams.out.append_format(L"%d\t%d\t", j->job_id(), pgid);
 
             if (have_proc_stat()) {
                 streams.out.append_format(L"%d%%\t", cpu_use(j));
@@ -78,7 +89,7 @@ static void builtin_jobs_print(const job_t *j, int mode, int header, io_streams_
                 // Print table header before first job.
                 streams.out.append(_(L"Group\n"));
             }
-            streams.out.append_format(L"%d\n", j->pgid);
+            streams.out.append_format(L"%d\n", pgid);
             break;
         }
         case JOBS_PRINT_PID: {
@@ -105,27 +116,24 @@ static void builtin_jobs_print(const job_t *j, int mode, int header, io_streams_
         }
         default: {
             DIE("unexpected mode");
-            break;
         }
     }
 }
 
 /// The jobs builtin. Used for printing running jobs. Defined in builtin_jobs.c.
-int builtin_jobs(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
+maybe_t<int> builtin_jobs(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
     wchar_t *cmd = argv[0];
     int argc = builtin_count_args(argv);
     bool found = false;
     int mode = JOBS_DEFAULT;
-    int print_last = 0;
+    bool print_last = false;
 
     static const wchar_t *const short_options = L":cghlpq";
-    static const struct woption long_options[] = {{L"command", no_argument, nullptr, 'c'},
-                                                  {L"group", no_argument, nullptr, 'g'},
-                                                  {L"help", no_argument, nullptr, 'h'},
-                                                  {L"last", no_argument, nullptr, 'l'},
-                                                  {L"pid", no_argument, nullptr, 'p'},
-                                                  {L"quiet", no_argument, nullptr, 'q'},
-                                                  {nullptr, 0, nullptr, 0}};
+    static const struct woption long_options[] = {
+        {L"command", no_argument, nullptr, 'c'}, {L"group", no_argument, nullptr, 'g'},
+        {L"help", no_argument, nullptr, 'h'},    {L"last", no_argument, nullptr, 'l'},
+        {L"pid", no_argument, nullptr, 'p'},     {L"quiet", no_argument, nullptr, 'q'},
+        {L"query", no_argument, nullptr, 'q'},   {nullptr, 0, nullptr, 0}};
 
     int opt;
     wgetopter_t w;
@@ -148,7 +156,7 @@ int builtin_jobs(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
                 break;
             }
             case 'l': {
-                print_last = 1;
+                print_last = true;
                 break;
             }
             case 'h': {
@@ -165,7 +173,6 @@ int builtin_jobs(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
             }
             default: {
                 DIE("unexpected retval from wgetopt_long");
-                break;
             }
         }
     }
@@ -188,14 +195,13 @@ int builtin_jobs(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
                 const job_t *j = nullptr;
 
                 if (argv[i][0] == L'%') {
-                    int jobId = -1;
-                    jobId = fish_wcstoi(argv[i] + 1);
-                    if (errno || jobId < -1) {
+                    int job_id = fish_wcstoi(argv[i] + 1);
+                    if (errno || job_id < -1) {
                         streams.err.append_format(_(L"%ls: '%ls' is not a valid job id"), cmd,
                                                   argv[i]);
                         return STATUS_INVALID_ARGS;
                     }
-                    j = job_t::from_job_id(jobId);
+                    j = parser.job_get(job_id);
                 } else {
                     int pid = fish_wcstoi(argv[i]);
                     if (errno || pid < 0) {
@@ -203,14 +209,16 @@ int builtin_jobs(parser_t &parser, io_streams_t &streams, wchar_t **argv) {
                                                   argv[i]);
                         return STATUS_INVALID_ARGS;
                     }
-                    j = job_t::from_pid(pid);
+                    j = parser.job_get_from_pid(pid);
                 }
 
                 if (j && !j->is_completed() && j->is_constructed()) {
                     builtin_jobs_print(j, mode, false, streams);
                     found = true;
                 } else {
-                    streams.err.append_format(_(L"%ls: No suitable job: %ls\n"), cmd, argv[i]);
+                    if (mode != JOBS_PRINT_NOTHING) {
+                        streams.err.append_format(_(L"%ls: No suitable job: %ls\n"), cmd, argv[i]);
+                    }
                     return STATUS_CMD_ERROR;
                 }
             }

@@ -117,7 +117,7 @@ function border_color_for_color(color_str) {
 
 /* Use this function to make a color that contrasts well with the given color */
 function text_color_for_color(color_str) {
-    var adjust = .5
+    var adjust = .7
     function compute_constrast(lightness){
         var new_lightness = lightness + adjust
         if (new_lightness > 1.0 || new_lightness < 0.0) {
@@ -192,34 +192,35 @@ function master_color_for_color(color_str) {
 }
 
 /* Given a color name, like 'normal' or 'red' or 'FF00F0', return an RGB color string (or empty
-   string) */
+   string). If multiple colors are given, as in '555 brblack', interpret the first color. */
 function interpret_color(str) {
-    str = str.toLowerCase();
-    if (str == 'black') return '000000';
-    if (str == 'red') return '800000';
-    if (str == 'green') return '008000';
-    if (str == 'brown') return '725000';
-    if (str == 'yellow') return '808000';
-    if (str == 'blue') return '000080';
-    if (str == 'magenta') return '800080';
-    if (str == 'purple') return '800080';
-    if (str == 'cyan') return '008080';
-    if (str == 'white') return 'c0c0c0';
-    if (str == 'grey') return 'e5e5e5';
-    if (str == 'brgrey') return '555555';
-    if (str == 'brblack') return '808080';
-    if (str == 'brred') return 'ff0000';
-    if (str == 'brgreen') return '00ff00';
-    if (str == 'brbrown') return 'ffff00';
-    if (str == 'bryellow') return 'ffff00';
-    if (str == 'brblue') return '0000ff';
-    if (str == 'brmagenta') return 'ff00ff';
-    if (str == 'brpurple') return 'ff00ff';
-    if (str == 'brcyan') return '00ffff';
-    if (str == 'brwhite') return 'ffffff';
+    if (!str) return '';
+    str = str.toLowerCase().split(" ")[0];
+    if (str == 'black') return '#000000';
+    if (str == 'red') return '#800000';
+    if (str == 'green') return '#008000';
+    if (str == 'brown') return '#725000';
+    if (str == 'yellow') return '#808000';
+    if (str == 'blue') return '#000080';
+    if (str == 'magenta') return '#800080';
+    if (str == 'purple') return '#800080';
+    if (str == 'cyan') return '#008080';
+    if (str == 'white') return '#c0c0c0';
+    if (str == 'grey') return '#e5e5e5';
+    if (str == 'brgrey') return '#555555';
+    if (str == 'brblack') return '#808080';
+    if (str == 'brred') return '#ff0000';
+    if (str == 'brgreen') return '#00ff00';
+    if (str == 'brbrown') return '#ffff00';
+    if (str == 'bryellow') return '#ffff00';
+    if (str == 'brblue') return '#0000ff';
+    if (str == 'brmagenta') return '#ff00ff';
+    if (str == 'brpurple') return '#ff00ff';
+    if (str == 'brcyan') return '#00ffff';
+    if (str == 'brwhite') return '#ffffff';
     if (str == 'normal') return '';
     if (str == 'reset') return '';
-    return str
+    return '#' + str
 }
 
 var color_scheme_fish_default = {
@@ -253,6 +254,108 @@ var color_scheme_fish_default = {
     'cancel' : '-r',
     'history_current' : '--bold'
 };
+
+
+var ayuTheme = {
+    ayu_dark: {
+        'accent': 'E6B450',
+        'bg': '0A0E14',
+        'fg': 'B3B1AD',
+        'ui': '4D5566',
+        'tag': '39BAE6',
+        'func': 'FFB454',
+        'entity': '59C2FF',
+        'string': 'C2D94C',
+        'regexp': '95E6CB',
+        'markup': 'F07178',
+        'keyword': 'FF8F40',
+        'special': 'E6B673',
+        'comment': '626A73',
+        'constant': 'FFEE99',
+        'operator': 'F29668',
+        'error': 'FF3333',
+     },
+
+    ayu_light: {
+        'accent': 'FF9940',
+        'bg': 'FAFAFA',
+        'fg': '575F66',
+        'ui': '8A9199',
+        'tag': '55B4D4',
+        'func': 'F2AE49',
+        'entity': '399EE6',
+        'string': '86B300',
+        'regexp': '4CBF99',
+        'markup': 'F07171',
+        'keyword': 'FA8D3E',
+        'special': 'E6BA7E',
+        'comment': 'ABB0B6',
+        'constant': 'A37ACC',
+        'operator': 'ED9366',
+        'error': 'F51818',
+     },
+
+    ayu_mirage: {
+        'accent': 'FFCC66',
+        'bg': '1F2430',
+        'fg': 'CBCCC6',
+        'ui': '707A8C',
+        'tag': '5CCFE6',
+        'func': 'FFD580',
+        'entity': '73D0FF',
+        'string': 'BAE67E',
+        'regexp': '95E6CB',
+        'markup': 'F28779',
+        'keyword': 'FFA759',
+        'special': 'FFE6B3',
+        'comment': '5C6773',
+        'constant': 'D4BFFF',
+        'operator': 'F29E74',
+        'error': 'FF3333',
+     },
+
+    apply: function(theme, receiver) {
+        receiver['preferred_background'] = theme.bg
+        receiver['autosuggestion'] = theme.ui
+        receiver['command'] = theme.tag
+        receiver['comment'] = theme.comment
+        receiver['cwd'] = theme.entity
+        receiver['end'] = theme.operator
+        receiver['error'] = theme.error
+        receiver['escape'] = theme.regexp
+        receiver['match'] = theme.markup
+        receiver['normal'] = theme.fg
+        receiver['operator'] = theme.accent
+        receiver['param'] = theme.fg
+        receiver['quote'] = theme.string
+        receiver['redirection'] = theme.constant
+        receiver['search_match'] = theme.accent
+        receiver['selection'] = theme.accent
+
+        receiver['colors'] = []
+        for (var key in theme) receiver['colors'].push(theme[key])
+    },
+}
+// ayu Light
+var color_scheme_ayu_light = {
+    name: 'ayu Light',
+    url: 'https://github.com/dempfi/ayu',
+}
+ayuTheme.apply(ayuTheme.ayu_light, color_scheme_ayu_light)
+
+// ayu Dark
+var color_scheme_ayu_dark = {
+    name: 'ayu Dark',
+    url: 'https://github.com/dempfi/ayu',
+}
+ayuTheme.apply(ayuTheme.ayu_dark, color_scheme_ayu_dark)
+
+// ayu Mirage
+var color_scheme_ayu_mirage = {
+    name: 'ayu Mirage',
+    url: 'https://github.com/dempfi/ayu',
+}
+ayuTheme.apply(ayuTheme.ayu_mirage, color_scheme_ayu_mirage)
 
 
 var TomorrowTheme = {
@@ -558,7 +661,7 @@ var additional_color_schemes = [
     'name': 'Dracula',
     'preferred_background': '#282a36',
 
-    colors: ['282A36', '44475A', '44475A', 'F8F8F2', '6272A4', '8BE9FD', '50FA7B', 'FFB86C', 'FF79C6', 'BD93F9', 'FF5555', 'F1FA8C'],
+    colors: ['282A36', '44475A', 'F8F8F2', '6272A4', '8BE9FD', '50FA7B', 'FFB86C', 'FF79C6', 'BD93F9', 'FF5555', 'F1FA8C'],
 
     autosuggestion: 'BD93F9',
     command: 'F8F8F2',

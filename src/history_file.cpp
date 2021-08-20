@@ -2,9 +2,10 @@
 
 #include "history_file.h"
 
-#include <cstring>
-
+#include "fds.h"
 #include "history.h"
+
+#include <cstring>
 
 // Some forward declarations.
 static history_item_t decode_item_fish_2_0(const char *base, size_t len);
@@ -29,7 +30,7 @@ static bool should_mmap(int fd) {
 // Return true on success, false on failure.
 static bool read_from_fd(int fd, void *address, size_t len) {
     size_t remaining = len;
-    char *ptr = static_cast<char *>(address);
+    auto ptr = static_cast<char *>(address);
     while (remaining > 0) {
         ssize_t amt = read(fd, ptr, remaining);
         if (amt < 0) {
@@ -161,8 +162,8 @@ history_item_t history_file_contents_t::decode_item(size_t offset) const {
     return history_item_t{};
 }
 
-maybe_t<size_t> history_file_contents_t::offset_of_next_item(size_t *cursor, time_t cutoff) {
-    size_t offset = size_t(-1);
+maybe_t<size_t> history_file_contents_t::offset_of_next_item(size_t *cursor, time_t cutoff) const {
+    auto offset = size_t(-1);
     switch (this->type()) {
         case history_type_fish_2_0:
             offset = offset_of_next_item_fish_2_0(*this, cursor, cutoff);
@@ -183,7 +184,7 @@ static size_t read_line(const char *base, size_t cursor, size_t len, std::string
     // Locate the newline.
     assert(cursor <= len);
     const char *start = base + cursor;
-    const char *a_newline = static_cast<const char *>(std::memchr(start, '\n', len - cursor));
+    auto a_newline = static_cast<const char *>(std::memchr(start, '\n', len - cursor));
     if (a_newline != nullptr) {  // we found a newline
         result.assign(start, a_newline - start);
         // Return the amount to advance the cursor; skip over the newline.
@@ -280,7 +281,7 @@ static history_item_t decode_item_fish_2_0(const char *base, size_t len) {
 
 done:
     history_item_t result(cmd, when);
-    result.set_required_paths(paths);
+    result.set_required_paths(std::move(paths));
     return result;
 }
 
@@ -342,7 +343,7 @@ static const char *next_line(const char *start, const char *end) {
 static size_t offset_of_next_item_fish_2_0(const history_file_contents_t &contents,
                                            size_t *inout_cursor, time_t cutoff_timestamp) {
     size_t cursor = *inout_cursor;
-    size_t result = size_t(-1);
+    auto result = size_t(-1);
     const size_t length = contents.length();
     const char *const begin = contents.begin();
     const char *const end = contents.end();
@@ -350,8 +351,7 @@ static size_t offset_of_next_item_fish_2_0(const history_file_contents_t &conten
         const char *line_start = contents.address_at(cursor);
 
         // Advance the cursor to the next line.
-        const char *a_newline =
-            static_cast<const char *>(std::memchr(line_start, '\n', length - cursor));
+        auto a_newline = static_cast<const char *>(std::memchr(line_start, '\n', length - cursor));
         if (a_newline == nullptr) break;
 
         // Advance the cursor past this line. +1 is for the newline.
@@ -370,18 +370,18 @@ static size_t offset_of_next_item_fish_2_0(const history_file_contents_t &conten
 
         // Hackish: fish 1.x rewriting a fish 2.0 history file can produce lines with lots of
         // leading "- cmd: - cmd: - cmd:". Trim all but one leading "- cmd:".
-        const char *double_cmd = "- cmd: - cmd: ";
-        const size_t double_cmd_len = std::strlen(double_cmd);
+        constexpr const char double_cmd[] = "- cmd: - cmd: ";
+        constexpr const size_t double_cmd_len = const_strlen(double_cmd);
         while (static_cast<size_t>(a_newline - line_start) > double_cmd_len &&
                !std::memcmp(line_start, double_cmd, double_cmd_len)) {
             // Skip over just one of the - cmd. In the end there will be just one left.
-            line_start += std::strlen("- cmd: ");
+            line_start += const_strlen("- cmd: ");
         }
 
         // Hackish: fish 1.x rewriting a fish 2.0 history file can produce commands like "when:
         // 123456". Ignore those.
-        const char *cmd_when = "- cmd:    when:";
-        const size_t cmd_when_len = std::strlen(cmd_when);
+        constexpr const char cmd_when[] = "- cmd:    when:";
+        constexpr const size_t cmd_when_len = const_strlen(cmd_when);
         if (static_cast<size_t>(a_newline - line_start) >= cmd_when_len &&
             !std::memcmp(line_start, cmd_when, cmd_when_len)) {
             continue;
@@ -432,6 +432,7 @@ static size_t offset_of_next_item_fish_2_0(const history_file_contents_t &conten
 }
 
 void append_history_item_to_buffer(const history_item_t &item, std::string *buffer) {
+    assert(item.should_write_to_disk() && "Item should not be persisted");
     auto append = [=](const char *a, const char *b = nullptr, const char *c = nullptr) {
         if (a) buffer->append(a);
         if (b) buffer->append(b);
@@ -509,7 +510,7 @@ static history_item_t decode_item_fish_1_x(const char *begin, size_t length) {
                 while (*time_string && !iswdigit(*time_string)) time_string++;
 
                 if (*time_string) {
-                    time_t tm = static_cast<time_t>(fish_wcstol(time_string));
+                    auto tm = static_cast<time_t>(fish_wcstol(time_string));
                     if (!errno && tm >= 0) {
                         timestamp = tm;
                     }

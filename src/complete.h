@@ -12,6 +12,7 @@
 
 #include "common.h"
 #include "enum_set.h"
+#include "wcstringutil.h"
 
 struct completion_mode_t {
     /// If set, skip file completions.
@@ -77,7 +78,7 @@ class completion_t {
 
     // Construction.
     explicit completion_t(wcstring comp, wcstring desc = wcstring(),
-                          string_fuzzy_match_t match = string_fuzzy_match_t(fuzzy_match_exact),
+                          string_fuzzy_match_t match = string_fuzzy_match_t::exact_match(),
                           complete_flags_t flags_val = 0);
     completion_t(const completion_t &);
     completion_t &operator=(const completion_t &);
@@ -93,9 +94,8 @@ class completion_t {
     // example, foo10 is naturally greater than foo2 (but alphabetically less than it).
     static bool is_naturally_less_than(const completion_t &a, const completion_t &b);
 
-    // Deduplicate a potentially-unsorted vector, preserving the order
-    template <class Iterator, class HashFunction>
-    static Iterator unique_unsorted(Iterator begin, Iterator end, HashFunction hash);
+    /// \return the completion's match rank. Lower ranks are better completions.
+    uint32_t rank() const { return match.rank(); }
 
     // If this completion replaces the entire token, prepend a prefix. Otherwise do nothing.
     void prepend_token_prefix(const wcstring &prefix);
@@ -119,6 +119,75 @@ using completion_request_flags_t = enum_set_t<completion_request_t>;
 
 class completion_t;
 using completion_list_t = std::vector<completion_t>;
+
+/// A completion receiver accepts completions. It is essentially a wrapper around std::vector with
+/// some conveniences.
+class completion_receiver_t {
+   public:
+    /// Construct as empty, with a limit.
+    explicit completion_receiver_t(size_t limit) : limit_(limit) {}
+
+    /// Acquire an existing list, with a limit.
+    explicit completion_receiver_t(completion_list_t &&v, size_t limit)
+        : completions_(std::move(v)), limit_(limit) {}
+
+    /// Add a completion.
+    /// \return true on success, false if this would overflow the limit.
+    __warn_unused bool add(completion_t &&comp);
+
+    /// Add a completion with the given string, and default other properties.
+    /// \return true on success, false if this would overflow the limit.
+    __warn_unused bool add(wcstring &&comp);
+
+    /// Add a completion with the given string, description, flags, and fuzzy match.
+    /// \return true on success, false if this would overflow the limit.
+    /// The 'desc' parameter is not && because if gettext is not enabled, then we end
+    /// up passing a 'const wcstring &' here.
+    __warn_unused bool add(wcstring &&comp, wcstring desc, complete_flags_t flags = 0,
+                           string_fuzzy_match_t match = string_fuzzy_match_t::exact_match());
+
+    /// Add a list of completions.
+    /// \return true on success, false if this would overflow the limit.
+    __warn_unused bool add_list(completion_list_t &&lst);
+
+    /// Swap our completions with a new list.
+    void swap(completion_list_t &lst) { std::swap(completions_, lst); }
+
+    /// Clear the list of completions. This retains the storage inside completions_ which can be
+    /// useful to prevent allocations.
+    void clear() { completions_.clear(); }
+
+    /// \return whether our completion list is empty.
+    bool empty() const { return completions_.empty(); }
+
+    /// \return how many completions we have stored.
+    size_t size() const { return completions_.size(); }
+
+    /// \return a completion at an index.
+    completion_t &at(size_t idx) { return completions_.at(idx); }
+    const completion_t &at(size_t idx) const { return completions_.at(idx); }
+
+    /// \return the list of completions. Do not modify the size of the list via this function, as it
+    /// may exceed our completion limit.
+    const completion_list_t &get_list() const { return completions_; }
+    completion_list_t &get_list() { return completions_; }
+
+    /// \return the list of completions, clearing it.
+    completion_list_t take();
+
+    /// \return a new, empty receiver whose limit is our remaining capacity.
+    /// This is useful for e.g. recursive calls when you want to act on the result before adding it.
+    completion_receiver_t subreceiver() const;
+
+   private:
+    // Our list of completions.
+    completion_list_t completions_;
+
+    // The maximum number of completions to add. If our list length exceeds this, then new
+    // completions are not added. Note 0 has no special significance here - use
+    // numeric_limits<size_t>::max() instead.
+    const size_t limit_;
+};
 
 enum complete_option_type_t {
     option_type_args_only,    // no option
@@ -180,7 +249,7 @@ completion_list_t complete(const wcstring &cmd, completion_request_flags_t flags
                            const operation_context_t &ctx);
 
 /// Return a list of all current completions.
-wcstring complete_print();
+wcstring complete_print(const wcstring &cmd = L"");
 
 /// Tests if the specified option is defined for the specified command.
 int complete_is_valid_option(const wcstring &str, const wcstring &opt,
@@ -197,7 +266,7 @@ bool complete_is_valid_argument(const wcstring &str, const wcstring &opt, const 
 /// \param flags completion flags
 void append_completion(completion_list_t *completions, wcstring comp, wcstring desc = wcstring(),
                        int flags = 0,
-                       string_fuzzy_match_t &&match = string_fuzzy_match_t(fuzzy_match_exact));
+                       string_fuzzy_match_t match = string_fuzzy_match_t::exact_match());
 
 /// Support for "wrap targets." A wrap target is a command that completes like another command.
 bool complete_add_wrapper(const wcstring &command, const wcstring &new_target);

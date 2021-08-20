@@ -98,34 +98,35 @@ bool wildcard_has(const wcstring &str, bool internal) {
 /// \param wc The wildcard.
 /// \param leading_dots_fail_to_match Whether files beginning with dots should not be matched
 /// against wildcards.
-static enum fuzzy_match_type_t wildcard_match_internal(const wchar_t *str, const wchar_t *wc,
-                                                       bool leading_dots_fail_to_match) {
+bool wildcard_match(const wcstring &str, const wcstring &wc, bool leading_dots_fail_to_match) {
     // Hackish fix for issue #270. Prevent wildcards from matching . or .., but we must still allow
     // literal matches.
-    if (leading_dots_fail_to_match && (!std::wcscmp(str, L".") || !std::wcscmp(str, L".."))) {
-        // The string is '.' or '..'. Return true if the wildcard exactly matches.
-        return std::wcscmp(str, wc) ? fuzzy_match_none : fuzzy_match_exact;
+    if (leading_dots_fail_to_match && str[0] == L'.' &&
+        (str[1] == L'\0' || (str[1] == L'.' && str[2] == L'\0'))) {
+        // The string is '.' or '..' so the only possible match is an exact match.
+        return str == wc;
     }
 
     // Near Linear implementation as proposed here https://research.swtch.com/glob.
-    const wchar_t *wc_x = wc;
-    const wchar_t *str_x = str;
-    const wchar_t *restart_wc_x = wc;
-    const wchar_t *restart_str_x = str;
+    const wchar_t *wc_x = wc.c_str();
+    const wchar_t *str_x = str.c_str();
+    const wchar_t *restart_wc_x = wc.c_str();
+    const wchar_t *restart_str_x = str.c_str();
+
     bool restart_is_out_of_str = false;
     for (; *wc_x != 0 || *str_x != 0;) {
         bool is_first = (str_x == str);
         if (*wc_x != 0) {
             if (*wc_x == ANY_STRING || *wc_x == ANY_STRING_RECURSIVE) {
                 // Ignore hidden file
-                if (leading_dots_fail_to_match && is_first && *str == L'.') {
-                    return fuzzy_match_none;
+                if (leading_dots_fail_to_match && is_first && str[0] == L'.') {
+                    return false;
                 }
 
                 // Common case of * at the end. In that case we can early out since we know it will
                 // match.
                 if (wc_x[1] == L'\0') {
-                    return fuzzy_match_exact;
+                    return true;
                 }
                 // Try to match at str_x.
                 // If that doesn't work out, restart at str_x+1 next.
@@ -136,7 +137,7 @@ static enum fuzzy_match_type_t wildcard_match_internal(const wchar_t *str, const
                 continue;
             } else if (*wc_x == ANY_CHAR && *str_x != 0) {
                 if (is_first && *str_x == L'.') {
-                    return fuzzy_match_none;
+                    return false;
                 }
                 wc_x++;
                 str_x++;
@@ -148,15 +149,15 @@ static enum fuzzy_match_type_t wildcard_match_internal(const wchar_t *str, const
             }
         }
         // Mismatch. Maybe restart.
-        if (restart_str_x != str && !restart_is_out_of_str) {
+        if (restart_str_x != str.c_str() && !restart_is_out_of_str) {
             wc_x = restart_wc_x;
             str_x = restart_str_x;
             continue;
         }
-        return fuzzy_match_none;
+        return false;
     }
     // Matched all of pattern to all of name. Success.
-    return fuzzy_match_exact;
+    return true;
 }
 
 // This does something horrible refactored from an even more horrible function.
@@ -166,12 +167,14 @@ static wcstring resolve_description(const wcstring &full_completion, wcstring *c
     size_t complete_sep_loc = completion->find(PROG_COMPLETE_SEP);
     if (complete_sep_loc != wcstring::npos) {
         // This completion has an embedded description, do not use the generic description.
-        const wcstring description = completion->substr(complete_sep_loc + 1);
+        wcstring description = completion->substr(complete_sep_loc + 1);
         completion->resize(complete_sep_loc);
         return description;
     }
-    if (expand_flags & expand_flag::no_descriptions) return {};
-    return desc_func ? desc_func(full_completion) : wcstring{};
+    if (desc_func && (expand_flags & expand_flag::gen_descriptions)) {
+        return desc_func(full_completion);
+    }
+    return wcstring{};
 }
 
 // A transient parameter pack needed by wildcard_complete.
@@ -184,11 +187,13 @@ struct wc_complete_pack_t {
 };
 
 // Weirdly specific and non-reusable helper function that makes its one call site much clearer.
-static bool has_prefix_match(const completion_list_t *comps, size_t first) {
+static bool has_prefix_match(const completion_receiver_t *comps, size_t first) {
     if (comps != nullptr) {
         const size_t after_count = comps->size();
         for (size_t j = first; j < after_count; j++) {
-            if (comps->at(j).match.type <= fuzzy_match_prefix) {
+            const auto &match = comps->at(j).match;
+            if (match.type <= string_fuzzy_match_t::contain_type_t::prefix &&
+                match.case_fold == string_fuzzy_match_t::case_fold_t::samecase) {
                 return true;
             }
         }
@@ -201,16 +206,19 @@ static bool has_prefix_match(const completion_list_t *comps, size_t first) {
 ///
 /// We ignore ANY_STRING_RECURSIVE here. The consequence is that you cannot tab complete **
 /// wildcards. This is historic behavior.
-static bool wildcard_complete_internal(const wchar_t *str, const wchar_t *wc,
-                                       const wc_complete_pack_t &params, complete_flags_t flags,
-                                       completion_list_t *out, bool is_first_call = false) {
+static wildcard_result_t wildcard_complete_internal(const wchar_t *const str, size_t str_len,
+                                                    const wchar_t *const wc, size_t wc_len,
+                                                    const wc_complete_pack_t &params,
+                                                    complete_flags_t flags,
+                                                    completion_receiver_t *out,
+                                                    bool is_first_call = false) {
     assert(str != nullptr);
     assert(wc != nullptr);
 
     // Maybe early out for hidden files. We require that the wildcard match these exactly (i.e. a
     // dot); ANY_STRING not allowed.
     if (is_first_call && str[0] == L'.' && wc[0] != L'.') {
-        return false;
+        return wildcard_result_t::no_match;
     }
 
     // Locate the next wildcard character position, e.g. ANY_CHAR or ANY_STRING.
@@ -218,50 +226,61 @@ static bool wildcard_complete_internal(const wchar_t *str, const wchar_t *wc,
 
     // Maybe we have no more wildcards at all. This includes the empty string.
     if (next_wc_char_pos == wcstring::npos) {
-        string_fuzzy_match_t match = string_fuzzy_match_string(wc, str);
+        // Try matching.
+        maybe_t<string_fuzzy_match_t> match = string_fuzzy_match_string(wc, str);
+        if (!match) return wildcard_result_t::no_match;
 
-        // If we're allowing fuzzy match, any match is OK. Otherwise we require a prefix match.
-        bool match_acceptable;
-        if (params.expand_flags & expand_flag::fuzzy_match) {
-            match_acceptable = match.type != fuzzy_match_none;
-        } else {
-            match_acceptable = match_type_shares_prefix(match.type);
+        // If we're not allowing fuzzy match, then we require a prefix match.
+        bool needs_prefix_match = !(params.expand_flags & expand_flag::fuzzy_match);
+        if (needs_prefix_match && !match->is_exact_or_prefix()) {
+            return wildcard_result_t::no_match;
         }
 
-        if (!match_acceptable || out == nullptr) {
-            return match_acceptable;
+        // The match was successful. If the string is not requested we're done.
+        if (out == nullptr) {
+            return wildcard_result_t::match;
         }
 
         // Wildcard complete.
         bool full_replacement =
-            match_type_requires_full_replacement(match.type) || (flags & COMPLETE_REPLACES_TOKEN);
+            match->requires_full_replacement() || (flags & COMPLETE_REPLACES_TOKEN);
 
         // If we are not replacing the token, be careful to only store the part of the string after
         // the wildcard.
-        assert(!full_replacement || std::wcslen(wc) <= std::wcslen(str));
-        wcstring out_completion = full_replacement ? params.orig : str + std::wcslen(wc);
+        assert(!full_replacement || wc_len <= str_len);
+        wcstring out_completion = full_replacement ? params.orig : str + wc_len;
         wcstring out_desc = resolve_description(params.orig, &out_completion, params.expand_flags,
                                                 params.desc_func);
 
         // Note: out_completion may be empty if the completion really is empty, e.g. tab-completing
         // 'foo' when a file 'foo' exists.
         complete_flags_t local_flags = flags | (full_replacement ? COMPLETE_REPLACES_TOKEN : 0);
-        append_completion(out, out_completion, out_desc, local_flags, std::move(match));
-        return match_acceptable;
+        if (!out->add(std::move(out_completion), std::move(out_desc), local_flags, *match)) {
+            return wildcard_result_t::overflow;
+        }
+        return wildcard_result_t::match;
     } else if (next_wc_char_pos > 0) {
+        // The literal portion of a wildcard cannot be longer than the string itself,
+        // e.g. `abc*` can never match a string that is only two characters long.
+        if (next_wc_char_pos >= str_len) {
+            return wildcard_result_t::no_match;
+        }
+
         // Here we have a non-wildcard prefix. Note that we don't do fuzzy matching for stuff before
         // a wildcard, so just do case comparison and then recurse.
         if (std::wcsncmp(str, wc, next_wc_char_pos) == 0) {
             // Normal match.
-            return wildcard_complete_internal(str + next_wc_char_pos, wc + next_wc_char_pos, params,
-                                              flags, out);
+            return wildcard_complete_internal(str + next_wc_char_pos, str_len - next_wc_char_pos,
+                                              wc + next_wc_char_pos, wc_len - next_wc_char_pos,
+                                              params, flags, out);
         }
         if (wcsncasecmp(str, wc, next_wc_char_pos) == 0) {
             // Case insensitive match.
-            return wildcard_complete_internal(str + next_wc_char_pos, wc + next_wc_char_pos, params,
-                                              flags | COMPLETE_REPLACES_TOKEN, out);
+            return wildcard_complete_internal(str + next_wc_char_pos, str_len - next_wc_char_pos,
+                                              wc + next_wc_char_pos, wc_len - next_wc_char_pos,
+                                              params, flags | COMPLETE_REPLACES_TOKEN, out);
         }
-        return false;  // no match
+        return wildcard_result_t::no_match;
     }
 
     // Our first character is a wildcard.
@@ -269,15 +288,16 @@ static bool wildcard_complete_internal(const wchar_t *str, const wchar_t *wc,
     switch (wc[0]) {
         case ANY_CHAR: {
             if (str[0] == L'\0') {
-                return false;
+                return wildcard_result_t::no_match;
             }
-            return wildcard_complete_internal(str + 1, wc + 1, params, flags, out);
+            return wildcard_complete_internal(str + 1, str_len - 1, wc + 1, wc_len - 1, params,
+                                              flags, out);
         }
         case ANY_STRING: {
             // Hackish. If this is the last character of the wildcard, then just complete with
             // the empty string. This fixes cases like "f*<tab>" -> "f*o".
             if (wc[1] == L'\0') {
-                return wildcard_complete_internal(L"", L"", params, flags, out);
+                return wildcard_complete_internal(L"", 0, L"", 0, params, flags, out);
             }
 
             // Try all submatches. Issue #929: if the recursive call gives us a prefix match,
@@ -287,46 +307,103 @@ static bool wildcard_complete_internal(const wchar_t *str, const wchar_t *wc,
             bool has_match = false;
             for (size_t i = 0; str[i] != L'\0'; i++) {
                 const size_t before_count = out ? out->size() : 0;
-                if (wildcard_complete_internal(str + i, wc + 1, params, flags, out)) {
-                    // We found a match.
-                    has_match = true;
-
-                    // If out is NULL, we don't care about the actual matches. If out is not
-                    // NULL but we have a prefix match, stop there.
-                    if (out == nullptr || has_prefix_match(out, before_count)) {
+                auto submatch_res = wildcard_complete_internal(str + i, str_len - i, wc + 1,
+                                                               wc_len - 1, params, flags, out);
+                switch (submatch_res) {
+                    case wildcard_result_t::no_match:
                         break;
-                    }
+                    case wildcard_result_t::match:
+                        has_match = true;
+                        // If out is NULL, we don't care about the actual matches. If out is not
+                        // NULL but we have a prefix match, stop there.
+                        if (out == nullptr || has_prefix_match(out, before_count)) {
+                            return wildcard_result_t::match;
+                        }
+                        break;
+                    case wildcard_result_t::cancel:
+                    case wildcard_result_t::overflow:
+                        // Note early return.
+                        return submatch_res;
                 }
             }
-            return has_match;
+            return has_match ? wildcard_result_t::match : wildcard_result_t::no_match;
         }
         case ANY_STRING_RECURSIVE: {
             // We don't even try with this one.
-            return false;
+            return wildcard_result_t::no_match;
         }
         default: {
             DIE("unreachable code reached");
-            break;
         }
     }
 
     DIE("unreachable code reached");
 }
 
-bool wildcard_complete(const wcstring &str, const wchar_t *wc,
-                       const std::function<wcstring(const wcstring &)> &desc_func,
-                       completion_list_t *out, expand_flags_t expand_flags,
-                       complete_flags_t flags) {
+wildcard_result_t wildcard_complete(const wcstring &str, const wchar_t *wc,
+                                    const std::function<wcstring(const wcstring &)> &desc_func,
+                                    completion_receiver_t *out, expand_flags_t expand_flags,
+                                    complete_flags_t flags) {
     // Note out may be NULL.
     assert(wc != nullptr);
     wc_complete_pack_t params(str, desc_func, expand_flags);
-    return wildcard_complete_internal(str.c_str(), wc, params, flags, out, true /* first call */);
+    return wildcard_complete_internal(str.c_str(), str.size(), wc, std::wcslen(wc), params, flags,
+                                      out, true /* first call */);
 }
 
-bool wildcard_match(const wcstring &str, const wcstring &wc, bool leading_dots_fail_to_match) {
-    enum fuzzy_match_type_t match =
-        wildcard_match_internal(str.c_str(), wc.c_str(), leading_dots_fail_to_match);
-    return match != fuzzy_match_none;
+static int fast_waccess(const struct stat &stat_buf, uint8_t mode) {
+    // Cache the effective user id and group id of our own shell process. These can't change on us
+    // because we don't change them.
+    static const uid_t euid = geteuid();
+    static const gid_t egid = getegid();
+
+    // Cache a list of our group memberships.
+    static const std::vector<gid_t> groups = ([&]() {
+        std::vector<gid_t> groups;
+        while (true) {
+            int ngroups = getgroups(0, nullptr);
+            // It is not defined if getgroups(2) includes the effective group of the calling process
+            groups.reserve(ngroups + 1);
+            groups.resize(ngroups, 0);
+            if (getgroups(groups.size(), groups.data()) == -1) {
+                if (errno == EINVAL) {
+                    // Race condition, ngroups has changed between the two getgroups() calls
+                    continue;
+                }
+                wperror(L"getgroups");
+            }
+            break;
+        }
+
+        groups.push_back(egid);
+        std::sort(groups.begin(), groups.end());
+        return groups;
+    })();
+
+    bool have_suid = (stat_buf.st_mode & S_ISUID);
+    if (euid == stat_buf.st_uid || have_suid) {
+        // Check permissions granted to owner
+        if (((stat_buf.st_mode & S_IRWXU) >> 6) & mode) {
+            return 0;
+        }
+    }
+    bool have_sgid = (stat_buf.st_mode & S_ISGID);
+    auto binsearch = std::lower_bound(groups.begin(), groups.end(), stat_buf.st_gid);
+    bool have_group = binsearch != groups.end() && !(stat_buf.st_gid < *binsearch);
+    if (have_group || have_sgid) {
+        // Check permissions granted to group
+        if (((stat_buf.st_mode & S_IRWXG) >> 3) & mode) {
+            return 0;
+        }
+    }
+    if (euid != stat_buf.st_uid && !have_group) {
+        // Check permissions granted to other
+        if ((stat_buf.st_mode & S_IRWXO) & mode) {
+            return 0;
+        }
+    }
+
+    return -1;
 }
 
 /// Obtain a description string for the file specified by the filename.
@@ -339,9 +416,8 @@ bool wildcard_match(const wcstring &str, const wcstring &wc, bool leading_dots_f
 /// \param stat_res The result of calling stat on the file
 /// \param buf The struct buf output of calling stat on the file
 /// \param err The errno value after a failed stat call on the file.
-static const wchar_t *file_get_desc(const wcstring &filename, int lstat_res,
-                                    const struct stat &lbuf, int stat_res, const struct stat &buf,
-                                    int err) {
+static const wchar_t *file_get_desc(int lstat_res, const struct stat &lbuf, int stat_res,
+                                    const struct stat &buf, int err) {
     if (lstat_res) {
         return COMPLETE_FILE_DESC;
     }
@@ -351,10 +427,7 @@ static const wchar_t *file_get_desc(const wcstring &filename, int lstat_res,
             if (S_ISDIR(buf.st_mode)) {
                 return COMPLETE_DIRECTORY_SYMLINK_DESC;
             }
-            if (buf.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH) && waccess(filename, X_OK) == 0) {
-                // Weird group permissions and other such issues make it non-trivial to find out if
-                // we can actually execute a file using the result from stat. It is much safer to
-                // use the access function, since it tells us exactly what we want to know.
+            if (buf.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH) && fast_waccess(buf, X_OK) == 0) {
                 return COMPLETE_EXEC_LINK_DESC;
             }
 
@@ -375,10 +448,7 @@ static const wchar_t *file_get_desc(const wcstring &filename, int lstat_res,
         return COMPLETE_SOCKET_DESC;
     } else if (S_ISDIR(buf.st_mode)) {
         return COMPLETE_DIRECTORY_DESC;
-    } else if (buf.st_mode & (S_IXUSR | S_IXGRP | S_IXGRP) && waccess(filename, X_OK) == 0) {
-        // Weird group permissions and other such issues make it non-trivial to find out if we can
-        // actually execute a file using the result from stat. It is much safer to use the access
-        // function, since it tells us exactly what we want to know.
+    } else if (buf.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH) && fast_waccess(buf, X_OK) == 0) {
         return COMPLETE_EXEC_DESC;
     }
 
@@ -390,9 +460,9 @@ static const wchar_t *file_get_desc(const wcstring &filename, int lstat_res,
 /// up. Note that the filename came from a readdir() call, so we know it exists.
 static bool wildcard_test_flags_then_complete(const wcstring &filepath, const wcstring &filename,
                                               const wchar_t *wc, expand_flags_t expand_flags,
-                                              completion_list_t *out) {
+                                              completion_receiver_t *out) {
     // Check if it will match before stat().
-    if (!wildcard_complete(filename, wc, {}, nullptr, expand_flags, 0)) {
+    if (wildcard_complete(filename, wc, {}, nullptr, expand_flags, 0) != wildcard_result_t::match) {
         return false;
     }
 
@@ -425,7 +495,7 @@ static bool wildcard_test_flags_then_complete(const wcstring &filepath, const wc
     }
 
     const bool executables_only = expand_flags & expand_flag::executables_only;
-    if (executables_only && (!is_executable || waccess(filepath, X_OK) != 0)) {
+    if (executables_only && (!is_executable || fast_waccess(stat_buf, X_OK) != 0)) {
         return false;
     }
 
@@ -436,8 +506,8 @@ static bool wildcard_test_flags_then_complete(const wcstring &filepath, const wc
 
     // Compute the description.
     wcstring desc;
-    if (!(expand_flags & expand_flag::no_descriptions)) {
-        desc = file_get_desc(filepath, lstat_res, lstat_buf, stat_res, stat_buf, stat_errno);
+    if (expand_flags & expand_flag::gen_descriptions) {
+        desc = file_get_desc(lstat_res, lstat_buf, stat_res, stat_buf, stat_errno);
 
         if (file_size >= 0) {
             if (!desc.empty()) desc.append(L", ");
@@ -450,9 +520,10 @@ static bool wildcard_test_flags_then_complete(const wcstring &filepath, const wc
     auto desc_func = const_desc(desc);
     if (is_directory) {
         return wildcard_complete(filename + L'/', wc, desc_func, out, expand_flags,
-                                 COMPLETE_NO_SPACE);
+                                 COMPLETE_NO_SPACE) == wildcard_result_t::match;
     }
-    return wildcard_complete(filename, wc, desc_func, out, expand_flags, 0);
+    return wildcard_complete(filename, wc, desc_func, out, expand_flags, 0) ==
+           wildcard_result_t::match;
 }
 
 class wildcard_expander_t {
@@ -467,9 +538,11 @@ class wildcard_expander_t {
     // Flags controlling expansion.
     const expand_flags_t flags;
     // Resolved items get inserted into here. This is transient of course.
-    completion_list_t *resolved_completions;
+    completion_receiver_t *resolved_completions;
     // Whether we have been interrupted.
     bool did_interrupt{false};
+    // Whether we have overflowed.
+    bool did_overflow{false};
     // Whether we have successfully added any completions.
     bool did_add{false};
     // Whether some parent expansion is fuzzy, and therefore completions always prepend their prefix
@@ -503,17 +576,18 @@ class wildcard_expander_t {
                              const wcstring &prefix);
 
     /// Indicate whether we should cancel wildcard expansion. This latches 'interrupt'.
-    bool interrupted() {
+    bool interrupted_or_overflowed() {
         did_interrupt = did_interrupt || cancel_checker();
-        return did_interrupt;
+        return did_interrupt || did_overflow;
     }
 
-    void add_expansion_result(const wcstring &result) {
+    void add_expansion_result(wcstring &&result) {
         // This function is only for the non-completions case.
         assert(!(this->flags & expand_flag::for_completions));
         if (this->completion_set.insert(result).second) {
-            append_completion(this->resolved_completions, result);
-            this->did_add = true;
+            if (!this->resolved_completions->add(std::move(result))) {
+                this->did_overflow = true;
+            }
         }
     }
 
@@ -551,7 +625,7 @@ class wildcard_expander_t {
             }
 
             // We stop if we got two or more entries; also stop if we got zero or were interrupted
-            if (unique_entry.empty() || interrupted()) {
+            if (unique_entry.empty() || interrupted_or_overflowed()) {
                 stop_descent = true;
             }
 
@@ -621,26 +695,21 @@ class wildcard_expander_t {
             // cd operates on logical paths.
             // for example, cd ../<tab> should complete "without resolving symlinks".
             path = normalize_path(path);
-        } else {
-            // Other commands operate on physical paths.
-            if (auto tmp = wrealpath(path)) {
-                path = tmp.acquire();
-            }
         }
         return wopendir(path);
     }
 
    public:
-    wildcard_expander_t(wcstring wd, expand_flags_t f, const cancel_checker_t &cancel_checker,
-                        completion_list_t *r)
-        : cancel_checker(cancel_checker),
+    wildcard_expander_t(wcstring wd, expand_flags_t f, cancel_checker_t cancel_checker,
+                        completion_receiver_t *r)
+        : cancel_checker(std::move(cancel_checker)),
           working_directory(std::move(wd)),
           flags(f),
           resolved_completions(r) {
         assert(resolved_completions != nullptr);
 
         // Insert initial completions into our set to avoid duplicates.
-        for (const auto &resolved_completion : *resolved_completions) {
+        for (const auto &resolved_completion : resolved_completions->get_list()) {
             this->completion_set.insert(resolved_completion.completion);
         }
     }
@@ -648,16 +717,18 @@ class wildcard_expander_t {
     // Do wildcard expansion. This is recursive.
     void expand(const wcstring &base_dir, const wchar_t *wc, const wcstring &prefix);
 
-    wildcard_expand_result_t status_code() const {
+    wildcard_result_t status_code() const {
         if (this->did_interrupt) {
-            return wildcard_expand_result_t::cancel;
+            return wildcard_result_t::cancel;
+        } else if (this->did_overflow) {
+            return wildcard_result_t::overflow;
         }
-        return this->did_add ? wildcard_expand_result_t::match : wildcard_expand_result_t::no_match;
+        return this->did_add ? wildcard_result_t::match : wildcard_result_t::no_match;
     }
 };
 
 void wildcard_expander_t::expand_trailing_slash(const wcstring &base_dir, const wcstring &prefix) {
-    if (interrupted()) {
+    if (interrupted_or_overflowed()) {
         return;
     }
 
@@ -665,14 +736,14 @@ void wildcard_expander_t::expand_trailing_slash(const wcstring &base_dir, const 
         // Trailing slash and not accepting incomplete, e.g. `echo /xyz/`. Insert this file if it
         // exists.
         if (waccess(base_dir, F_OK) == 0) {
-            this->add_expansion_result(base_dir);
+            this->add_expansion_result(wcstring{base_dir});
         }
     } else {
         // Trailing slashes and accepting incomplete, e.g. `echo /xyz/<tab>`. Everything is added.
         DIR *dir = open_dir(base_dir);
         if (dir) {
             wcstring next;
-            while (wreaddir(dir, next) && !interrupted()) {
+            while (wreaddir(dir, next) && !interrupted_or_overflowed()) {
                 if (!next.empty() && next.at(0) != L'.') {
                     this->try_add_completion_result(base_dir + next, next, L"", prefix);
                 }
@@ -687,7 +758,7 @@ void wildcard_expander_t::expand_intermediate_segment(const wcstring &base_dir, 
                                                       const wchar_t *wc_remainder,
                                                       const wcstring &prefix) {
     wcstring name_str;
-    while (!interrupted() && wreaddir_for_dirs(base_dir_fp, &name_str)) {
+    while (!interrupted_or_overflowed() && wreaddir_for_dirs(base_dir_fp, &name_str)) {
         // Note that it's critical we ignore leading dots here, else we may descend into . and ..
         if (!wildcard_match(name_str, wc_segment, true)) {
             // Doesn't match the wildcard for this segment, skip it.
@@ -729,7 +800,7 @@ void wildcard_expander_t::expand_literal_intermediate_segment_with_fuzz(const wc
     // Mark that we are fuzzy for the duration of this function
     const scoped_push<bool> scoped_fuzzy(&this->has_fuzzy_ancestor, true);
 
-    while (!interrupted() && wreaddir_for_dirs(base_dir_fp, &name_str)) {
+    while (!interrupted_or_overflowed() && wreaddir_for_dirs(base_dir_fp, &name_str)) {
         // Don't bother with . and ..
         if (name_str == L"." || name_str == L"..") {
             continue;
@@ -737,10 +808,8 @@ void wildcard_expander_t::expand_literal_intermediate_segment_with_fuzz(const wc
 
         // Skip cases that don't match or match exactly. The match-exactly case was handled directly
         // in expand().
-        const string_fuzzy_match_t match = string_fuzzy_match_string(wc_segment, name_str);
-        if (match.type == fuzzy_match_none || match.type == fuzzy_match_exact) {
-            continue;
-        }
+        const maybe_t<string_fuzzy_match_t> match = string_fuzzy_match_string(wc_segment, name_str);
+        if (!match || match->is_samecase_exact()) continue;
 
         wcstring new_full_path = base_dir + name_str;
         new_full_path.push_back(L'/');
@@ -750,12 +819,10 @@ void wildcard_expander_t::expand_literal_intermediate_segment_with_fuzz(const wc
             continue;
         }
 
-        // Determine the effective prefix for our children
+        // Determine the effective prefix for our children.
         // Normally this would be the wildcard segment, but here we know our segment doesn't have
-        // wildcards
-        // ("literal") and we are doing fuzzy expansion, which means we replace the segment with
-        // files found
-        // through fuzzy matching
+        // wildcards ("literal") and we are doing fuzzy expansion, which means we replace the
+        // segment with files found through fuzzy matching.
         const wcstring child_prefix = prefix + name_str + L'/';
 
         // Ok, this directory matches. Recurse to it. Then mark each resulting completion as fuzzy.
@@ -772,9 +839,10 @@ void wildcard_expander_t::expand_literal_intermediate_segment_with_fuzz(const wc
                 c->prepend_token_prefix(child_prefix);
             }
             // And every match must be made at least as fuzzy as ours.
-            if (match.compare(c->match) > 0) {
+            // TODO: justify this, tests do not exercise it yet.
+            if (match->rank() > c->match.rank()) {
                 // Our match is fuzzier.
-                c->match = match;
+                c->match = *match;
             }
         }
     }
@@ -783,7 +851,7 @@ void wildcard_expander_t::expand_literal_intermediate_segment_with_fuzz(const wc
 void wildcard_expander_t::expand_last_segment(const wcstring &base_dir, DIR *base_dir_fp,
                                               const wcstring &wc, const wcstring &prefix) {
     wcstring name_str;
-    while (wreaddir(base_dir_fp, name_str)) {
+    while (!interrupted_or_overflowed() && wreaddir(base_dir_fp, name_str)) {
         if (flags & expand_flag::for_completions) {
             this->try_add_completion_result(base_dir + name_str, name_str, wc, prefix);
         } else {
@@ -799,33 +867,26 @@ void wildcard_expander_t::expand_last_segment(const wcstring &base_dir, DIR *bas
 /// wrappers around this one.
 ///
 /// This function traverses the relevant directory tree looking for matches, and recurses when
-/// needed to handle wildcrards spanning multiple components and recursive wildcards.
-///
-/// Because this function calls itself recursively with substrings, it's important that the
-/// parameters be raw pointers instead of wcstring, which would be too expensive to construct for
-/// all substrings.
+/// needed to handle wildcards spanning multiple components and recursive wildcards.
 ///
 /// Args:
 /// base_dir: the "working directory" against which the wildcard is to be resolved
 /// wc: the wildcard string itself, e.g. foo*bar/baz (where * is actually ANY_CHAR)
-/// prefix: the string that should be prepended for completions that replace their token.
-//    This is usually the same thing as the original wildcard, but for fuzzy matching, we
-//    expand intermediate segments. effective_prefix is always either empty, or ends with a slash
-//    Note: this is only used when doing completions (for_completions is true), not
-//    expansions
+/// effective_prefix: the string that should be prepended for completions that replace their token.
+///    This is usually the same thing as the original wildcard, but for fuzzy matching, we
+///    expand intermediate segments. effective_prefix is always either empty, or ends with a slash
 void wildcard_expander_t::expand(const wcstring &base_dir, const wchar_t *wc,
                                  const wcstring &effective_prefix) {
     assert(wc != nullptr);
 
-    if (interrupted()) {
+    if (interrupted_or_overflowed()) {
         return;
     }
 
     // Get the current segment and compute interesting properties about it.
-    const size_t wc_len = std::wcslen(wc);
     const wchar_t *const next_slash = std::wcschr(wc, L'/');
     const bool is_last_segment = (next_slash == nullptr);
-    const size_t wc_segment_len = next_slash ? next_slash - wc : wc_len;
+    const size_t wc_segment_len = next_slash ? next_slash - wc : std::wcslen(wc);
     const wcstring wc_segment = wcstring(wc, wc_segment_len);
     const bool segment_has_wildcards =
         wildcard_has(wc_segment, true /* internal, i.e. look for ANY_CHAR instead of ? */);
@@ -869,6 +930,20 @@ void wildcard_expander_t::expand(const wcstring &base_dir, const wchar_t *wc,
         }
     } else {
         assert(!wc_segment.empty() && (segment_has_wildcards || is_last_segment));
+
+        if (!is_last_segment && wc_segment == wcstring{ANY_STRING_RECURSIVE}) {
+            // Hack for #7222. This is an intermediate wc segment that is exactly **. The
+            // tail matches in subdirectories as normal, but also the current directory.
+            // That is, '**/bar' may match 'bar' and 'foo/bar'.
+            // Implement this by matching the wildcard tail only, in this directory.
+            // Note if the segment is not exactly ANY_STRING_RECURSIVE then the segment may only
+            // match subdirectories.
+            this->expand(base_dir, wc_remainder, effective_prefix);
+            if (interrupted_or_overflowed()) {
+                return;
+            }
+        }
+
         DIR *dir = open_dir(base_dir);
         if (dir) {
             if (is_last_segment) {
@@ -881,9 +956,9 @@ void wildcard_expander_t::expand(const wcstring &base_dir, const wchar_t *wc,
                                                   effective_prefix + wc_segment + L'/');
             }
 
-            // Recursive wildcards require special handling.
             size_t asr_idx = wc_segment.find(ANY_STRING_RECURSIVE);
             if (asr_idx != wcstring::npos) {
+                // Apply the recursive **.
                 // Construct a "head + any" wildcard for matching stuff in this directory, and an
                 // "any + tail" wildcard for matching stuff in subdirectories. Note that the
                 // ANY_STRING_RECURSIVE character is present in both the head and the tail.
@@ -901,28 +976,34 @@ void wildcard_expander_t::expand(const wcstring &base_dir, const wchar_t *wc,
     }
 }
 
-wildcard_expand_result_t wildcard_expand_string(const wcstring &wc,
-                                                const wcstring &working_directory,
-                                                expand_flags_t flags,
-                                                const cancel_checker_t &cancel_checker,
-                                                completion_list_t *output) {
+wildcard_result_t wildcard_expand_string(const wcstring &wc, const wcstring &working_directory,
+                                         expand_flags_t flags,
+                                         const cancel_checker_t &cancel_checker,
+                                         completion_receiver_t *output) {
     assert(output != nullptr);
     // Fuzzy matching only if we're doing completions.
     assert(flags.get(expand_flag::for_completions) || !flags.get(expand_flag::fuzzy_match));
 
     // expand_flag::special_for_cd requires expand_flag::directories_only and
-    // expand_flag::for_completions and expand_flag::no_descriptions.
+    // expand_flag::for_completions and !expand_flag::gen_descriptions.
     assert(!(flags.get(expand_flag::special_for_cd)) ||
            ((flags.get(expand_flag::directories_only)) &&
             (flags.get(expand_flag::for_completions)) &&
-            (flags.get(expand_flag::no_descriptions))));
+            (!flags.get(expand_flag::gen_descriptions))));
 
     // Hackish fix for issue #1631. We are about to call c_str(), which will produce a string
     // truncated at any embedded nulls. We could fix this by passing around the size, etc. However
     // embedded nulls are never allowed in a filename, so we just check for them and return 0 (no
     // matches) if there is an embedded null.
     if (wc.find(L'\0') != wcstring::npos) {
-        return wildcard_expand_result_t::no_match;
+        return wildcard_result_t::no_match;
+    }
+
+    // We do not support tab-completing recursive (**) wildcards. This is historic behavior.
+    // Do not descend any directories if there is a ** wildcard.
+    if (flags.get(expand_flag::for_completions) &&
+        wc.find(ANY_STRING_RECURSIVE) != wcstring::npos) {
+        return wildcard_result_t::no_match;
     }
 
     // Compute the prefix and base dir. The prefix is what we prepend for filesystem operations
