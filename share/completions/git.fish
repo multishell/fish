@@ -965,7 +965,7 @@ complete -c git -n '__fish_git_using_command add' -l ignore-errors -d 'Ignore er
 complete -c git -n '__fish_git_using_command add' -l ignore-missing -d 'Check if any of the given files would be ignored'
 # Renames also show up as untracked + deleted, and to get git to show it as a rename _both_ need to be added.
 # However, we can't do that as it is two tokens, so we don't need renamed here.
-complete -f -c git -n '__fish_git_using_command add' -a '(__fish_git_files modified untracked deleted unmerged)'
+complete -f -c git -n '__fish_git_using_command add' -a '(__fish_git_files modified untracked deleted unmerged modified-staged-deleted)'
 # TODO options
 
 ### checkout
@@ -976,7 +976,7 @@ complete -k -f -c git -n '__fish_git_using_command checkout; and not contains --
 complete -k -f -c git -n '__fish_git_using_command checkout; and not contains -- -- (commandline -opc)' -a '(__fish_git_branches)'
 complete -k -f -c git -n '__fish_git_using_command checkout; and not contains -- -- (commandline -opc)' -a '(__fish_git_unique_remote_branches)' -d 'Unique Remote Branch'
 complete -k -f -c git -n '__fish_git_using_command checkout; and not contains -- -- (commandline -opc)' -a '(__fish_git_recent_commits --all)'
-complete -k -f -c git -n '__fish_git_using_command checkout' -a '(__fish_git_files modified deleted)'
+complete -k -f -c git -n '__fish_git_using_command checkout' -a '(__fish_git_files modified deleted modified-staged-deleted)'
 complete -f -c git -n '__fish_git_using_command checkout' -s b -d 'Create a new branch'
 complete -f -c git -n '__fish_git_using_command checkout' -s t -l track -d 'Track a new branch'
 complete -f -c git -n '__fish_git_using_command checkout' -l theirs -d 'Keep staged changes'
@@ -1104,7 +1104,11 @@ complete -c git -n '__fish_git_using_command diff' -s 1 -l base -d 'Compare the 
 complete -c git -n '__fish_git_using_command diff' -s 2 -l ours -d 'Compare the working tree with the "our branch"'
 complete -c git -n '__fish_git_using_command diff' -s 3 -l theirs -d 'Compare the working tree with the "their branch"'
 complete -c git -n '__fish_git_using_command diff' -s 0 -d 'Omit diff output for unmerged entries and just show "Unmerged"'
-complete -c git -n '__fish_git_using_command diff; and not __fish_contains_opt cached staged' -a '(__fish_git_files modified deleted)'
+complete -c git -n '__fish_git_using_command diff; and not __fish_contains_opt cached staged' -a '(
+    set -l kinds modified
+    contains -- -- (commandline -opc) && set -a kinds deleted modified-staged-deleted
+    __fish_git_files $kinds
+)'
 complete -c git -n '__fish_git_using_command diff; and __fish_contains_opt cached staged' -fa '(__fish_git_files all-staged)'
 
 ### Function to list available tools for git difftool and mergetool
@@ -1119,9 +1123,13 @@ end
 
 ### difftool
 complete -c git -n __fish_git_needs_command -a difftool -d 'Open diffs in a visual tool'
-complete -c git -n '__fish_git_using_command difftool' -k -a '(__fish_git_ranges)'
+complete -c git -n '__fish_git_using_command difftool; and not contains -- -- (commandline -opc)' -k -a '(__fish_git_ranges)'
 complete -c git -n '__fish_git_using_command difftool' -l cached -d 'Visually show diff of changes in the index'
-complete -f -c git -n '__fish_git_using_command difftool' -a '(__fish_git_files modified deleted)'
+complete -f -c git -n '__fish_git_using_command difftool' -a '(
+    set -l kinds modified
+    contains -- -- (commandline -opc) && set -a kinds deleted modified-staged-deleted
+    __fish_git_files $kinds
+)'
 complete -f -c git -n '__fish_git_using_command difftool' -s g -l gui -d 'Use `diff.guitool` instead of `diff.tool`'
 complete -f -c git -n '__fish_git_using_command difftool' -s d -l dir-diff -d 'Perform a full-directory diff'
 complete -c git -n '__fish_git_using_command difftool' -l prompt -d 'Prompt before each invocation of the diff tool'
@@ -1573,7 +1581,7 @@ complete -f -c git -n '__fish_git_using_command restore' -l ignore-unmerged -d '
 complete -f -c git -n '__fish_git_using_command restore' -l ignore-skip-worktree-bits -d 'Ignore the sparse-checkout file and unconditionally restore any files in <pathspec>'
 complete -f -c git -n '__fish_git_using_command restore' -l overlay -d 'Never remove files when restoring'
 complete -f -c git -n '__fish_git_using_command restore' -l no-overlay -d 'Remove files when restoring (default)'
-complete -f -c git -n '__fish_git_using_command restore; and not contains -- --staged (commandline -opc)' -a '(__fish_git_files modified deleted unmerged)'
+complete -f -c git -n '__fish_git_using_command restore; and not contains -- --staged (commandline -opc)' -a '(__fish_git_files modified deleted modified-staged-deleted unmerged)'
 complete -f -c git -n '__fish_git_using_command restore; and contains -- --staged (commandline -opc)' -a '(__fish_git_files added modified-staged deleted-staged renamed copied)'
 complete -F -c git -n '__fish_git_using_command restore; and __fish_contains_opt -s s source'
 # switch options
@@ -1582,7 +1590,7 @@ complete -k -f -c git -n '__fish_git_using_command switch' -a '(__fish_git_local
 complete -k -f -c git -n '__fish_git_using_command switch' -a '(__fish_git_unique_remote_branches)' -d 'Unique Remote Branch'
 complete -f -c git -n '__fish_git_using_command switch' -r -s c -l create -d 'Create a new branch'
 complete -f -c git -n '__fish_git_using_command switch' -r -s C -l force-create -d 'Force create a new branch'
-complete -f -c git -n '__fish_git_using_command switch' -s d -l detach -d 'Switch to a commit for inspection and discardable experiment'
+complete -f -c git -n '__fish_git_using_command switch' -s d -l detach -d 'Switch to a commit for inspection and discardable experiment' -k -ra '(__fish_git_refs)'
 complete -f -c git -n '__fish_git_using_command switch' -l guess -d 'Guess branch name from remote branch (default)'
 complete -f -c git -n '__fish_git_using_command switch' -l no-guess -d 'Do not guess branch name from remote branch'
 complete -f -c git -n '__fish_git_using_command switch' -s f -l force -l discard-changes -d 'Proceed even if the index or the working tree differs from HEAD'
@@ -1708,7 +1716,7 @@ complete -f -c git -n '__fish_git_stash_using_command drop' -a '(__fish_git_comp
 complete -f -c git -n '__fish_git_stash_using_command pop' -a '(__fish_git_complete_stashes)'
 complete -f -c git -n '__fish_git_stash_using_command show' -a '(__fish_git_complete_stashes)'
 
-complete -f -c git -n '__fish_git_stash_using_command push' -a '(__fish_git_files modified deleted)'
+complete -f -c git -n '__fish_git_stash_using_command push' -a '(__fish_git_files modified deleted modified-staged-deleted)'
 complete -f -c git -n '__fish_git_stash_using_command push' -s p -l patch -d 'Interactively select hunks'
 complete -f -c git -n '__fish_git_stash_using_command push' -s m -l message -d 'Add a description'
 

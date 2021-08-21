@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FISH-RELEASENOTES" "1" "Jun 28, 2021" "3.3" "fish-shell"
+.TH "FISH-RELEASENOTES" "1" "Jul 06, 2021" "3.3" "fish-shell"
 .SH NAME
 fish-releasenotes \- fish-shell release notes
 .
@@ -30,6 +30,30 @@ level margin: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .\" new: \\n[rst2man-indent\\n[rst2man-indent-level]]
 .in \\n[rst2man-indent\\n[rst2man-indent-level]]u
 ..
+.SH FISH 3.3.1 (RELEASED JULY 6, 2021)
+.sp
+This release of fish fixes the following problems identified in fish 3.3.0:
+.INDENT 0.0
+.IP \(bu 2
+The prompt and command line are redrawn correctly in response to universal variable changes (\fI\%#8088\fP).
+.IP \(bu 2
+A superfluous error that was produced when setting the \fBPATH\fP or \fBCDPATH\fP environment variables to include colon\-delimited components that do not exist was removed (\fI\%#8095\fP).
+.IP \(bu 2
+The Vi mode indicator in the prompt is repainted correctly after \fBCtrl\-C\fP cancels the current command (\fI\%#8103\fP).
+.IP \(bu 2
+fish builds correctly on platforms that do not have a \fBspawn.h\fP header, such as old versions of OS X (\fI\%#8097\fP).
+.UNINDENT
+.sp
+A number of improvements to the documentation, and fixes for completions, are included as well.
+.sp
+If you are upgrading from version 3.2.2 or before, please also review the release notes for 3.3.0 (included below).
+
+.sp
+.ce
+----
+
+.ce 0
+.sp
 .SH FISH 3.3.0 (RELEASED JUNE 28, 2021)
 .SS Notable improvements and fixes
 .INDENT 0.0

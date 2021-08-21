@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FISH-DOC" "1" "Jun 28, 2021" "3.3" "fish-shell"
+.TH "FISH-DOC" "1" "Jul 06, 2021" "3.3" "fish-shell"
 .SH NAME
 fish-doc \- fish-shell Documentation
 .
@@ -451,7 +451,7 @@ Fish is trying to set the titlebar message of your terminal. While screen itself
 Note that fish has a default titlebar message, which will be used if the fish_title function is undefined. So simply unsetting the fish_title function will not work.
 .SS How do I run a command from history?
 .sp
-Type some part of the command, and then hit the \fB↑\fP (up) or \fB↓\fP (down) arrow keys to navigate through history matches. Additional default key bindings include \fBControl\fP+\fBP\fP (up) and \fBControl\fP+\fBN\fP (down).
+Type some part of the command, and then hit the \fB↑\fP (up) or \fB↓\fP (down) arrow keys to navigate through history matches. Additional default key bindings include \fBControl\fP+\fBP\fP (up) and \fBControl\fP+\fBN\fP (down). See Searchable command history for more information.
 .SS Why doesn\(aqt history substitution ("!$" etc.) work?
 .sp
 Because history substitution is an awkward interface that was invented before interactive line editing was even possible. Instead of adding this pseudo\-syntax, fish opts for nice history searching and recall features.  Switching requires a small change of habits: if you want to modify an old line/word, first recall it, then edit.
@@ -1510,7 +1510,7 @@ After a command has been executed, it is remembered in the history list. Any dup
 .sp
 By pressing \fBAlt\fP+\fB↑\fP and \fBAlt\fP+\fB↓\fP, a history search is also performed, but instead of searching for a complete commandline, each commandline is broken into separate elements just like it would be before execution, and the history is searched for an element matching that under the cursor.
 .sp
-History searches are case\-insensitive unless the search string contains an uppercase character, and they can be aborted by pressing the escape key.
+History searches are case\-insensitive unless the search string contains an uppercase character. You can stop a search to edit your search string by pressing \fBEsc\fP or \fBPage Down\fP\&.
 .sp
 Prefixing the commandline with a space will prevent the entire line from being stored in the history.
 .sp
@@ -12786,6 +12786,30 @@ The help manual should be easy to read, easily available from the shell, complet
 The language should be uniform, so that once the user understands the command/argument syntax, they will know the whole language, and be able to use tab\-completion to discover new features.
 .UNINDENT
 .SS Release notes
+.SS fish 3.3.1 (released July 6, 2021)
+.sp
+This release of fish fixes the following problems identified in fish 3.3.0:
+.INDENT 0.0
+.IP \(bu 2
+The prompt and command line are redrawn correctly in response to universal variable changes (\fI\%#8088\fP).
+.IP \(bu 2
+A superfluous error that was produced when setting the \fBPATH\fP or \fBCDPATH\fP environment variables to include colon\-delimited components that do not exist was removed (\fI\%#8095\fP).
+.IP \(bu 2
+The Vi mode indicator in the prompt is repainted correctly after \fBCtrl\-C\fP cancels the current command (\fI\%#8103\fP).
+.IP \(bu 2
+fish builds correctly on platforms that do not have a \fBspawn.h\fP header, such as old versions of OS X (\fI\%#8097\fP).
+.UNINDENT
+.sp
+A number of improvements to the documentation, and fixes for completions, are included as well.
+.sp
+If you are upgrading from version 3.2.2 or before, please also review the release notes for 3.3.0 (included below).
+
+.sp
+.ce
+----
+
+.ce 0
+.sp
 .SS fish 3.3.0 (released June 28, 2021)
 .SS Notable improvements and fixes
 .INDENT 0.0

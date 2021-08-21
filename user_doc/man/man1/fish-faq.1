@@ -1,6 +1,6 @@
 .\" Man page generated from reStructuredText.
 .
-.TH "FISH-FAQ" "1" "Jun 28, 2021" "3.3" "fish-shell"
+.TH "FISH-FAQ" "1" "Jul 06, 2021" "3.3" "fish-shell"
 .SH NAME
 fish-faq \- fish-shell faq
 .
@@ -241,7 +241,7 @@ Fish is trying to set the titlebar message of your terminal. While screen itself
 Note that fish has a default titlebar message, which will be used if the fish_title function is undefined. So simply unsetting the fish_title function will not work.
 .SH HOW DO I RUN A COMMAND FROM HISTORY?
 .sp
-Type some part of the command, and then hit the \fB↑\fP (up) or \fB↓\fP (down) arrow keys to navigate through history matches. Additional default key bindings include \fBControl\fP+\fBP\fP (up) and \fBControl\fP+\fBN\fP (down).
+Type some part of the command, and then hit the \fB↑\fP (up) or \fB↓\fP (down) arrow keys to navigate through history matches. Additional default key bindings include \fBControl\fP+\fBP\fP (up) and \fBControl\fP+\fBN\fP (down). See Searchable command history for more information.
 .SH WHY DOESN'T HISTORY SUBSTITUTION ("!$" ETC.) WORK?
 .sp
 Because history substitution is an awkward interface that was invented before interactive line editing was even possible. Instead of adding this pseudo\-syntax, fish opts for nice history searching and recall features.  Switching requires a small change of habits: if you want to modify an old line/word, first recall it, then edit.
